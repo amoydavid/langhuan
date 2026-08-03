@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/api/client'
-import type { APIKeyCreateInput } from './schemas'
+import type { APIKeyCreateInput, APIKeyUpdateInput } from './schemas'
 import type {
   APIKeyCreatedEnvelope,
   APIKeyDetailEnvelope,
@@ -31,6 +31,18 @@ export async function createAPIKey(
 ) {
   const response = await apiClient.post<APIKeyCreatedEnvelope>(
     apiKeysPath(workspaceSlug),
+    input
+  )
+  return response.data
+}
+
+export async function updateAPIKey(
+  workspaceSlug: string,
+  apiKeyId: string,
+  input: APIKeyUpdateInput
+) {
+  const response = await apiClient.patch<APIKeyDetailEnvelope>(
+    `${apiKeysPath(workspaceSlug)}/${encodeURIComponent(apiKeyId)}`,
     input
   )
   return response.data

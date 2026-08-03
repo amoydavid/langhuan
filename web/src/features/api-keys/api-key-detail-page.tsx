@@ -1,5 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { ArrowLeft, Ban } from 'lucide-react'
+import { ArrowLeft, Ban, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -11,7 +12,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { knowledgeBasesQueryOptions } from '@/features/knowledge-bases/queries'
 import { parseApiError } from '@/lib/api/error'
+import { APIKeyEditForm } from './components/api-key-edit-form'
 import { APIKeyRevokeDialog } from './components/api-key-revoke-dialog'
 import { APIKeySecretPanel } from './components/api-key-secret-panel'
 import { APIKeyStatusBadge } from './components/api-key-status-badge'
@@ -53,7 +63,16 @@ export function APIKeyDetailPage({ data }: APIKeyDetailPageProps) {
   const navigate = useNavigate()
   const { item, base_url, rest_base_url, mcp_url } = data
   const [revokeOpen, setRevokeOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const revokeMutation = useRevokeAPIKey(workspaceSlug, item.id)
+  // 编辑表单的 KB 选项需要当前 workspace 全部 KB 列表。
+  const { data: knowledgeBasesData } = useQuery(
+    knowledgeBasesQueryOptions(workspaceSlug)
+  )
+  const knowledgeBases = (knowledgeBasesData ?? []).map((kb) => ({
+    id: kb.id,
+    name: kb.name,
+  }))
 
   // 失效状态（已吊销/已过期）仍允许 owner/admin reveal 以复制历史 key，
   // 但复制不会恢复授权。active/expiring/expired/revoked 均可 reveal。
@@ -80,7 +99,18 @@ export function APIKeyDetailPage({ data }: APIKeyDetailPageProps) {
               {item.token_prefix}…
             </p>
           </div>
-          <APIKeyStatusBadge status={item.status} />
+          <div className='flex items-center gap-2'>
+            <APIKeyStatusBadge status={item.status} />
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => setEditOpen(true)}
+              disabled={item.status === 'revoked'}
+            >
+              <Pencil />
+              {t('apiKeys.detailPage.editButton')}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -222,6 +252,28 @@ export function APIKeyDetailPage({ data }: APIKeyDetailPageProps) {
           })
         }}
       />
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-lg'>
+          <DialogHeader>
+            <DialogTitle>{t('apiKeys.editDialog.title')}</DialogTitle>
+            <DialogDescription>
+              {t('apiKeys.editDialog.description')}
+            </DialogDescription>
+          </DialogHeader>
+          {/* editOpen 控制挂载，保证每次打开都从最新 item 重新推导表单默认值 */}
+          {editOpen && (
+            <APIKeyEditForm
+              key={item.id}
+              workspaceSlug={workspaceSlug}
+              apiKeyId={item.id}
+              apiKey={item}
+              knowledgeBases={knowledgeBases}
+              onUpdated={() => setEditOpen(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

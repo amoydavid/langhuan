@@ -12,8 +12,9 @@ import {
   listAPIKeys,
   revealAPIKey,
   revokeAPIKey,
+  updateAPIKey,
 } from './api'
-import type { APIKeyCreateInput } from './schemas'
+import type { APIKeyCreateInput, APIKeyUpdateInput } from './schemas'
 
 export function apiKeysQueryOptions(workspaceSlug: string) {
   return queryOptions({
@@ -40,6 +41,25 @@ export function useCreateAPIKey(workspaceSlug: string) {
       await queryClient.invalidateQueries({
         queryKey: ['api-keys', workspaceSlug],
       })
+    },
+  })
+}
+
+export function useUpdateAPIKey(workspaceSlug: string, apiKeyId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: APIKeyUpdateInput) =>
+      updateAPIKey(workspaceSlug, apiKeyId, input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['api-keys', workspaceSlug],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['api-key', workspaceSlug, apiKeyId],
+        }),
+      ])
+      toast.success(i18n.t('apiKeys.queries.updatedToast'))
     },
   })
 }

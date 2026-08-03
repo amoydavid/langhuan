@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 
 	"github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // WorkspaceAPIKeyRepository 是 service.WorkspaceAPIKeyStore 的 GORM 实现。
@@ -70,6 +72,69 @@ func (tx *workspaceAPIKeyTx) CreateWithKnowledgeBaseBindings(ctx context.Context
 	}
 	if err := tx.db.WithContext(ctx).Create(&bindings).Error; err != nil {
 		return translateDBError(err, "创建工作区 API Key 知识库绑定失败")
+	}
+	return nil
+}
+
+// UpdateKnowledgeBaseScope 在当前事务内原子更新某 key 的名称、scopes、过期时间，
+// 并整体替换其知识库绑定集合（删旧 + 插新）。
+//
+// 通过 revoked_at IS NULL 条件约束 update，使已吊销的 key 改 0 行，
+// 此时返回 ErrAPIKeyImmutable（避免先读后改的竞态）。任何绑定写入失败整体回滚。
+func (tx *workspaceAPIKeyTx) UpdateKnowledgeBaseScope(
+	ctx context.Context,
+	workspaceID, keyID uuid.UUID,
+	knowledgeBaseIDs []uuid.UUID,
+	scopes []value.APIScope,
+	name string,
+	expiresAt *time.Time,
+	now time.Time,
+) error {
+	if keyID == uuid.Nil || workspaceID == uuid.Nil {
+		return fmt.Errorf("%w: API Key ID/WorkspaceID 不能为空", domainerrors.ErrValidation)
+	}
+	if len(knowledgeBaseIDs) == 0 {
+		return fmt.Errorf("%w: API Key 至少绑定一个知识库", domainerrors.ErrValidation)
+	}
+	for _, kbID := range knowledgeBaseIDs {
+		if kbID == uuid.Nil {
+			return fmt.Errorf("%w: 绑定的知识库 ID 不能为空", domainerrors.ErrValidation)
+		}
+	}
+	updates := map[string]any{
+		"name":       name,
+		"scopes":     pq.Array(apiScopesToStrings(scopes)),
+		"expires_at": expiresAt,
+		"updated_at": now,
+	}
+	result := tx.db.WithContext(ctx).
+		Model(&WorkspaceAPIKeyRow{}).
+		Where("workspace_id = ? AND id = ? AND revoked_at IS NULL", workspaceID, keyID).
+		Updates(updates)
+	if result.Error != nil {
+		return translateDBError(result.Error, "更新工作区 API Key 失败")
+	}
+	if result.RowsAffected == 0 {
+		// 0 行：key 不存在或已吊销。统一视为不可修改终态。
+		return domainerrors.ErrAPIKeyImmutable
+	}
+	// 删除全部旧绑定，再插入新绑定。FK 在 DB 层兜底跨 workspace KB。
+	if err := tx.db.WithContext(ctx).
+		Where("api_token_id = ? AND workspace_id = ?", keyID, workspaceID).
+		Delete(&WorkspaceAPIKeyKnowledgeBaseRow{}).Error; err != nil {
+		return translateDBError(err, "清理工作区 API Key 旧知识库绑定失败")
+	}
+	bindings := make([]*WorkspaceAPIKeyKnowledgeBaseRow, 0, len(knowledgeBaseIDs))
+	for _, kbID := range knowledgeBaseIDs {
+		bindings = append(bindings, &WorkspaceAPIKeyKnowledgeBaseRow{
+			APITokenID:      keyID,
+			WorkspaceID:     workspaceID,
+			KnowledgeBaseID: kbID,
+			CreatedAt:       now,
+		})
+	}
+	if err := tx.db.WithContext(ctx).Create(&bindings).Error; err != nil {
+		return translateDBError(err, "更新工作区 API Key 知识库绑定失败")
 	}
 	return nil
 }
@@ -157,14 +222,18 @@ func (r *WorkspaceAPIKeyRepository) List(ctx context.Context, workspaceID uuid.U
 	if err != nil {
 		return nil, fmt.Errorf("列出 API Key 失败: %w", err)
 	}
+	keyIDs := make([]uuid.UUID, len(rows))
+	for i := range rows {
+		keyIDs[i] = rows[i].ID
+	}
+	bindingMap, err := r.loadKnowledgeBaseIDsBatch(ctx, r.db, keyIDs)
+	if err != nil {
+		return nil, err
+	}
 	keys := make([]*model.WorkspaceAPIKey, 0, len(rows))
 	for i := range rows {
 		key := workspaceAPIKeyFromRow(&rows[i])
-		bindings, err := r.loadKnowledgeBaseIDs(ctx, r.db, key.ID)
-		if err != nil {
-			return nil, err
-		}
-		key.KnowledgeBaseIDs = bindings
+		key.KnowledgeBaseIDs = bindingMap[key.ID]
 		keys = append(keys, key)
 	}
 	return keys, nil
@@ -219,17 +288,44 @@ func (r *WorkspaceAPIKeyRepository) TouchLastUsed(ctx context.Context, workspace
 }
 
 // loadKnowledgeBaseIDs 加载某 key 的全部绑定知识库 ID。
+// 仅用于单条查询（FindByTokenHashWithBindings / Get），批量场景用 loadKnowledgeBaseIDsBatch。
 func (r *WorkspaceAPIKeyRepository) loadKnowledgeBaseIDs(ctx context.Context, db *gorm.DB, keyID uuid.UUID) ([]uuid.UUID, error) {
-	var ids []uuid.UUID
+	m, err := r.loadKnowledgeBaseIDsBatch(ctx, db, []uuid.UUID{keyID})
+	if err != nil {
+		return nil, err
+	}
+	return m[keyID], nil
+}
+
+// loadKnowledgeBaseIDsBatch 一次查询批量加载多个 key 的知识库绑定，
+// 返回 map[keyID][]knowledgeBaseID，避免 N+1 问题。
+func (r *WorkspaceAPIKeyRepository) loadKnowledgeBaseIDsBatch(ctx context.Context, db *gorm.DB, keyIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	result := make(map[uuid.UUID][]uuid.UUID, len(keyIDs))
+	for _, id := range keyIDs {
+		result[id] = nil // 确保即使无绑定也有空 slice 占位
+	}
+	if len(keyIDs) == 0 {
+		return result, nil
+	}
+
+	type binding struct {
+		APITokenID      uuid.UUID `gorm:"column:api_token_id"`
+		KnowledgeBaseID uuid.UUID `gorm:"column:knowledge_base_id"`
+	}
+	var bindings []binding
 	err := db.WithContext(ctx).
 		Model(&WorkspaceAPIKeyKnowledgeBaseRow{}).
-		Where("api_token_id = ?", keyID).
-		Order("knowledge_base_id").
-		Pluck("knowledge_base_id", &ids).Error
+		Select("api_token_id", "knowledge_base_id").
+		Where("api_token_id IN ?", keyIDs).
+		Order("api_token_id, knowledge_base_id").
+		Find(&bindings).Error
 	if err != nil {
-		return nil, fmt.Errorf("读取 API Key 知识库绑定失败: %w", err)
+		return nil, fmt.Errorf("批量读取 API Key 知识库绑定失败: %w", err)
 	}
-	return ids, nil
+	for _, b := range bindings {
+		result[b.APITokenID] = append(result[b.APITokenID], b.KnowledgeBaseID)
+	}
+	return result, nil
 }
 
 // 编译期断言：确保 repository 与 tx 实现了 service 端口。

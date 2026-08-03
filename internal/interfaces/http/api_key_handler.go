@@ -16,6 +16,7 @@ import (
 // APIKeyServiceHTTP 是 handler 侧的 API Key 服务接口，由 service.APIKeyService 实现。
 type APIKeyServiceHTTP interface {
 	Create(ctx context.Context, input service.CreateAPIKeyInput) (*service.CreateAPIKeyResult, error)
+	Update(ctx context.Context, input service.UpdateAPIKeyInput) (dto.WorkspaceAPIKey, error)
 	Get(ctx context.Context, workspaceID uuid.UUID, actorRole value.WorkspaceRole, keyID uuid.UUID) (dto.WorkspaceAPIKey, error)
 	List(ctx context.Context, workspaceID uuid.UUID, actorRole value.WorkspaceRole) ([]dto.WorkspaceAPIKey, error)
 	Reveal(ctx context.Context, workspaceID uuid.UUID, actorRole value.WorkspaceRole, keyID uuid.UUID) (*service.RevealResult, error)
@@ -29,6 +30,14 @@ type apiKeyHandler struct {
 
 // createAPIKeyRequest 是创建 API Key 的请求体。expiration 省略时默认 90 天。
 type createAPIKeyRequest struct {
+	Name             string                    `json:"name"`
+	KnowledgeBaseIDs []uuid.UUID               `json:"knowledge_base_ids"`
+	Scopes           []value.APIScope          `json:"scopes"`
+	Expiration       *service.APIKeyExpiration `json:"expiration"`
+}
+
+// updateAPIKeyRequest 是修改 API Key 的请求体。字段与创建同构，全部覆盖更新。
+type updateAPIKeyRequest struct {
 	Name             string                    `json:"name"`
 	KnowledgeBaseIDs []uuid.UUID               `json:"knowledge_base_ids"`
 	Scopes           []value.APIScope          `json:"scopes"`
@@ -110,6 +119,46 @@ func (h apiKeyHandler) get(c *gin.Context) {
 		return
 	}
 	item, err := h.keys.Get(c.Request.Context(), authCtx.WorkspaceID, authCtx.Role, keyID)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	urls := h.keys.PublicURLs()
+	c.JSON(stdhttp.StatusOK, dto.WorkspaceAPIKeyDetailEnvelope{
+		Item: item, BaseURL: urls.BaseURL, RESTBaseURL: urls.RESTBaseURL, MCPURL: urls.MCPURL,
+	})
+}
+
+// update (admin+) 修改 API Key 的名称、知识库集合、scopes 与过期时间。
+func (h apiKeyHandler) update(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	keyID, err := uuid.Parse(c.Param("api_key_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "api_key_id 必须是有效 UUID")
+		return
+	}
+	var req updateAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "请求 JSON 无效")
+		return
+	}
+	expiration := service.APIKeyExpiration{}
+	if req.Expiration != nil {
+		expiration = *req.Expiration
+	}
+	item, err := h.keys.Update(c.Request.Context(), service.UpdateAPIKeyInput{
+		WorkspaceID:      authCtx.WorkspaceID,
+		KeyID:            keyID,
+		ActorRole:        authCtx.Role,
+		Name:             req.Name,
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+		Scopes:           req.Scopes,
+		Expiration:       expiration,
+	})
 	if err != nil {
 		writeServiceError(c, err)
 		return

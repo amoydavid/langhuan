@@ -42,6 +42,7 @@ export const apiKeys = {
     dangerTitle: '危险操作',
     dangerDescription: '吊销后该 Key 立即失效，且不可恢复。',
     revokeButton: '吊销 API Key',
+    editButton: '编辑',
   },
   createForm: {
     nameLabel: '名称',
@@ -70,6 +71,25 @@ export const apiKeys = {
       '将吊销「{{name}}」。它的下一次请求会失败；已开始的请求不会被强制中断。此操作不可撤销。',
     cancel: '取消',
     confirm: '确认吊销',
+  },
+  editDialog: {
+    title: '编辑 API Key',
+    description: '修改名称、知识库范围、权限与有效期。已吊销的 Key 不可修改。',
+  },
+  editForm: {
+    nameLabel: '名称',
+    nameDescription: '用于识别此 Key 的用途，仅作展示。',
+    knowledgeBasesLabel: '知识库范围',
+    knowledgeBasesDescription: '仅允许此 Key 访问所选知识库，至少选择一个。',
+    noKnowledgeBases: '当前 Workspace 还没有知识库，请先创建。',
+    scopesLabel: '权限范围',
+    scopesDescription: '至少选择一项；权限仅对上述已选知识库生效。',
+    expirationLabel: '有效期',
+    expirationDescription: '按修改时间重新计算到期日；选择「不限期」需谨慎。',
+    fixedDays: '固定天数',
+    never: '不限期',
+    daysAriaLabel: '有效天数',
+    submit: '保存修改',
   },
   secretPanel: {
     reveal: '显示明文',
@@ -123,5 +143,6 @@ export const apiKeys = {
   },
   queries: {
     revokedToast: 'API Key 已吊销',
+    updatedToast: 'API Key 已更新',
   },
 } as const

@@ -344,6 +344,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				adminGroup.GET("/api-keys", keyH.list)
 				adminGroup.POST("/api-keys", keyH.create)
 				adminGroup.GET("/api-keys/:api_key_id", keyH.get)
+				adminGroup.PATCH("/api-keys/:api_key_id", keyH.update)
 				adminGroup.POST("/api-keys/:api_key_id/reveal", keyH.reveal)
 				adminGroup.DELETE("/api-keys/:api_key_id", keyH.revoke)
 			}

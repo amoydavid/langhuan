@@ -52,6 +52,7 @@ export const apiKeys = {
     dangerDescription:
       'Revoking the key invalidates it immediately and cannot be undone.',
     revokeButton: 'Revoke API Key',
+    editButton: 'Edit',
   },
   createForm: {
     nameLabel: 'Name',
@@ -84,6 +85,30 @@ export const apiKeys = {
       'The Key "{{name}}" will be revoked. Its next request will fail; already-started requests are not forcibly interrupted. This action cannot be undone.',
     cancel: 'Cancel',
     confirm: 'Revoke',
+  },
+  editDialog: {
+    title: 'Edit API Key',
+    description:
+      'Change the name, knowledge bases, permissions, or expiration. Revoked keys cannot be edited.',
+  },
+  editForm: {
+    nameLabel: 'Name',
+    nameDescription: 'A label to identify what this Key is for; display only.',
+    knowledgeBasesLabel: 'Knowledge bases',
+    knowledgeBasesDescription:
+      'The Key can only access the selected knowledge bases. Select at least one.',
+    noKnowledgeBases:
+      'This Workspace has no knowledge bases yet. Create one first.',
+    scopesLabel: 'Permissions',
+    scopesDescription:
+      'Select at least one; permissions only apply to the knowledge bases selected above.',
+    expirationLabel: 'Expiration',
+    expirationDescription:
+      'The expiry date is recomputed from the edit time; choose "Never" with care.',
+    fixedDays: 'Fixed days',
+    never: 'Never',
+    daysAriaLabel: 'Validity days',
+    submit: 'Save changes',
   },
   secretPanel: {
     reveal: 'Show plaintext',
@@ -138,5 +163,6 @@ export const apiKeys = {
   },
   queries: {
     revokedToast: 'API Key revoked',
+    updatedToast: 'API Key updated',
   },
 } satisfies Widen<typeof zhApiKeys>

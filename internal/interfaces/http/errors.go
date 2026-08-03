@@ -158,6 +158,7 @@ func modelErrorDetails(err error) (int, string, string, bool) {
 		{domainerrors.ErrModelInUse, stdhttp.StatusConflict, "model_in_use"},
 		{domainerrors.ErrProviderInUse, stdhttp.StatusConflict, "provider_in_use"},
 		{domainerrors.ErrAPIKeyLimitReached, stdhttp.StatusConflict, "api_key_limit_reached"},
+		{domainerrors.ErrAPIKeyImmutable, stdhttp.StatusConflict, "api_key_immutable"},
 		{domainerrors.ErrInsufficientScope, stdhttp.StatusForbidden, "insufficient_scope"},
 	}
 	for _, mapping := range mappings {

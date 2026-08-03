@@ -23,6 +23,10 @@ import (
 type fakeAPIKeyService struct {
 	createResult *service.CreateAPIKeyResult
 	createErr    error
+	updateItem   dto.WorkspaceAPIKey
+	updateErr    error
+	updateCalled bool
+	updateInput  service.UpdateAPIKeyInput
 	getItem      dto.WorkspaceAPIKey
 	getErr       error
 	listItems    []dto.WorkspaceAPIKey
@@ -37,6 +41,11 @@ type fakeAPIKeyService struct {
 func (f *fakeAPIKeyService) Create(ctx context.Context, input service.CreateAPIKeyInput) (*service.CreateAPIKeyResult, error) {
 	f.createCalled = true
 	return f.createResult, f.createErr
+}
+func (f *fakeAPIKeyService) Update(ctx context.Context, input service.UpdateAPIKeyInput) (dto.WorkspaceAPIKey, error) {
+	f.updateCalled = true
+	f.updateInput = input
+	return f.updateItem, f.updateErr
 }
 func (f *fakeAPIKeyService) Get(ctx context.Context, workspaceID uuid.UUID, role value.WorkspaceRole, keyID uuid.UUID) (dto.WorkspaceAPIKey, error) {
 	return f.getItem, f.getErr
@@ -156,4 +165,33 @@ func TestAPIKeyHandlerRevealMapsSecretUnavailable(t *testing.T) {
 	// 不泄漏密码学原因。
 	require.NotContains(t, rec.Body.String(), "nonce")
 	require.NotContains(t, rec.Body.String(), "cipher")
+}
+
+func TestAPIKeyHandlerUpdateReturnsItem(t *testing.T) {
+	item := dto.WorkspaceAPIKey{ID: uuid.New(), Name: "Updated", TokenPrefix: "lhk_a1b2c3d4"}
+	keys := &fakeAPIKeyService{
+		publicURLs: dto.PublicURLs{BaseURL: "https://x.example.com"},
+		updateItem: item,
+	}
+	router, _, _, sessionID := newAPIKeyRouterFixture(t, value.RoleAdmin, keys)
+	keyID := uuid.New()
+	body := `{"name":"Updated","knowledge_base_ids":["00000000-0000-4000-8000-000000000001"],"scopes":["search:read"],"expiration":{"type":"never"}}`
+	rec := authedAPIKeyRequest(router, sessionID, stdhttp.MethodPatch, "/api/v1/workspaces/acme/api-keys/"+keyID.String(), body)
+	require.Equal(t, stdhttp.StatusOK, rec.Code)
+	require.True(t, keys.updateCalled)
+	require.Equal(t, keyID, keys.updateInput.KeyID)
+	require.Equal(t, "Updated", keys.updateInput.Name)
+}
+
+func TestAPIKeyHandlerUpdateMapsImmutable(t *testing.T) {
+	keys := &fakeAPIKeyService{
+		publicURLs: dto.PublicURLs{BaseURL: "https://x.example.com"},
+		updateErr:  domainerrors.ErrAPIKeyImmutable,
+	}
+	router, _, _, sessionID := newAPIKeyRouterFixture(t, value.RoleAdmin, keys)
+	keyID := uuid.New()
+	body := `{"name":"x","knowledge_base_ids":["00000000-0000-4000-8000-000000000001"],"scopes":["search:read"]}`
+	rec := authedAPIKeyRequest(router, sessionID, stdhttp.MethodPatch, "/api/v1/workspaces/acme/api-keys/"+keyID.String(), body)
+	require.Equal(t, stdhttp.StatusConflict, rec.Code)
+	require.Contains(t, rec.Body.String(), "api_key_immutable")
 }

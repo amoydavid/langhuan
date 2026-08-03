@@ -41,6 +41,17 @@ type WorkspaceAPIKeyAuthenticated struct {
 // 其余方法都必须在 WithinWorkspace 提供的 workspace_id 约束下执行。
 type WorkspaceAPIKeyTx interface {
 	CreateWithKnowledgeBaseBindings(ctx context.Context, record WorkspaceAPIKeyCreateRecord) error
+	// UpdateKnowledgeBaseScope 在当前事务内原子更新某 key 的名称、scopes、过期时间，
+	// 并整体替换其知识库绑定集合（删旧 + 插新）。已吊销的 key 改 0 行，返回 ErrAPIKeyImmutable。
+	UpdateKnowledgeBaseScope(
+		ctx context.Context,
+		workspaceID, keyID uuid.UUID,
+		knowledgeBaseIDs []uuid.UUID,
+		scopes []value.APIScope,
+		name string,
+		expiresAt *time.Time,
+		now time.Time,
+	) error
 }
 
 // WorkspaceAPIKeyStore 是 application 协调 API Key 生命周期的持久化端口。
@@ -79,6 +90,18 @@ const (
 type CreateAPIKeyInput struct {
 	WorkspaceID      uuid.UUID
 	ActorID          uuid.UUID
+	ActorRole        value.WorkspaceRole
+	Name             string
+	KnowledgeBaseIDs []uuid.UUID
+	Scopes           []value.APIScope
+	Expiration       APIKeyExpiration
+}
+
+// UpdateAPIKeyInput 是修改 API Key 的协议中立输入。
+// KeyID 指定被修改的 key；其余字段为期望的新值，归一化语义与 Create 一致。
+type UpdateAPIKeyInput struct {
+	WorkspaceID      uuid.UUID
+	KeyID            uuid.UUID
 	ActorRole        value.WorkspaceRole
 	Name             string
 	KnowledgeBaseIDs []uuid.UUID

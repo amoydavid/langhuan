@@ -45,4 +45,5 @@ var (
 	ErrAPIKeySecretUnavailable = stderrors.New("API Key 明文不可恢复")
 	ErrAPIKeyLimitReached      = stderrors.New("活跃 API Key 数量已达上限")
 	ErrInsufficientScope       = stderrors.New("API Key 权限不足")
+	ErrAPIKeyImmutable         = stderrors.New("API Key 已吊销，不可修改")
 )

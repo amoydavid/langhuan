@@ -27,6 +27,7 @@ type fakeAPIKeyStore struct {
 	ciphertexts    map[uuid.UUID][]byte
 	activeCount    int
 	createErr      error
+	updateErr      error
 	touchCalls     int
 	touchErr       error
 	revokeErr      error
@@ -111,6 +112,31 @@ func (tx *fakeAPIKeyTx) CreateWithKnowledgeBaseBindings(ctx context.Context, rec
 	return nil
 }
 
+func (tx *fakeAPIKeyTx) UpdateKnowledgeBaseScope(
+	ctx context.Context,
+	workspaceID, keyID uuid.UUID,
+	knowledgeBaseIDs []uuid.UUID,
+	scopes []value.APIScope,
+	name string,
+	expiresAt *time.Time,
+	now time.Time,
+) error {
+	if tx.store.updateErr != nil {
+		return tx.store.updateErr
+	}
+	k, ok := tx.store.keys[keyID]
+	if !ok || k.RevokedAt != nil {
+		// 与真实 store 一致：不存在或已吊销视为不可修改终态。
+		return domainerrors.ErrAPIKeyImmutable
+	}
+	k.Name = name
+	k.Scopes = append([]value.APIScope(nil), scopes...)
+	k.ExpiresAt = expiresAt
+	k.UpdatedAt = now
+	k.KnowledgeBaseIDs = append([]uuid.UUID(nil), knowledgeBaseIDs...)
+	return nil
+}
+
 // fakeAPIKeyNameStore 返回固定可读名称。
 type fakeAPIKeyNameStore struct {
 	kbNames map[uuid.UUID]string
@@ -120,7 +146,10 @@ type fakeAPIKeyNameStore struct {
 func (n *fakeAPIKeyNameStore) KnowledgeBaseNames(ctx context.Context, workspaceID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error) {
 	out := make(map[uuid.UUID]string, len(ids))
 	for _, id := range ids {
-		out[id] = n.kbNames[id]
+		// 与真实 APIKeyNameStore 行为一致：仅返回存在的 KB，缺失的不进 map。
+		if name, ok := n.kbNames[id]; ok {
+			out[id] = name
+		}
 	}
 	return out, nil
 }
@@ -265,6 +294,103 @@ func TestAPIKeyServiceCreateEnforcesActiveLimit(t *testing.T) {
 		Name: "limit", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
 	})
 	require.ErrorIs(t, err, domainerrors.ErrAPIKeyLimitReached)
+}
+
+func TestAPIKeyServiceUpdateAllFields(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	created, err := f.svc.Create(context.Background(), CreateAPIKeyInput{
+		WorkspaceID: f.workspace, ActorID: f.adminID, ActorRole: value.RoleAdmin,
+		Name: "旧名称", KnowledgeBaseIDs: f.kbIDs,
+		Scopes:     []value.APIScope{value.ScopeSearchRead},
+		Expiration: APIKeyExpiration{Type: ExpirationNever},
+	})
+	require.NoError(t, err)
+
+	// 缩减到单个 KB、改名、加 scope、设到期。
+	newKB := f.kbIDs[0]
+	updated, err := f.svc.Update(context.Background(), UpdateAPIKeyInput{
+		WorkspaceID: f.workspace, KeyID: created.Item.ID, ActorRole: value.RoleAdmin,
+		Name: "新名称", KnowledgeBaseIDs: []uuid.UUID{newKB},
+		Scopes:     []value.APIScope{value.ScopeDocumentsRead, value.ScopeSearchRead},
+		Expiration: APIKeyExpiration{Type: ExpirationDays, Days: 30},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "新名称", updated.Name)
+	require.Len(t, updated.KnowledgeBases, 1)
+	require.Equal(t, newKB, updated.KnowledgeBases[0].ID)
+	require.ElementsMatch(t, []value.APIScope{value.ScopeDocumentsRead, value.ScopeSearchRead}, updated.Scopes)
+	require.NotNil(t, updated.ExpiresAt)
+	want := f.now.Add(30 * 24 * time.Hour)
+	require.WithinDuration(t, want, *updated.ExpiresAt, time.Second)
+}
+
+func TestAPIKeyServiceUpdateRejectsMemberRole(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	created, err := f.svc.Create(context.Background(), CreateAPIKeyInput{
+		WorkspaceID: f.workspace, ActorID: f.adminID, ActorRole: value.RoleAdmin,
+		Name: "member-update", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.NoError(t, err)
+	_, err = f.svc.Update(context.Background(), UpdateAPIKeyInput{
+		WorkspaceID: f.workspace, KeyID: created.Item.ID, ActorRole: value.RoleMember,
+		Name: "x", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.ErrorIs(t, err, domainerrors.ErrForbidden)
+}
+
+func TestAPIKeyServiceUpdateRejectsInvalidScopeAndEmptyKB(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	created, err := f.svc.Create(context.Background(), CreateAPIKeyInput{
+		WorkspaceID: f.workspace, ActorID: f.adminID, ActorRole: value.RoleAdmin,
+		Name: "bad", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.NoError(t, err)
+
+	// 非法 scope。
+	_, err = f.svc.Update(context.Background(), UpdateAPIKeyInput{
+		WorkspaceID: f.workspace, KeyID: created.Item.ID, ActorRole: value.RoleAdmin,
+		Name: "x", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{"admin"},
+	})
+	require.ErrorIs(t, err, domainerrors.ErrValidation)
+
+	// 空 KB 集。
+	_, err = f.svc.Update(context.Background(), UpdateAPIKeyInput{
+		WorkspaceID: f.workspace, KeyID: created.Item.ID, ActorRole: value.RoleAdmin,
+		Name: "x", KnowledgeBaseIDs: nil, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.ErrorIs(t, err, domainerrors.ErrValidation)
+}
+
+func TestAPIKeyServiceUpdateRejectsKnowledgeBaseNotInWorkspace(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	created, err := f.svc.Create(context.Background(), CreateAPIKeyInput{
+		WorkspaceID: f.workspace, ActorID: f.adminID, ActorRole: value.RoleAdmin,
+		Name: "missing-kb", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.NoError(t, err)
+	// 该 KB 未在 fakeAPIKeyNameStore 注册，视为不属于 workspace。
+	unknownKB := uuid.New()
+	_, err = f.svc.Update(context.Background(), UpdateAPIKeyInput{
+		WorkspaceID: f.workspace, KeyID: created.Item.ID, ActorRole: value.RoleAdmin,
+		Name: "x", KnowledgeBaseIDs: []uuid.UUID{unknownKB}, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.ErrorIs(t, err, domainerrors.ErrValidation)
+}
+
+func TestAPIKeyServiceUpdateRejectsRevokedKey(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	created, err := f.svc.Create(context.Background(), CreateAPIKeyInput{
+		WorkspaceID: f.workspace, ActorID: f.adminID, ActorRole: value.RoleAdmin,
+		Name: "to-revoke", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.svc.Revoke(context.Background(), f.workspace, f.adminID, value.RoleAdmin, created.Item.ID))
+
+	_, err = f.svc.Update(context.Background(), UpdateAPIKeyInput{
+		WorkspaceID: f.workspace, KeyID: created.Item.ID, ActorRole: value.RoleAdmin,
+		Name: "x", KnowledgeBaseIDs: f.kbIDs, Scopes: []value.APIScope{value.ScopeSearchRead},
+	})
+	require.ErrorIs(t, err, domainerrors.ErrAPIKeyImmutable)
 }
 
 func TestAPIKeyServiceAuthenticateSuccessAndLastUsed(t *testing.T) {

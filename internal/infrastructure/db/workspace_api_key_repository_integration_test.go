@@ -276,3 +276,83 @@ func TestWorkspaceAPIKeyRepositoryTouchLastUsedThrottles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, got.LastUsedAt, got2.LastUsedAt)
 }
+
+func TestWorkspaceAPIKeyRepositoryUpdateKnowledgeBaseScopeReplacesBindings(t *testing.T) {
+	ctx, gormDB := openIntegrationTestDB(t)
+	repo := NewWorkspaceAPIKeyRepository(gormDB)
+	// 准备 3 个 KB：创建时绑定前 2 个，更新后改为 [kb2, kb3]（移除 kb1、新增 kb3）。
+	seed := seedWorkspaceUserAndKnowledgeBases(t, ctx, gormDB, 3)
+	hash := sha256HexForTest("lhk_" + repeatStr("u", 43))
+	key := newWorkspaceAPIKeyDomain(seed, hash)
+	require.NoError(t, repo.WithinWorkspace(ctx, seed.workspaceID, func(ctx context.Context, tx service.WorkspaceAPIKeyTx) error {
+		return tx.CreateWithKnowledgeBaseBindings(ctx, service.WorkspaceAPIKeyCreateRecord{
+			Key: key, SecretCiphertext: []byte{1}, KnowledgeBaseIDs: seed.kbIDs[:2],
+		})
+	}))
+
+	now := time.Now().UTC()
+	newName := "改名后"
+	newScopes := []value.APIScope{value.ScopeDocumentsWrite, value.ScopeSearchRead}
+	expiresAt := now.Add(30 * 24 * time.Hour)
+	require.NoError(t, repo.WithinWorkspace(ctx, seed.workspaceID, func(ctx context.Context, tx service.WorkspaceAPIKeyTx) error {
+		return tx.UpdateKnowledgeBaseScope(ctx, seed.workspaceID, key.ID, []uuid.UUID{seed.kbIDs[1], seed.kbIDs[2]}, newScopes, newName, &expiresAt, now)
+	}))
+
+	got, err := repo.Get(ctx, seed.workspaceID, key.ID)
+	require.NoError(t, err)
+	require.Equal(t, newName, got.Name)
+	require.ElementsMatch(t, []uuid.UUID{seed.kbIDs[1], seed.kbIDs[2]}, got.KnowledgeBaseIDs)
+	require.ElementsMatch(t, newScopes, got.Scopes)
+	require.NotNil(t, got.ExpiresAt)
+	require.WithinDuration(t, expiresAt, *got.ExpiresAt, time.Second)
+}
+
+func TestWorkspaceAPIKeyRepositoryUpdateRejectsRevokedKey(t *testing.T) {
+	ctx, gormDB := openIntegrationTestDB(t)
+	repo := NewWorkspaceAPIKeyRepository(gormDB)
+	seed := seedWorkspaceUserAndKnowledgeBases(t, ctx, gormDB, 2)
+	hash := sha256HexForTest("lhk_" + repeatStr("v", 43))
+	key := newWorkspaceAPIKeyDomain(seed, hash)
+	require.NoError(t, repo.WithinWorkspace(ctx, seed.workspaceID, func(ctx context.Context, tx service.WorkspaceAPIKeyTx) error {
+		return tx.CreateWithKnowledgeBaseBindings(ctx, service.WorkspaceAPIKeyCreateRecord{
+			Key: key, SecretCiphertext: []byte{1}, KnowledgeBaseIDs: seed.kbIDs,
+		})
+	}))
+	now := time.Now().UTC()
+	require.NoError(t, repo.Revoke(ctx, seed.workspaceID, key.ID, seed.userID, now))
+
+	err := repo.WithinWorkspace(ctx, seed.workspaceID, func(ctx context.Context, tx service.WorkspaceAPIKeyTx) error {
+		return tx.UpdateKnowledgeBaseScope(ctx, seed.workspaceID, key.ID, seed.kbIDs, []value.APIScope{value.ScopeSearchRead}, "x", nil, now)
+	})
+	require.ErrorIs(t, err, domainerrors.ErrAPIKeyImmutable)
+
+	// 数据不变：仍为原 scopes/绑定。
+	got, err := repo.Get(ctx, seed.workspaceID, key.ID)
+	require.NoError(t, err)
+	require.Equal(t, "检索 Agent", got.Name)
+	require.ElementsMatch(t, seed.kbIDs, got.KnowledgeBaseIDs)
+}
+
+func TestWorkspaceAPIKeyRepositoryUpdateRejectsUnknownKnowledgeBase(t *testing.T) {
+	ctx, gormDB := openIntegrationTestDB(t)
+	repo := NewWorkspaceAPIKeyRepository(gormDB)
+	seed := seedWorkspaceUserAndKnowledgeBases(t, ctx, gormDB, 1)
+	hash := sha256HexForTest("lhk_" + repeatStr("w", 43))
+	key := newWorkspaceAPIKeyDomain(seed, hash)
+	require.NoError(t, repo.WithinWorkspace(ctx, seed.workspaceID, func(ctx context.Context, tx service.WorkspaceAPIKeyTx) error {
+		return tx.CreateWithKnowledgeBaseBindings(ctx, service.WorkspaceAPIKeyCreateRecord{
+			Key: key, SecretCiphertext: []byte{1}, KnowledgeBaseIDs: seed.kbIDs,
+		})
+	}))
+	unknownKB := uuid.New()
+	now := time.Now().UTC()
+	err := repo.WithinWorkspace(ctx, seed.workspaceID, func(ctx context.Context, tx service.WorkspaceAPIKeyTx) error {
+		return tx.UpdateKnowledgeBaseScope(ctx, seed.workspaceID, key.ID, []uuid.UUID{unknownKB}, []value.APIScope{value.ScopeSearchRead}, "x", nil, now)
+	})
+	require.Error(t, err, "跨 workspace KB 应触发复合外键失败并回滚")
+
+	// 回滚：旧绑定保留。
+	got, err := repo.Get(ctx, seed.workspaceID, key.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, seed.kbIDs, got.KnowledgeBaseIDs)
+}

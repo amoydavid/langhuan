@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { apiKeyCreateSchema } from './schemas'
+import { apiKeyCreateSchema, apiKeyUpdateSchema } from './schemas'
 
 const validKBId = '10000000-0000-4000-8000-000000000001'
 const otherKBId = '20000000-0000-4000-8000-000000000002'
@@ -119,6 +119,61 @@ describe('apiKeyCreateSchema', () => {
     const result = apiKeyCreateSchema.safeParse({
       ...validBase,
       expiration: { type: 'months', months: 3 },
+    })
+    expect(result.success).toBe(false)
+  })
+})
+
+// apiKeyUpdateSchema 复用与 create 相同的字段校验，这里聚焦关键路径，
+// 避免与 create 用例重复。
+describe('apiKeyUpdateSchema', () => {
+  it('parses a valid payload', () => {
+    const parsed = apiKeyUpdateSchema.parse(validBase)
+    expect(parsed.name).toBe('生产检索服务')
+    expect(parsed.expiration).toMatchObject({ type: 'days', days: 90 })
+  })
+
+  it('parses a never-expiring payload', () => {
+    const parsed = apiKeyUpdateSchema.parse({
+      ...validBase,
+      expiration: { type: 'never' },
+    })
+    expect(parsed.expiration.type).toBe('never')
+  })
+
+  it('requires at least one knowledge base', () => {
+    const result = apiKeyUpdateSchema.safeParse({
+      ...validBase,
+      knowledge_base_ids: [],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('requires at least one scope', () => {
+    const result = apiKeyUpdateSchema.safeParse({
+      ...validBase,
+      scopes: [],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an unknown scope value', () => {
+    const result = apiKeyUpdateSchema.safeParse({
+      ...validBase,
+      scopes: ['admin:all'],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects an empty name', () => {
+    const result = apiKeyUpdateSchema.safeParse({ ...validBase, name: '   ' })
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects days expiration exceeding 365', () => {
+    const result = apiKeyUpdateSchema.safeParse({
+      ...validBase,
+      expiration: { type: 'days', days: 366 },
     })
     expect(result.success).toBe(false)
   })

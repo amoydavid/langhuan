@@ -176,6 +176,50 @@ func (s *APIKeyService) Create(ctx context.Context, input CreateAPIKeyInput) (*C
 	}, nil
 }
 
+// Update 修改 API Key 的名称、知识库集合、scopes 与过期时间。归一化语义与 Create 一致，
+// 已吊销的 key 视为终态禁止修改（由 store 的 revoked_at IS NULL 条件兜底，避免 TOCTOU）。
+func (s *APIKeyService) Update(ctx context.Context, input UpdateAPIKeyInput) (dto.WorkspaceAPIKey, error) {
+	if err := s.requireManagerRole(input.ActorRole); err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	if err := validateAPIKeyName(input.Name); err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	scopes, err := normalizeAPIScopes(input.Scopes)
+	if err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	kbIDs, err := dedupeKnowledgeBaseIDs(input.KnowledgeBaseIDs)
+	if err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	expiresAt, err := s.resolveExpiration(input.Expiration)
+	if err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	// 应用层 KB 存在性校验：缺失任意 KB 即该 KB 不属于 workspace，返回清晰错误而非依赖 DB FK。
+	kbNames, err := s.names.KnowledgeBaseNames(ctx, input.WorkspaceID, kbIDs)
+	if err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	for _, id := range kbIDs {
+		if _, ok := kbNames[id]; !ok {
+			return dto.WorkspaceAPIKey{}, fmt.Errorf("%w: 知识库 %s 不存在或无权访问", domainerrors.ErrValidation, id)
+		}
+	}
+	now := s.now().UTC()
+	if err := s.store.WithinWorkspace(ctx, input.WorkspaceID, func(ctx context.Context, tx WorkspaceAPIKeyTx) error {
+		return tx.UpdateKnowledgeBaseScope(ctx, input.WorkspaceID, input.KeyID, kbIDs, scopes, normalizeAPIKeyName(input.Name), expiresAt, now)
+	}); err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	key, err := s.store.Get(ctx, input.WorkspaceID, input.KeyID)
+	if err != nil {
+		return dto.WorkspaceAPIKey{}, err
+	}
+	return s.toItem(ctx, key)
+}
+
 // Get 返回单条 API Key 的安全视图。
 func (s *APIKeyService) Get(ctx context.Context, workspaceID uuid.UUID, actorRole value.WorkspaceRole, keyID uuid.UUID) (dto.WorkspaceAPIKey, error) {
 	if err := s.requireManagerRole(actorRole); err != nil {
