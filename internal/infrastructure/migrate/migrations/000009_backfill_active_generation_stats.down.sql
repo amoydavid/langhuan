@@ -1,0 +1,2 @@
+-- The previous values were stale derived counters and cannot be restored
+-- meaningfully. Rolling back code leaves the corrected statistics intact.

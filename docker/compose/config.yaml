@@ -1,0 +1,75 @@
+# 一键体验运行配置（docker-compose 挂载到容器内 /app/config.yaml）。
+# 与 config.example.yaml 结构一致，仅将数据库/Redis 指向 compose 服务名。
+# 生产部署请自行生成凭据并修改以下值，勿直接使用本文件。
+
+server:
+  http_addr: ":8080"
+  # 本地体验地址；生产必须改为 HTTPS 域名
+  base_url: "http://localhost:8080"
+  run_http: true
+  run_worker: true
+
+database:
+  driver: postgres
+  dsn: "postgres://langhuan:langhuan@postgres:5432/langhuan?sslmode=disable"
+  auto_migrate: true
+
+redis:
+  addr: "redis:6379"
+  password: ""
+  db: 0
+
+log:
+  level: info
+
+storage:
+  raw_document_dir: "/data/raw-documents"
+
+ingest:
+  max_file_size_bytes: 52428800
+  allowed_file_types:
+    - markdown
+    - md
+    - txt
+    - csv
+    - xlsx
+    - docx
+
+retrieval:
+  failed_staging_retention: 24h
+  retired_generation_retention: 168h
+  cleanup_batch_size: 1000
+
+credentials:
+  # 示例密钥（本地体验用）。生产必须替换：openssl rand -base64 32
+  encryption_key: "yGXWruJN7aN8LaGXosgYyiKpPujeCZzxFay53KKeG+8="
+
+auth:
+  session:
+    cookie_name: "langhuan_session"
+    lifetime_seconds: 604800
+    secure_cookie: false          # 本地 http 体验必须为 false；生产 https 为 true
+    domain: ""
+  password:
+    argon2_memory_kib: 65536
+    argon2_iterations: 3
+    argon2_parallelism: 2
+  rate_limit:
+    login_max_attempts: 5
+    login_window_seconds: 900
+  invitation:
+    lifetime_seconds: 604800
+
+api_key:
+  default_lifetime_seconds: 7776000
+  max_lifetime_seconds: 31536000
+  last_used_touch_interval_seconds: 300
+  active_limit: 100
+
+mcp:
+  inline_ingest_max_file_size_bytes: 8388608
+
+search:
+  multi_knowledge_base_limit: 20
+  multi_concurrency: 4
+  multi_merge_rrf_k: 60

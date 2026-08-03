@@ -1,0 +1,46 @@
+export const invitations = {
+  list: {
+    columnEmail: '受邀邮箱',
+    columnRole: '角色',
+    columnStatus: '状态',
+    columnTokenPrefix: 'Token 前缀',
+    columnExpiresAt: '过期时间',
+    columnActions: '操作',
+    revokeButton: '撤销',
+    tokenPrefixValue: 'Token 前缀：{{prefix}}',
+    empty: '暂无邀请记录',
+    status: {
+      pending: '待接受',
+      accepted: '已接受',
+      expired: '已过期',
+      revoked: '已撤销',
+    },
+  },
+  form: {
+    emailLabel: '受邀邮箱',
+    roleLabel: '角色',
+    role: {
+      member: '成员',
+      admin: '管理员',
+      owner: '所有者',
+    },
+    submitButton: '发出邀请',
+    createdDialogTitle: '邀请已创建',
+    createdDialogDescription: '此完整链接只在本次创建响应中返回。',
+    linkNotVisibleAgain: '关闭后无法再次查看完整链接',
+    closeButton: '关闭',
+    copiedButton: '已复制',
+    copyLinkButton: '复制邀请链接',
+    linkCopiedToast: '邀请链接已复制',
+  },
+  revoke: {
+    dialogTitle: '撤销邀请',
+    dialogDescription: '撤销后，此邀请链接将无法继续使用。',
+    cancelButton: '取消',
+    confirmButton: '确认撤销',
+    successToast: '邀请已撤销',
+  },
+  schemas: {
+    invalidEmail: '请输入有效的邮箱地址',
+  },
+} as const

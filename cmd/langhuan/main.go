@@ -1,0 +1,638 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+	hibikenasynq "github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+
+	authadapter "github.com/dajee/langhuan/internal/adapters/auth"
+	embeddingadapter "github.com/dajee/langhuan/internal/adapters/embedding"
+	arkembedding "github.com/dajee/langhuan/internal/adapters/embedding/ark"
+	dashscopeembedding "github.com/dajee/langhuan/internal/adapters/embedding/dashscope"
+	ollamaembedding "github.com/dajee/langhuan/internal/adapters/embedding/ollama"
+	openaembedding "github.com/dajee/langhuan/internal/adapters/embedding/openai"
+	tencentcloudembedding "github.com/dajee/langhuan/internal/adapters/embedding/tencentcloud"
+	parseradapter "github.com/dajee/langhuan/internal/adapters/parser"
+	csvparser "github.com/dajee/langhuan/internal/adapters/parser/csv"
+	docxparser "github.com/dajee/langhuan/internal/adapters/parser/docx"
+	markdownparser "github.com/dajee/langhuan/internal/adapters/parser/markdown"
+	textparser "github.com/dajee/langhuan/internal/adapters/parser/text"
+	xlsxparser "github.com/dajee/langhuan/internal/adapters/parser/xlsx"
+	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
+	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
+	"github.com/dajee/langhuan/internal/application/dto"
+	"github.com/dajee/langhuan/internal/application/pipeline"
+	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/value"
+	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/db"
+	"github.com/dajee/langhuan/internal/infrastructure/logger"
+	"github.com/dajee/langhuan/internal/infrastructure/migrate"
+	"github.com/dajee/langhuan/internal/infrastructure/version"
+	langhttp "github.com/dajee/langhuan/internal/interfaces/http"
+	langmcp "github.com/dajee/langhuan/internal/interfaces/mcp"
+	"github.com/dajee/langhuan/internal/interfaces/worker"
+	authport "github.com/dajee/langhuan/internal/ports/auth"
+	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	queueport "github.com/dajee/langhuan/internal/ports/queue"
+	storageport "github.com/dajee/langhuan/internal/ports/storage"
+	webspa "github.com/dajee/langhuan/web"
+)
+
+var (
+	openDatabase   = db.Open
+	newRedisClient = redis.NewClient
+	pingRedis      = func(ctx context.Context, client *redis.Client) error {
+		return client.Ping(ctx).Err()
+	}
+	newAsynqClient = func(opt hibikenasynq.RedisClientOpt) *hibikenasynq.Client {
+		return hibikenasynq.NewClient(opt)
+	}
+)
+
+type appRuntime struct {
+	cfg          *config.Config
+	httpServer   *http.Server
+	workerServer *hibikenasynq.Server
+	workerMux    *hibikenasynq.ServeMux
+	asynqClient  *hibikenasynq.Client
+	redisClient  *redis.Client
+	gormDB       *gorm.DB
+	jobQueue     queueport.JobQueue
+	services     *runtimeServices
+}
+
+type runtimeServices struct {
+	// auth (Task 8): repos + services driving the auth/user/invitation/membership
+	// handlers and the SessionAuth middleware.
+	userRepo       *db.UserRepository
+	sessionRepo    *db.SessionRepository
+	membershipRepo *db.MembershipRepository
+	invitationRepo *db.InvitationRepository
+	users          *service.UserService
+	auth           *service.AuthService
+	invitations    *service.InvitationService
+	memberships    *service.MembershipService
+	sessionCfg     config.SessionConfig
+	publicURLs     *service.PublicURLBuilder
+
+	// resource (workspace-scoped)
+	workspaceRepo        *db.WorkspaceRepository
+	knowledgeBaseRepo    *db.KnowledgeBaseRepository
+	modelProviderRepo    *db.ModelProviderRepository
+	modelRepo            *db.ModelRepository
+	documentRepo         *db.DocumentRepository
+	faqRepo              *db.FAQRepository
+	retrievalRepo        *db.RetrievalRepository
+	documentTaskStore    *db.DocumentTaskDBStore
+	chunkRevisionStore   *db.ChunkRevisionDBStore
+	indexGenerationStore *db.IndexGenerationDBStore
+
+	workspaces             *service.WorkspaceService
+	workspaceReadiness     *service.WorkspaceReadinessService
+	knowledgeBaseSummary   *service.KnowledgeBaseSummaryService
+	knowledgeBases         *service.KnowledgeBaseService
+	modelProviders         *service.ModelProviderService
+	models                 *service.ModelService
+	modelConnectionTests   *service.ModelConnectionTestService
+	documents              *service.DocumentService
+	jobs                   *service.JobService
+	documentIngest         *service.DocumentIngestService
+	faqDocuments           *service.FAQDocumentService
+	embeddingResolver      service.EmbeddingClientResolver
+	fileTree               *service.FileTreeService
+	chunkRevisions         *service.ChunkRevisionService
+	documentChunks         *service.DocumentChunksService
+	chunkRevisionIndexer   *service.ChunkRevisionIndexService
+	indexGenerations       *service.IndexGenerationService
+	indexGenerationBuilder *service.IndexGenerationBuildService
+	search                 *service.SearchService
+	multiSearch            *service.MultiKnowledgeSearchService
+	retrievalCleanup       *service.RetrievalCleanupService
+	pipeline               *pipeline.DocumentPipeline
+	rawStore               storageport.RawDocumentStore
+	maxFileSize            int64
+	apiKeys                *service.APIKeyService
+	mcpInlineLimit         int64
+}
+
+// mcpDocumentStatusReader 组合 DocumentService 与 JobService，满足
+// ProgrammaticDocumentStatusReader 端口。
+type mcpDocumentStatusReader struct {
+	documents *service.DocumentService
+	jobs      *service.JobService
+}
+
+func (r *mcpDocumentStatusReader) GetDocument(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) (*dto.Document, error) {
+	return r.documents.Get(ctx, access, documentID)
+}
+func (r *mcpDocumentStatusReader) GetJob(ctx context.Context, access value.ResourceAccess, jobID uuid.UUID) (*dto.Job, error) {
+	return r.jobs.Get(ctx, access, jobID)
+}
+
+func main() {
+	if err := run(os.Args); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(args []string) error {
+	configFile, err := configPath(args)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		return err
+	}
+	log := logger.New(cfg.Log.Level)
+	log.Info("starting langhuan", slog.String("version", version.Version()))
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	app, err := buildApp(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := app.shutdown(shutdownCtx); err != nil {
+			log.Error("关闭运行时失败", slog.Any("error", err))
+		}
+	}()
+
+	if !cfg.Server.RunHTTP && !cfg.Server.RunWorker {
+		return nil
+	}
+	return app.start(ctx, log)
+}
+
+func configPath(args []string) (string, error) {
+	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	path := fs.String("config", "config.yaml", "YAML 配置文件路径")
+	if err := fs.Parse(args[1:]); err != nil {
+		return "", err
+	}
+	return *path, nil
+}
+
+func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
+	app := &appRuntime{cfg: cfg}
+	if !cfg.Server.RunHTTP && !cfg.Server.RunWorker {
+		return app, nil
+	}
+
+	gormDB, err := openDatabase(cfg.Database.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+	}
+	app.gormDB = gormDB
+	if shouldRunMigrations(cfg) {
+		if err := migrate.Run(ctx, cfg.Database.DSN); err != nil {
+			return nil, err
+		}
+		// Task 8: 不再调用 EnsureDefaultWorkspace——多租户认证启用后由首位
+		// platform admin 通过 /api/v1/auth/register + /api/v1/workspaces 显式建立
+		// 自有租户；这里只保留 migrate.Run（为旧库回填 workspace.slug）。
+		// EnsureDefaultWorkspace helper 仍保留，仅供旧库迁移兼容测试使用。
+	}
+
+	if needsQueueClient(cfg) {
+		redisOpt := hibikenasynq.RedisClientOpt{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		}
+		app.redisClient = newRedisClient(&redis.Options{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+		if err := pingRedis(ctx, app.redisClient); err != nil {
+			return nil, fmt.Errorf("连接 Redis 失败: %w", err)
+		}
+		app.asynqClient = newAsynqClient(redisOpt)
+		app.jobQueue = queueadapter.NewQueue(app.asynqClient)
+	}
+
+	if needsWorkerServer(cfg) {
+		redisOpt := hibikenasynq.RedisClientOpt{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		}
+		app.workerMux = hibikenasynq.NewServeMux()
+		app.workerServer = hibikenasynq.NewServer(redisOpt, hibikenasynq.Config{
+			Queues: map[string]int{"default": 1},
+		})
+	}
+
+	embeddingRegistry, err := buildRuntimeEmbeddingRegistry()
+	if err != nil {
+		return nil, err
+	}
+	app.services, err = buildRuntimeServices(gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry)
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Server.RunHTTP {
+		app.httpServer = &http.Server{Addr: cfg.Server.HTTPAddr, Handler: buildHTTPRouter(app.services)}
+	}
+
+	if app.workerMux != nil {
+		worker.RegisterSmokeHandler(app.workerMux)
+		worker.RegisterDocumentHandlers(app.workerMux, worker.DocumentHandlers{
+			Store: app.services.documentTaskStore, Queue: app.jobQueue, Pipeline: app.services.pipeline,
+		})
+		worker.RegisterChunkRevisionHandler(app.workerMux, worker.ChunkRevisionHandler{
+			Indexer: app.services.chunkRevisionIndexer,
+		})
+		worker.RegisterIndexGenerationBuildHandler(app.workerMux, worker.IndexGenerationBuildHandler{
+			Builder: app.services.indexGenerationBuilder,
+		})
+	}
+
+	return app, nil
+}
+
+func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry) (*runtimeServices, error) {
+	if embeddingRegistry == nil {
+		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
+	}
+	publicURLs, err := service.NewPublicURLBuilder(cfg.Server.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	encryptionKey, err := cfg.Credentials.DecodeEncryptionKey()
+	if err != nil {
+		return nil, err
+	}
+	defer clearSensitiveBytes(encryptionKey)
+	credentialCipher, err := db.NewAESGCMCredentialCipher(encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("构造模型凭证加密器失败: %w", err)
+	}
+
+	// Resource repos constructed first so the workspace repo can be shared with
+	// both the workspace service and the invitation service (GetPublic does
+	// best-effort workspace name/slug enrichment).
+	wsRepo := db.NewWorkspaceRepository(gormDB)
+	kbRepo := db.NewKnowledgeBaseRepository(gormDB)
+	modelProviderRepo := db.NewModelProviderRepository(gormDB)
+	modelRepo := db.NewModelRepository(gormDB)
+	documentRepo := db.NewDocumentRepository(gormDB)
+	documentRevisionRepo := db.NewDocumentRevisionRepository(gormDB)
+	indexGenerationRepo := db.NewIndexGenerationRepository(gormDB)
+	chunkSetRepo := db.NewChunkSetRepository(gormDB)
+	faqRepo := db.NewFAQRepository(gormDB)
+	retrievalRepo := db.NewRetrievalRepository(gormDB)
+	retrievalCleanupRepo := db.NewRetrievalCleanupRepository(gormDB)
+	documentPublisher := db.NewDocumentPublishDBStore(gormDB)
+	chunkRevisionStore := db.NewChunkRevisionStore(gormDB)
+	indexGenerationStore := db.NewIndexGenerationStore(gormDB)
+	jobRepo := db.NewJobRepository(gormDB)
+	workspaceReadinessRepo := db.NewWorkspaceReadinessRepository(gormDB)
+	knowledgeBaseSummaryRepo := db.NewKnowledgeBaseSummaryRepository(gormDB)
+	documentChunksRepo := db.NewDocumentChunksRepository(gormDB)
+
+	// Auth repos (Task 8).
+	userRepo := db.NewUserRepository(gormDB)
+	sessionRepo := db.NewSessionRepository(gormDB)
+	membershipRepo := db.NewMembershipRepository(gormDB)
+	invitationRepo := db.NewInvitationRepository(gormDB)
+
+	// Argon2 hasher (no Redis dependency).
+	hasher := authadapter.NewArgon2Hasher(
+		cfg.Auth.Password.Argon2MemoryKiB,
+		cfg.Auth.Password.Argon2Iterations,
+		cfg.Auth.Password.Argon2Parallelism,
+	)
+
+	// Rate limiter: declare the INTERFACE variable first, then assign the
+	// concrete adapter only when redisClient is non-nil. This avoids the
+	// typed-nil-interface trap (passing a nil *RedisRateLimiter as
+	// authport.RateLimiter yields a non-nil interface wrapping a nil pointer,
+	// which would panic on the first method call). The HTTP runtime always
+	// has Redis (needsQueueClient is true when RunHTTP), so the limiter is
+	// populated in production; the no-DB stub tests pass nil redisClient and
+	// never exercise login.
+	var limiter authport.RateLimiter
+	if redisClient != nil {
+		limiter = authadapter.NewRedisRateLimiter(redisClient)
+	}
+
+	users := service.NewUserService(userRepo, hasher)
+	auth := service.NewAuthService(userRepo, sessionRepo, hasher, limiter, cfg.Auth)
+	invitations := service.NewInvitationService(invitationRepo, wsRepo, userRepo, hasher, cfg.Auth)
+	memberships := service.NewMembershipService(membershipRepo, userRepo)
+
+	rawStore := localstorage.NewRawDocumentStore(cfg.Storage.RawDocumentDir)
+	runtimeParser, err := buildRuntimeParser()
+	if err != nil {
+		return nil, fmt.Errorf("构造 runtime parser registry 失败: %w", err)
+	}
+	embeddingResolver := service.NewEmbeddingClientResolver(modelRepo, credentialCipher, embeddingRegistry)
+	documentPipeline := pipeline.NewDocumentPipeline(pipeline.DocumentPipelineDeps{
+		Documents:         documentRepo,
+		Revisions:         documentRevisionRepo,
+		Generations:       indexGenerationRepo,
+		ChunkSets:         chunkSetRepo,
+		FAQRevisions:      faqRepo,
+		IndexSources:      chunkSetRepo,
+		EmbeddingResolver: embeddingResolver,
+		RetrievalIndex:    retrievalRepo,
+		Publisher:         documentPublisher,
+		Parser:            runtimeParser,
+		RawStore:          rawStore,
+		MaxFileSizeBytes:  cfg.Ingest.MaxFileSizeBytes,
+	})
+	chunkRevisions := service.NewChunkRevisionService(chunkRevisionStore, jobQueue)
+	chunkRevisionIndexer := service.NewChunkRevisionIndexService(
+		chunkRevisionStore, embeddingResolver, retrievalRepo,
+	)
+	indexGenerations := service.NewIndexGenerationService(service.IndexGenerationServiceDeps{
+		Store: indexGenerationStore, Models: kbRepo, Queue: jobQueue,
+	})
+	indexGenerationBuilder := service.NewIndexGenerationBuildService(service.IndexGenerationBuildDeps{
+		Store: indexGenerationStore, Chunker: documentPipeline, Sources: chunkSetRepo,
+		Resolver: embeddingResolver, Index: retrievalRepo,
+	})
+	search := service.NewSearchService(service.SearchServiceDeps{
+		Repository: retrievalRepo, Resolver: embeddingResolver,
+	})
+	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
+	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, apiKeyNameStore, cfg.Search)
+	retrievalCleanup := service.NewRetrievalCleanupService(retrievalCleanupRepo, service.RetrievalCleanupOptions{
+		FailedStagingRetention:     cfg.Retrieval.FailedStagingRetention,
+		RetiredGenerationRetention: cfg.Retrieval.RetiredGenerationRetention,
+		BatchSize:                  cfg.Retrieval.CleanupBatchSize,
+	})
+	apiKeyCipher, err := authadapter.NewAPIKeyCipher(encryptionKey, nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造 API Key 加密器失败: %w", err)
+	}
+	apiKeyRepo := db.NewWorkspaceAPIKeyRepository(gormDB)
+	apiKeys, err := service.NewAPIKeyService(service.APIKeyServiceDeps{
+		Store:  apiKeyRepo,
+		Cipher: apiKeyCipher,
+		Names:  apiKeyNameStore,
+		URLs:   publicURLs,
+		Config: cfg.APIKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("构造 API Key 服务失败: %w", err)
+	}
+	return &runtimeServices{
+		userRepo:       userRepo,
+		sessionRepo:    sessionRepo,
+		membershipRepo: membershipRepo,
+		invitationRepo: invitationRepo,
+		users:          users,
+		auth:           auth,
+		invitations:    invitations,
+		memberships:    memberships,
+		sessionCfg:     cfg.Auth.Session,
+		publicURLs:     publicURLs,
+
+		workspaceRepo:        wsRepo,
+		knowledgeBaseRepo:    kbRepo,
+		modelProviderRepo:    modelProviderRepo,
+		modelRepo:            modelRepo,
+		documentRepo:         documentRepo,
+		documentTaskStore:    db.NewDocumentTaskStore(gormDB),
+		chunkRevisionStore:   chunkRevisionStore,
+		indexGenerationStore: indexGenerationStore,
+		faqRepo:              faqRepo,
+		retrievalRepo:        retrievalRepo,
+		workspaces:           service.NewWorkspaceService(wsRepo),
+		workspaceReadiness:   service.NewWorkspaceReadinessService(workspaceReadinessRepo),
+		knowledgeBaseSummary: service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
+		knowledgeBases:       service.NewKnowledgeBaseService(kbRepo, kbRepo),
+		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, embeddingRegistry),
+		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry),
+		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry),
+		documents:            service.NewDocumentService(documentRepo, kbRepo),
+		jobs:                 service.NewJobService(jobRepo),
+		documentIngest: service.NewDocumentIngestService(service.DocumentIngestServiceDeps{
+			Store:            db.NewDocumentIngestDBStore(gormDB),
+			RawStore:         rawStore,
+			Queue:            jobQueue,
+			AllowedFileTypes: cfg.Ingest.AllowedFileTypes,
+		}),
+		faqDocuments: service.NewFAQDocumentService(service.FAQDocumentServiceDeps{
+			Store: faqRepo,
+			Queue: jobQueue,
+		}),
+		embeddingResolver:      embeddingResolver,
+		fileTree:               service.NewFileTreeService(db.NewFileTreeRepository(gormDB)),
+		chunkRevisions:         chunkRevisions,
+		documentChunks:         service.NewDocumentChunksService(documentChunksRepo),
+		chunkRevisionIndexer:   chunkRevisionIndexer,
+		indexGenerations:       indexGenerations,
+		indexGenerationBuilder: indexGenerationBuilder,
+		search:                 search,
+		multiSearch:            multiSearch,
+		retrievalCleanup:       retrievalCleanup,
+		pipeline:               documentPipeline,
+		rawStore:               rawStore,
+		maxFileSize:            cfg.Ingest.MaxFileSizeBytes,
+		apiKeys:                apiKeys,
+		mcpInlineLimit:         cfg.MCP.InlineIngestMaxFileSizeBytes,
+	}, nil
+}
+
+func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
+	return embeddingadapter.NewRegistry(
+		openaembedding.NewFactory(),
+		arkembedding.NewFactory(),
+		ollamaembedding.NewFactory(),
+		dashscopeembedding.NewFactory(),
+		tencentcloudembedding.NewFactory(),
+	)
+}
+
+func clearSensitiveBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
+}
+
+func buildRuntimeParser() (*parseradapter.Registry, error) {
+	return parseradapter.NewRegistry(
+		parseradapter.Registration{FileType: "markdown", Parser: markdownparser.New()},
+		parseradapter.Registration{FileType: "txt", Parser: textparser.New()},
+		parseradapter.Registration{FileType: "csv", Parser: csvparser.New()},
+		parseradapter.Registration{FileType: "xlsx", Parser: xlsxparser.New()},
+		parseradapter.Registration{FileType: "docx", Parser: docxparser.New()},
+	)
+}
+
+func buildHTTPRouter(services *runtimeServices) http.Handler {
+	mcpServer := langmcp.NewServer(langmcp.Dependencies{
+		KnowledgeBases: langmcp.NewMCPKnowledgeBaseService(services.knowledgeBases),
+		DocumentIngest: langmcp.NewMCPDocumentIngestService(services.documentIngest),
+		DocumentStatus: service.NewProgrammaticDocumentStatusService(&mcpDocumentStatusReader{
+			documents: services.documents, jobs: services.jobs,
+		}),
+		DocumentDelete: langmcp.NewMCPDocumentDeleteService(services.documents),
+		ChunkGet:       langmcp.NewMCPChunkGetService(services.chunkRevisions),
+		MultiSearch:    services.multiSearch,
+		InlineLimit:    services.mcpInlineLimit,
+	})
+	return langhttp.NewRouter(langhttp.Dependencies{
+		// auth (Task 8)
+		Auth:          services.auth,
+		Users:         services.users,
+		Invitations:   services.invitations,
+		Memberships:   services.memberships,
+		SessionConfig: services.sessionCfg,
+		PublicURLs:    services.publicURLs,
+		APIKeys:       services.apiKeys,
+		APIKeyAuth:    services.apiKeys,
+
+		// resource (workspace-scoped)
+		Workspaces:           services.workspaces,
+		WorkspaceReadiness:   services.workspaceReadiness,
+		KnowledgeBaseSummary: services.knowledgeBaseSummary,
+		KnowledgeBases:       services.knowledgeBases,
+		ModelProviders:       services.modelProviders,
+		Models:               services.models,
+		ModelConnectionTests: services.modelConnectionTests,
+		DocumentIngest:       services.documentIngest,
+		Documents:            services.documents,
+		FAQDocuments:         services.faqDocuments,
+		FileTree:             services.fileTree,
+		ChunkRevisions:       services.chunkRevisions,
+		DocumentChunks:       services.documentChunks,
+		IndexGenerations:     services.indexGenerations,
+		Search:               services.search,
+		MultiSearch:          services.multiSearch,
+		Jobs:                 services.jobs,
+		MCPHandler:           mcpServer.Handler(),
+		SPA:                  webspa.SPA,
+		MaxFileSizeBytes:     services.maxFileSize,
+	})
+}
+
+func needsQueueClient(cfg *config.Config) bool {
+	return cfg.Server.RunHTTP || cfg.Server.RunWorker
+}
+
+func needsWorkerServer(cfg *config.Config) bool {
+	return cfg.Server.RunWorker
+}
+
+func shouldRunMigrations(cfg *config.Config) bool {
+	return cfg.Database.AutoMigrate
+}
+
+// startupBanner 在服务完全就绪、可以开始服务时原样输出到控制台。
+const startupBanner = `▖       ▌       
+▌ ▀▌▛▌▛▌▛▌▌▌▀▌▛▌
+▙▖█▌▌▌▙▌▌▌▙▌█▌▌▌
+      ▄▌        
+`
+
+// printStartupBanner 输出启动 banner 与就绪提示（控制台使用英文）。
+func printStartupBanner(w io.Writer) {
+	fmt.Fprint(w, startupBanner)
+	fmt.Fprintln(w, "Langhuan is ready to serve requests.")
+}
+
+func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
+	errCh := make(chan error, 2)
+
+	// 收集各服务"真正启动完成"的信号，全部就绪后才输出 banner。
+	wantReady := 0
+	if a.workerServer != nil && a.workerMux != nil {
+		wantReady++
+	}
+	if a.httpServer != nil {
+		wantReady++
+	}
+	readyCh := make(chan struct{}, wantReady)
+
+	if a.workerServer != nil && a.workerMux != nil {
+		log.Info("启动 asynq worker")
+		// Start 同步返回即代表 worker 已启动（asynq 输出 Starting processing 并
+		// 拉起全部子组件）；退出时由 app.shutdown 调用 workerServer.Shutdown 优雅关闭。
+		if err := a.workerServer.Start(a.workerMux); err != nil {
+			return fmt.Errorf("启动 asynq worker 失败: %w", err)
+		}
+		readyCh <- struct{}{}
+	}
+	if a.httpServer != nil {
+		log.Info("启动 HTTP server", slog.String("addr", a.httpServer.Addr))
+		// 同步绑定端口，成功即代表 HTTP 已可接收请求。
+		listener, err := net.Listen("tcp", a.httpServer.Addr)
+		if err != nil {
+			return fmt.Errorf("监听 HTTP 端口失败: %w", err)
+		}
+		go func() {
+			if err := a.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("HTTP server 退出: %w", err)
+			}
+		}()
+		readyCh <- struct{}{}
+	}
+
+	for range wantReady {
+		<-readyCh
+	}
+	printStartupBanner(os.Stdout)
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errCh:
+		return err
+	}
+}
+
+func (a *appRuntime) shutdown(ctx context.Context) error {
+	var firstErr error
+	capture := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if a.httpServer != nil {
+		capture(a.httpServer.Shutdown(ctx))
+	}
+	if a.workerServer != nil {
+		a.workerServer.Shutdown()
+	}
+	if a.asynqClient != nil {
+		capture(a.asynqClient.Close())
+	}
+	if a.redisClient != nil {
+		capture(a.redisClient.Close())
+	}
+	if a.gormDB != nil {
+		sqlDB, err := a.gormDB.DB()
+		if err != nil {
+			capture(err)
+		} else {
+			capture(sqlDB.Close())
+		}
+	}
+	return firstErr
+}

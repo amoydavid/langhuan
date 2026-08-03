@@ -1,0 +1,123 @@
+export const content = {
+  // 文件树（FileTree）
+  fileTree: {
+    newFolderAriaLabel: '新建文件夹',
+    searchAriaLabel: '搜索文件',
+    searchPlaceholder: '搜索文件…',
+    treeAriaLabel: '文件',
+    renameAction: '重命名',
+    moveAction: '移动',
+    deleteAction: '删除',
+    renameActionAriaLabel: '重命名 {{name}}',
+    moveActionAriaLabel: '移动 {{name}}',
+    deleteActionAriaLabel: '删除 {{name}}',
+    noMatches: '没有匹配的文件',
+    empty: '还没有文件',
+    // 新建文件夹
+    createFolder: {
+      formAriaLabel: '在 {{path}} 中新建文件夹',
+      nameAriaLabel: '文件夹名称',
+      namePlaceholder: '例如 guides',
+      cancel: '取消',
+      create: '创建',
+    },
+    // 重命名
+    rename: {
+      inputAriaLabel: '重命名 {{name}}',
+      nameRequired: '名称不能为空',
+      nameTooLong: '名称不能超过 255 个字符',
+    },
+    // 移动对话框
+    move: {
+      dialogAriaLabel: '选择目标目录',
+      title: '选择目标目录',
+      toTarget: '移动到 {{path}}',
+      cancel: '取消',
+    },
+    // 删除对话框
+    delete: {
+      dialogAriaLabel: '确认删除 {{name}}',
+      title: '删除“{{name}}”？',
+      fileDescription: '文件会从检索中移除，后台完成软删除。',
+      folderDescription: '非空目录不能删除，请先移动或删除其中内容。',
+      cancel: '取消',
+      confirm: '确认删除',
+    },
+    // 文件树操作错误
+    errors: {
+      notEmpty: '目录中仍有内容，请先移动或删除其中内容。',
+      nameConflict: '目标目录中已存在同名项目，请更换名称。',
+      cycle: '不能把目录移动到自身或其子目录。',
+    },
+    // 文件树数据结构校验
+    schema: {
+      fileRequiresDocument: 'File 节点必须关联 Document',
+      folderCannotHaveDocument: '目录节点不能关联 Document',
+      fileCannotHaveChildren: 'File 节点不能包含子节点',
+    },
+  },
+
+  // 文件树工作区（FileTreeWorkspace）
+  fileWorkspace: {
+    uploadFile: '上传文件',
+  },
+
+  // 内容列表（ContentList）
+  contentList: {
+    kindFile: '文件',
+    kindFaq: 'FAQ',
+    kindWeb: 'Web',
+    statusPending: '等待处理',
+    statusProcessing: '处理中',
+    statusReady: '可检索',
+    statusFailed: '失败',
+    statusDeleting: '删除中',
+    statusDeleted: '已删除',
+    allLabel: '全部内容',
+    unnamed: '未命名文档',
+    noResultsTitle: '没有符合条件的内容',
+    noResultsHint: '调整搜索或筛选条件后重试。',
+    columnName: '名称',
+    columnType: '类型',
+    columnSummary: '摘要',
+    columnStatus: '状态',
+    columnUpdatedAt: '更新时间',
+    columnActions: '操作',
+    viewAriaLabel: '查看 {{name}}',
+    faqCount: '{{count}} 个问题',
+    noSourceUri: '未记录来源地址',
+    fallbackType: '文件',
+    updatedOn: '更新于 {{date}}',
+  },
+
+  // 文档预览（DocumentPreview）
+  documentPreview: {
+    unnamed: '未命名文档',
+    tabListAriaLabel: '文档查看方式',
+    tabPreview: '预览',
+    tabRaw: '原始 Markdown',
+    tabInfo: '文件信息',
+    noNormalizedContent: '当前还没有可预览的规范化内容。',
+    noRawMarkdown: '当前还没有原始 Markdown。',
+    fieldOriginalFilename: '原始文件名',
+    fieldFileType: '文件类型',
+    fieldMime: 'MIME',
+    fieldSize: '大小',
+    fieldRevision: '版本',
+    fieldUpdatedAt: '更新时间',
+    fieldSource: '来源',
+    fieldSourceUri: '来源地址',
+    unknown: '未知',
+    revisionNo: '第 {{no}} 版',
+    noRevision: '尚无可用版本',
+  },
+
+  // 内容布局（ContentLayout）
+  contentLayout: {
+    tabsAriaLabel: '内容类型',
+    tabAll: '全部内容',
+    tabFiles: '文件',
+    tabFaq: 'FAQ',
+    tabWeb: 'Web',
+  },
+} as const

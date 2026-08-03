@@ -1,0 +1,40 @@
+export const auth = {
+  layout: {
+    brandName: '琅嬛',
+    tagline: '知识转化与检索服务',
+  },
+  signIn: {
+    title: '登录琅嬛',
+    description: '使用管理员分配的账号进入知识管理控制台。',
+    emailLabel: '邮箱',
+    passwordLabel: '密码',
+    passwordPlaceholder: '请输入密码',
+    submitButton: '登录',
+    successToast: '登录成功',
+    rateLimited: '登录尝试过于频繁，请稍后重试',
+  },
+  setup: {
+    emailLabel: '邮箱',
+    nicknameLabel: '昵称',
+    passwordLabel: '密码',
+    confirmPasswordLabel: '确认密码',
+    submitButton: '完成初始化',
+    successToast: '初始化完成，请登录',
+  },
+  invitationRegistration: {
+    emailLabel: '邮箱',
+    nicknameLabel: '昵称',
+    passwordLabel: '密码',
+    confirmPasswordLabel: '确认密码',
+    submitButton: '接受邀请',
+    successToast: '邀请已接受',
+  },
+  schemas: {
+    invalidEmail: '请输入有效的邮箱地址',
+    passwordRequired: '请输入密码',
+    passwordMinLength: '密码至少需要 8 个字符',
+    nicknameRequired: '请输入昵称',
+    confirmPasswordRequired: '请再次输入密码',
+    passwordMismatch: '两次输入的密码不一致',
+  },
+} as const

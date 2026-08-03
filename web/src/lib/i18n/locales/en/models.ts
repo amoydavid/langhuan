@@ -1,0 +1,163 @@
+import type { models as zhModels } from '../zh/models'
+
+type Widen<T> = {
+  [K in keyof T]: T[K] extends object ? Widen<T[K]> : string
+}
+
+export const models = {
+  common: {
+    statusActive: 'Running',
+    statusDisabled: 'Disabled',
+    yes: 'Yes',
+    no: 'No',
+    providerOpenAICompatible: 'OpenAI compatible',
+    providerOpenAIOrAzure: 'OpenAI / Azure OpenAI',
+    providerArk: 'Volcano Ark ARK',
+    providerOllama: 'Ollama',
+    providerDashscope: 'DashScope',
+    providerTencentcloud: 'Tencent Cloud Hunyuan',
+  },
+  modelCard: {
+    dimensions: '{{count}} dimensions',
+    referenceCount: '{{count}} knowledge base references',
+    testButton: 'Test connection',
+    editButton: 'Edit',
+    disableButton: 'Disable',
+    enableButton: 'Enable',
+    deleteButton: 'Delete',
+  },
+  modelForm: {
+    nameLabel: 'Model identifier',
+    displayNameLabel: 'Display name',
+    modelNameLabel: 'Provider model name',
+    dimensionsLabel: 'Vector dimensions',
+    batchSizeLabel: 'Batch size',
+    truncateLabel: 'Truncate long text',
+    keepAliveLabel: 'Keep Alive (seconds)',
+    descriptionLabel: 'Description',
+    submitButton: 'Save model',
+    addedToast: 'Model added',
+    updatedToast: 'Model updated',
+  },
+  providerCard: {
+    sharedBadge: 'Platform shared',
+    noDescription: 'No connection description provided.',
+    noCredentials: 'No credentials required',
+    credentialsConfigured: 'Credentials configured',
+    missingCredentials: 'Credentials missing',
+    viewLinkAriaLabel: 'View connection',
+    viewLink: 'View',
+  },
+  providerFields: {
+    modeLabel: 'Mode',
+    timeoutLabel: 'Timeout (seconds)',
+    customHeadersLabel: 'Custom headers',
+    customHeadersHelp:
+      'Optional; one "name: value" per line. Stored encrypted with the API Key.',
+    authModeLabel: 'Authentication method',
+    retryTimesLabel: 'Retry count',
+  },
+  providerForm: {
+    nameLabel: 'Connection identifier',
+    displayNameLabel: 'Display name',
+    descriptionLabel: 'Description',
+    credentialsConfigured: 'Credentials configured',
+    credentialsNotLoaded:
+      'Existing credentials are never read from or echoed back by the server while editing.',
+    replaceCredentialsButton: 'Replace credentials',
+    submitButton: 'Save connection',
+    createdToast: 'Model connection created',
+    updatedToast: 'Model connection updated',
+  },
+  detailPage: {
+    backLink: 'Back to model configuration',
+    sharedReadonlyBadge: 'Platform shared (read-only)',
+    editProviderButton: 'Edit connection',
+    disableProviderButton: 'Disable connection',
+    enableProviderButton: 'Enable connection',
+    deleteProviderButton: 'Delete connection',
+    configTitle: 'Connection configuration',
+    noPublicConfig: 'This Provider has no public configuration.',
+    credentialsTitle: 'Credential status',
+    noCredentials: 'No credentials required',
+    credentialsEncrypted: 'Credentials encrypted and saved',
+    credentialsNotConfigured: 'Credentials not configured yet',
+    credentialFields: 'Credential fields: {{fields}}',
+    credentialSeparator: ', ',
+    credentialsNote:
+      'The API never returns credential plaintext; new credentials are written only when you explicitly choose to replace them.',
+    modelsTitle: 'Embedding models',
+    modelsDescription:
+      'Only models under the current connection are listed; disabled records keep their reference information.',
+    addModelButton: 'Add model',
+    testPassed: 'Connection test passed',
+    testResult: '{{dimensions}} dimensions · {{duration}} ms',
+    emptyModels: 'No models under this connection yet.',
+    editProviderDialogTitle: 'Edit model connection',
+    editProviderDialogDescription:
+      'Existing credentials are not pre-filled; click "Replace credentials" to rotate them.',
+    addModelDialogTitle: 'Add Embedding model',
+    addModelDialogDescription:
+      'The dimensions must match the vector index already built in the database.',
+    editModelDialogTitle: 'Edit Embedding model',
+    editModelDialogDescription:
+      'Models referenced by a knowledge base cannot have semantic fields modified.',
+    deleteProviderDialogTitle: 'Delete model connection',
+    deleteProviderDialogDescription:
+      'Only connections without models can be deleted. This action cannot be undone.',
+    deleteModelDialogTitle: 'Delete Embedding model',
+    deleteModelDialogDescription:
+      'Models referenced by a knowledge base cannot be deleted. This action cannot be undone.',
+    confirmDelete: 'Confirm delete',
+    cancel: 'Cancel',
+    providerStatusToast: 'Connection status updated',
+    providerDeletedToast: 'Model connection deleted',
+    modelStatusToast: 'Model status updated',
+    modelDeletedToast: 'Model deleted',
+    loading: 'Loading connection details…',
+  },
+  listPage: {
+    platformEyebrow: 'Platform infrastructure',
+    workspaceEyebrow: 'Workspace infrastructure',
+    title: 'Model configuration',
+    platformDescription:
+      'Maintain the Embedding connections and models visible to all Workspaces.',
+    workspaceDescription:
+      'Manage the current Workspace connections and view shared models provided by the platform.',
+    createButton: 'Configure new connection',
+    loading: 'Loading model connections…',
+    platformSectionTitle: 'Platform shared',
+    workspaceSectionTitle: 'Current Workspace',
+    platformSectionDescription:
+      'Maintained by platform administrators; read-only to all Workspaces.',
+    workspaceSectionDescription:
+      'Credentials and connection configuration belong only to the current Workspace.',
+    sharedSectionTitle: 'Platform shared (read-only)',
+    sharedSectionDescription:
+      'Can be bound directly to a knowledge base; configuration changes are managed by platform administrators.',
+    createDialogTitle: 'Configure model connection',
+    createDialogDescription:
+      'Credentials are sent only on this submit and are never echoed back to the browser afterwards.',
+    emptyTitle: 'No model connections',
+    emptyDescription: 'There are no Providers to show in this group yet.',
+  },
+  schemas: {
+    providerNameLowercase: 'Enter a lowercase connection identifier',
+    displayNameRequired: 'Enter a display name',
+    timeoutRequired: 'Enter a timeout',
+    validUrl: 'Enter a valid URL',
+    modelNameLowercase: 'Enter a lowercase model identifier',
+    modelNameRequired: 'Enter a model name',
+    azureModeRequiresEndpoint:
+      'Azure mode requires an Endpoint and API Version',
+    standardModeNoApiVersion: 'Standard mode does not use API Version',
+    apiKeyRequired: 'Enter an API Key',
+    akSkRequired: 'Enter Access Key and Secret Key',
+    secretIdSkRequired: 'Enter Secret ID and Secret Key',
+    customHeadersInvalid: 'Invalid custom header format',
+    headerLineFormat: 'Line {{line}} must be "name: value"',
+    headerNameDuplicate: 'Header name on line {{line}} is duplicated',
+    ollamaUrlInvalid: 'Enter a valid Ollama address',
+    regionRequired: 'Enter a region',
+  },
+} satisfies Widen<typeof zhModels>

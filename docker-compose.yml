@@ -1,0 +1,50 @@
+# langhuan 一键体验：postgres(pgvector+zhparser) + redis + langhuan 单服务。
+#
+#   docker compose up -d --build
+#   打开 http://localhost:8080
+#
+# postgres 镜像复用 docker/postgres-test/Dockerfile（pgvector + zhparser 中文分词），
+# 该镜像同时服务于集成测试与本地体验，保证两处数据库能力一致。
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/postgres-test/Dockerfile
+    environment:
+      POSTGRES_DB: langhuan
+      POSTGRES_USER: langhuan
+      POSTGRES_PASSWORD: langhuan
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langhuan -d langhuan"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  langhuan:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./docker/compose/config.yaml:/app/config.yaml:ro
+      - rawdocs:/data/raw-documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["-config", "/app/config.yaml"]
+
+volumes:
+  pgdata:
+  rawdocs:

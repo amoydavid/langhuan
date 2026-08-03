@@ -1,0 +1,76 @@
+server:
+  http_addr: ":8080"
+  # 全局服务地址，Web/REST/MCP/邀请链接都从它派生。本地默认 http://127.0.0.1:8080，
+  # 生产部署必须使用 HTTPS，例如 https://langhuan.example.com 或带前缀 https://example.com/langhuan。
+  base_url: "http://127.0.0.1:8080"
+  run_http: true
+  run_worker: true
+
+database:
+  driver: postgres
+  dsn: "postgres://localhost:5432/langhuan?sslmode=disable"
+  auto_migrate: true
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+
+log:
+  level: info
+
+storage:
+  raw_document_dir: "./data/raw-documents"
+
+ingest:
+  max_file_size_bytes: 52428800
+  allowed_file_types:
+    - markdown
+    - md
+    - txt
+    - csv
+    - xlsx
+    - docx
+
+retrieval:
+  failed_staging_retention: 24h
+  retired_generation_retention: 168h
+  cleanup_batch_size: 1000
+
+credentials:
+  # 生成命令：openssl rand -base64 32
+  # 将输出复制到实际 config.yaml，不要包含行尾换行；不要提交真实值。
+  encryption_key: ""
+
+auth:
+  session:
+    cookie_name: "langhuan_session"
+    lifetime_seconds: 604800          # 7 天
+    secure_cookie: true               # 生产必须为 true
+    domain: ""                        # 可选，留空表示同源
+  password:
+    argon2_memory_kib: 65536          # 64 MiB
+    argon2_iterations: 3
+    argon2_parallelism: 2
+  rate_limit:
+    login_max_attempts: 5
+    login_window_seconds: 900         # 15 分钟
+  invitation:
+    lifetime_seconds: 604800          # 7 天
+
+# Workspace API Key 程序化访问参数
+api_key:
+  default_lifetime_seconds: 7776000     # 默认 90 天
+  max_lifetime_seconds: 31536000        # 最长 365 天
+  last_used_touch_interval_seconds: 300 # 最近使用 5 分钟节流
+  active_limit: 100                     # 单 Workspace 活跃 key 上限
+
+# MCP transport 参数
+mcp:
+  inline_ingest_max_file_size_bytes: 8388608 # document_ingest 内联 Base64 上限 8 MiB
+
+# 多知识库检索参数
+search:
+  multi_knowledge_base_limit: 20 # knowledge_search 最多查询的知识库数
+  multi_concurrency: 4           # 多库检索默认并发
+  multi_merge_rrf_k: 60          # 跨库 RRF 合并参数
