@@ -198,6 +198,34 @@ func TestToolInputSchemasMatchStructDeclarations(t *testing.T) {
 	})
 }
 
+// TestToolsMarshalWithoutSchemaConflict 是 Raw schema 注册的回归测试。
+//
+// mcp.NewTool 默认初始化 InputSchema{Type:"object"}，而 mcp.WithRawInputSchema /
+// mcp.WithRawOutputSchema 只设置 Raw 字段、不清空默认 InputSchema/OutputSchema，
+// 导致 Tool.MarshalJSON 报错 "has both InputSchema and RawInputSchema set"。
+// 项目内的 withRawInputSchema/withRawOutputSchema 会同时清零默认 schema 避免冲突。
+// 这里对每个工具强制 json.Marshal，确保 tools/list 序列化路径不再触发冲突。
+func TestToolsMarshalWithoutSchemaConflict(t *testing.T) {
+	srv := NewServer(minimalDeps())
+	resp := srv.MCP().HandleMessage(context.Background(), json.RawMessage(`{
+		"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}
+	}`))
+	jsonResp, ok := resp.(mcplib.JSONRPCResponse)
+	require.True(t, ok)
+	result, ok := jsonResp.Result.(mcplib.ListToolsResult)
+	require.True(t, ok)
+	require.Len(t, result.Tools, 6, "应注册 6 个工具")
+
+	for _, tool := range result.Tools {
+		t.Run(tool.Name, func(t *testing.T) {
+			// MarshalJSON 会检测 InputSchema/RawInputSchema、OutputSchema/RawOutputSchema 是否并存。
+			data, err := tool.MarshalJSON()
+			require.NoError(t, err, "%s 序列化失败：Raw schema 与默认 schema 冲突", tool.Name)
+			require.NotEmpty(t, data)
+		})
+	}
+}
+
 // TestKnowledgeSearchOutputSchemaUUIDsAreString 是 uuid.UUID→string schema 映射的回归测试。
 //
 // uuid.UUID 底层是 [16]byte，jsonschema-go 默认把它推导成 "type":"array"，但实际

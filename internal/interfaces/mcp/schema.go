@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // uuidStringSchema 把 uuid.UUID 声明为 JSON string。
@@ -38,8 +39,7 @@ var schemaOpts = &jsonschema.ForOptions{
 	TypeSchemas:        schemaOverrides,
 }
 
-// rawSchema 基于 Go 类型 T 生成 JSON Schema 并序列化为 json.RawMessage，
-// 供 mcp.WithRawInputSchema / mcp.WithRawOutputSchema 注册。
+// schemaForType 基于 Go类型 T 生成 JSON Schema 并序列化为 json.RawMessage。
 //
 // 相比 mcp-go 自带的 WithInputSchema[T]()/WithOutputSchema[T]()（内部写死 opts、
 // 不支持 TypeSchemas），这里显式调用 jsonschema.For[T] 并注入 uuid.UUID→string 映射，
@@ -47,7 +47,7 @@ var schemaOpts = &jsonschema.ForOptions{
 //
 // jsonschema-go 原生支持 "jsonschema" struct tag（作为 description），因此现有
 // 工具 DTO 的 tag 约定无需额外处理。
-func rawSchema[T any]() (json.RawMessage, error) {
+func schemaForType[T any]() (json.RawMessage, error) {
 	schema, err := jsonschema.For[T](schemaOpts)
 	if err != nil {
 		return nil, fmt.Errorf("生成 schema: %w", err)
@@ -59,22 +59,44 @@ func rawSchema[T any]() (json.RawMessage, error) {
 	return raw, nil
 }
 
-// rawInputSchema 生成工具输入 schema。
-func rawInputSchema[T any]() json.RawMessage {
-	return mustRawSchema[T]()
-}
-
-// rawOutputSchema 生成工具输出 schema。
-func rawOutputSchema[T any]() json.RawMessage {
-	return mustRawSchema[T]()
-}
-
-// mustRawSchema 在包初始化/工具注册期生成 schema，失败直接 panic：
+// mustSchemaForType 在工具注册期生成 schema，失败直接 panic：
 // schema 生成失败属于编程期错误（类型定义问题），不应推迟到运行期。
-func mustRawSchema[T any]() json.RawMessage {
-	raw, err := rawSchema[T]()
+func mustSchemaForType[T any]() json.RawMessage {
+	raw, err := schemaForType[T]()
 	if err != nil {
 		panic(err)
 	}
 	return raw
+}
+
+// withRawInputSchema 用带 uuid 映射的 schema 注册工具输入，并清除 mcp.NewTool
+// 默认初始化的空 InputSchema（{Type:"object", Properties:map[]{}}）。
+//
+// mcp.NewTool 默认会把 InputSchema.Type 设为 "object"，而 mcp.WithRawInputSchema
+// 只设置 RawInputSchema、不清空默认 InputSchema，导致 Tool.MarshalJSON 检测到
+// 两者并存并报错 "has both InputSchema and RawInputSchema set"。这里在设置 Raw
+// 的同时把 InputSchema 清零，避免冲突。
+func withRawInputSchema[T any]() mcp.ToolOption {
+	return func(t *mcp.Tool) {
+		t.RawInputSchema = mustSchemaForType[T]()
+		t.InputSchema = mcp.ToolInputSchema{}
+	}
+}
+
+// withRawOutputSchema 同 withRawInputSchema，用于工具输出 schema。
+func withRawOutputSchema[T any]() mcp.ToolOption {
+	return func(t *mcp.Tool) {
+		t.RawOutputSchema = mustSchemaForType[T]()
+		t.OutputSchema = mcp.ToolOutputSchema{}
+	}
+}
+
+// withRawOutputSchemaFrom 用给定的手写 RawMessage 注册工具输出 schema，
+// 用于 document_status / chunk_get 等保留手写 schema 的工具。同样清除默认
+// OutputSchema 以避免与 RawOutputSchema 冲突。
+func withRawOutputSchemaFrom(raw json.RawMessage) mcp.ToolOption {
+	return func(t *mcp.Tool) {
+		t.RawOutputSchema = raw
+		t.OutputSchema = mcp.ToolOutputSchema{}
+	}
 }
