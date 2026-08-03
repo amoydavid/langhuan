@@ -146,9 +146,9 @@ type knowledgeBaseCreateOutput struct {
 
 func registerKnowledgeBaseCreate(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("knowledge_base_create",
-		mcp.WithDescription("创建知识库；新知识库会原子加入调用 API Key 的范围。"),
-		mcp.WithInputSchema[knowledgeBaseCreateInput](),
-		mcp.WithOutputSchema[knowledgeBaseCreateOutput](),
+		mcp.WithDescription("创建一个新的知识库，用于组织和管理同类文档。创建后即可用 document_ingest 向其中导入文件，再用 knowledge_search 检索。需指定名称和 Embedding 模型。"),
+		mcp.WithRawInputSchema(rawInputSchema[knowledgeBaseCreateInput]()),
+		mcp.WithRawOutputSchema(rawOutputSchema[knowledgeBaseCreateOutput]()),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in knowledgeBaseCreateInput) (*mcp.CallToolResult, error) {
 		auth, err := authFromRequest(ctx)
@@ -207,9 +207,9 @@ type documentIngestOutput struct {
 
 func registerDocumentIngest(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("document_ingest",
-		mcp.WithDescription("通过 Base64 内联导入文档；不等待异步索引完成。"),
-		mcp.WithInputSchema[documentIngestInput](),
-		mcp.WithOutputSchema[documentIngestOutput](),
+		mcp.WithDescription("将文件导入到知识库以供后续检索。支持 PDF、Word(docx)、Markdown、纯文本、CSV、Excel(xlsx) 等格式，文件内容以 Base64 编码传入。导入是异步的：调用后立即返回文档 ID 和任务 ID，解析与索引在后台进行——需用 document_status 轮询直到状态变为 ready 才能被检索到。"),
+		mcp.WithRawInputSchema(rawInputSchema[documentIngestInput]()),
+		mcp.WithRawOutputSchema(rawOutputSchema[documentIngestOutput]()),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in documentIngestInput) (*mcp.CallToolResult, error) {
 		auth, err := authFromRequest(ctx)
@@ -277,8 +277,8 @@ type documentStatusInput struct {
 
 func registerDocumentStatus(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("document_status",
-		mcp.WithDescription("查询文档与可选 Job 的安全状态。"),
-		mcp.WithInputSchema[documentStatusInput](),
+		mcp.WithDescription("查询文档的导入处理进度。document_ingest 之后调用此工具轮询，直到状态为 ready（可被检索）或 error。状态取值：pending / parsing / chunking / indexing / ready / error。也返回文档的活跃修订信息，但不返回文档原文。"),
+		mcp.WithRawInputSchema(rawInputSchema[documentStatusInput]()),
 		mcp.WithRawOutputSchema(documentStatusOutputSchema),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in documentStatusInput) (*mcp.CallToolResult, error) {
@@ -321,7 +321,7 @@ func registerDocumentStatus(srv *mcpserver.MCPServer, deps Dependencies) {
 // ===== knowledge_search =====
 
 type knowledgeSearchInput struct {
-	KnowledgeBaseIDs []string `json:"knowledge_base_ids" jsonschema:"知识库 ID 列表（1 到 20 个），只检索调用方有权访问的知识库"`
+	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty" jsonschema:"知识库 ID 列表，只检索调用方有权访问的知识库；未指定时检索当前 API Key 绑定的全部知识库"`
 	Query            string   `json:"query" jsonschema:"检索查询文本"`
 	VectorTopK       *int     `json:"vector_top_k,omitempty" jsonschema:"向量检索候选数，默认使用服务端配置"`
 	KeywordTopK      *int     `json:"keyword_top_k,omitempty" jsonschema:"关键词检索候选数，默认使用服务端配置"`
@@ -335,9 +335,9 @@ type knowledgeSearchOutput struct {
 
 func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("knowledge_search",
-		mcp.WithDescription("跨多个绑定知识库执行混合检索，按 Embedding 模型快照分组复用 query embedding。"),
-		mcp.WithInputSchema[knowledgeSearchInput](),
-		mcp.WithOutputSchema[knowledgeSearchOutput](),
+		mcp.WithDescription("知识库检索工具。当需要基于用户的问题从知识库中查找相关资料、回答事实性问题时调用：返回最相关的文档片段（含内容、来源、相关性评分）。同时使用向量语义匹配和关键词匹配。knowledge_base_ids 留空则检索当前 API Key 绑定的全部知识库。"),
+		mcp.WithRawInputSchema(rawInputSchema[knowledgeSearchInput]()),
+		mcp.WithRawOutputSchema(rawOutputSchema[knowledgeSearchOutput]()),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in knowledgeSearchInput) (*mcp.CallToolResult, error) {
 		auth, err := authFromRequest(ctx)
@@ -354,6 +354,14 @@ func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 				return toErrorResult(fmt.Errorf("knowledge_base_ids 含非法 UUID")), nil
 			}
 			kbIDs = append(kbIDs, id)
+		}
+		// 未指定 knowledge_base_ids 时，默认检索当前 API Key 绑定的全部知识库。
+		// MCP 入口仅接受 API Key 主体，其 KnowledgeBaseIDs 即绑定的知识库集合。
+		if len(kbIDs) == 0 {
+			if len(auth.KnowledgeBaseIDs) == 0 {
+				return toErrorResult(fmt.Errorf("%w: 未指定 knowledge_base_ids 且当前 API Key 未绑定任何知识库", domainerrors.ErrValidation)), nil
+			}
+			kbIDs = append(kbIDs, auth.KnowledgeBaseIDs...)
 		}
 		results, err := deps.MultiSearch.Search(ctx, service.MultiKnowledgeSearchInput{
 			WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
@@ -388,9 +396,9 @@ type documentDeleteOutput struct {
 
 func registerDocumentDelete(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("document_delete",
-		mcp.WithDescription("软删除文档；文档立即退出检索，事实与原始对象按现有保留合同处理。"),
-		mcp.WithInputSchema[documentDeleteInput](),
-		mcp.WithOutputSchema[documentDeleteOutput](),
+		mcp.WithDescription("从知识库中删除指定文档。删除后该文档不再参与检索。重复删除同一文档是安全的（幂等）。"),
+		mcp.WithRawInputSchema(rawInputSchema[documentDeleteInput]()),
+		mcp.WithRawOutputSchema(rawOutputSchema[documentDeleteOutput]()),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in documentDeleteInput) (*mcp.CallToolResult, error) {
 		auth, err := authFromRequest(ctx)
@@ -427,8 +435,8 @@ type chunkGetInput struct {
 
 func registerChunkGet(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("chunk_get",
-		mcp.WithDescription("获取单个 Chunk 的内容、来源锚点与活跃修订。"),
-		mcp.WithInputSchema[chunkGetInput](),
+		mcp.WithDescription("按 ID 获取单个文档片段（chunk）的完整内容、来源锚点（页码/位置）和活跃修订。通常在 knowledge_search 拿到结果后，需要查看某个片段的更详细信息时调用。"),
+		mcp.WithRawInputSchema(rawInputSchema[chunkGetInput]()),
 		mcp.WithRawOutputSchema(chunkGetOutputSchema),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in chunkGetInput) (*mcp.CallToolResult, error) {
