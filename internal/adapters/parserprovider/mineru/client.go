@@ -169,12 +169,18 @@ func (c *Client) Poll(ctx context.Context, batchID string) (*TaskResult, error) 
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
-			State       string `json:"state"`
-			FullZipURL  string `json:"full_zip_url"`
-			ErrMsg      string `json:"err_msg"`
+			BatchID string `json:"batch_id"`
+			// 每个文件一条结果；批量查询的主状态在 extract_result 数组里，
+			// 不在 data 顶层。top-level 的 state/full_zip_url 字段不存在。
+			ExtractResult []struct {
+				FileName    string `json:"file_name"`
+				State       string `json:"state"`
+				ErrMsg      string `json:"err_msg"`
+				FullZipURL  string `json:"full_zip_url"`
+			} `json:"extract_result"`
 			ExtractProgress *struct {
-				ExtractedPages int    `json:"extracted_pages"`
-				TotalPages     int    `json:"total_pages"`
+				ExtractedPages int `json:"extracted_pages"`
+				TotalPages     int `json:"total_pages"`
 			} `json:"extract_progress"`
 		} `json:"data"`
 	}
@@ -185,31 +191,50 @@ func (c *Client) Poll(ctx context.Context, batchID string) (*TaskResult, error) 
 		return nil, fmt.Errorf("MinerU 轮询失败: code=%d msg=%s", apiResp.Code, apiResp.Msg)
 	}
 
-	result := &TaskResult{
-		FullResultURL: apiResp.Data.FullZipURL,
-		ErrorMessage:  apiResp.Data.ErrMsg,
+	// 从 extract_result 聚合状态：
+	// - 全部 done → succeeded（取第一个 full_zip_url）
+	// - 任一 failed → failed
+	// - 其余（running/pending/converting/waiting-file/未知）→ running
+	result := &TaskResult{}
+	var progressURL string
+	hasFailed := false
+	hasResult := false
+	if len(apiResp.Data.ExtractResult) == 0 {
+		// 空结果（任务刚提交，结果尚未生成）视为 running
+		result.Status = TaskStatusRunning
+		if apiResp.Data.ExtractProgress != nil {
+			result.ExtractedPages = apiResp.Data.ExtractProgress.ExtractedPages
+			result.TotalPages = apiResp.Data.ExtractProgress.TotalPages
+		}
+		return result, nil
 	}
-	// 失败时用 state 作为 ErrorCode（MinerU 没有独立 err_code 字段）
-	if strings.ToLower(apiResp.Data.State) == "failed" {
-		result.ErrorCode = "mineru_parse_failed"
+	for i := range apiResp.Data.ExtractResult {
+		entry := &apiResp.Data.ExtractResult[i]
+		state := strings.ToLower(strings.TrimSpace(entry.State))
+		hasResult = true
+		switch state {
+		case "done":
+			if progressURL == "" && entry.FullZipURL != "" {
+				progressURL = entry.FullZipURL
+			}
+		case "failed":
+			hasFailed = true
+			result.ErrorCode = "mineru_parse_failed"
+			result.ErrorMessage = entry.ErrMsg
+		default:
+			// running/pending/converting/waiting-file/未知 → 继续 running
+		}
 	}
-	if apiResp.Data.ExtractProgress != nil {
-		result.ExtractedPages = apiResp.Data.ExtractProgress.ExtractedPages
-		result.TotalPages = apiResp.Data.ExtractProgress.TotalPages
-	}
-
-	// 文档定义的实际状态值：waiting-file, pending, running, converting, done, failed
-	switch strings.ToLower(apiResp.Data.State) {
-	case "done":
-		result.Status = TaskStatusSucceeded
-	case "failed":
+	if hasFailed {
 		result.Status = TaskStatusFailed
-	case "running", "pending", "converting", "waiting-file":
-		result.Status = TaskStatusRunning
-	default:
-		// 未知状态视为 running（保守策略：继续轮询而非失败）
-		result.Status = TaskStatusRunning
+		return result, nil
 	}
+	if hasResult && progressURL != "" {
+		result.Status = TaskStatusSucceeded
+		result.FullResultURL = progressURL
+		return result, nil
+	}
+	result.Status = TaskStatusRunning
 	return result, nil
 }
 
