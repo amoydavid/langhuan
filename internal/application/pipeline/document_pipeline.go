@@ -107,6 +107,34 @@ func (p *DocumentPipeline) RunParse(ctx context.Context, workspaceID, revisionID
 	return err
 }
 
+// CompleteAsyncParse stores the result of an async parser (MinerU) and archives image assets.
+// It bypasses ParseStage (which calls the synchronous parser.Parse) and directly writes
+// the already-parsed markdown + manifest via CompleteParse, then runs AssetResolver.
+func (p *DocumentPipeline) CompleteAsyncParse(
+	ctx context.Context,
+	workspaceID, revisionID uuid.UUID,
+	parsed *parserport.ParsedDocument,
+	assetResolver *AssetResolver,
+) error {
+	revision, err := p.revisions.Get(ctx, workspaceID, revisionID)
+	if err != nil {
+		return err
+	}
+
+	markdown := parsed.Markdown
+	manifest := parsed.Manifest
+
+	// 归档图片资产并重写 markdown
+	if assetResolver != nil {
+		result := assetResolver.Resolve(ctx, markdown)
+		markdown = result.Markdown
+		manifest.Warnings = append(manifest.Warnings, result.Warnings...)
+		// TODO: 保存 result.Assets 到 document_assets 表（需要 asset repository）
+	}
+
+	return p.revisions.CompleteParse(ctx, workspaceID, revision.ID, markdown, manifest)
+}
+
 // RunChunk builds or reuses one standard ChunkSet under an IndexGeneration snapshot.
 func (p *DocumentPipeline) RunChunk(
 	ctx context.Context,

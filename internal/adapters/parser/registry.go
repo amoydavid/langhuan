@@ -53,6 +53,19 @@ func (r *Registry) Supports(fileType string) bool {
 	return ok
 }
 
+// Get returns the parser registered for fileType, or an error if not found.
+func (r *Registry) Get(fileType string) (parserport.DocumentParser, error) {
+	normalized := normalizeFileType(fileType)
+	if r == nil {
+		return nil, fmt.Errorf("%w: %s", parserport.ErrUnsupportedFileType, normalized)
+	}
+	registered, ok := r.parsers[normalized]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", parserport.ErrUnsupportedFileType, normalized)
+	}
+	return registered, nil
+}
+
 // Parse routes input to its registered parser.
 func (r *Registry) Parse(ctx context.Context, input parserport.ParseInput) (*parserport.ParsedDocument, error) {
 	fileType := normalizeFileType(input.FileType)

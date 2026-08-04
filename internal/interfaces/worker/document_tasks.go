@@ -11,6 +11,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	"github.com/dajee/langhuan/internal/application/dto"
+	"github.com/dajee/langhuan/internal/application/pipeline"
 	appservice "github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
@@ -48,10 +49,27 @@ type DocumentPipeline interface {
 	RunIndex(ctx context.Context, workspaceID, generationID, chunkSetID uuid.UUID) ([]*model.RetrievalEntry, error)
 }
 
+// AsyncParseSupport 是 DocumentPipeline 的可选扩展，支持异步解析完成。
+type AsyncParseSupport interface {
+	CompleteAsyncParse(
+		ctx context.Context,
+		workspaceID, revisionID uuid.UUID,
+		parsed *parserport.ParsedDocument,
+		assetResolver *pipeline.AssetResolver,
+	) error
+}
+
+// ParserRegistry 按 filetype 查找 parser，供 worker 检测是否为异步 parser。
+type ParserRegistry interface {
+	Get(fileType string) (parserport.DocumentParser, error)
+}
+
 type DocumentHandlers struct {
-	Store    DocumentTaskStore
-	Queue    queue.JobQueue
-	Pipeline DocumentPipeline
+	Store             DocumentTaskStore
+	Queue             queue.JobQueue
+	Pipeline          DocumentPipeline
+	ParserRegistry    ParserRegistry
+	AssetStoreFactory func(workspaceID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver
 }
 
 func RegisterDocumentHandlers(mux *asynq.ServeMux, handlers DocumentHandlers) {
@@ -78,6 +96,36 @@ func (h DocumentHandlers) HandleDocumentParseStart(ctx context.Context, task *as
 	if state.revision.Kind == value.DocumentKindFAQ || state.revision.Status == value.DocumentRevisionReady {
 		nextType = TaskDocumentIndex
 	}
+
+	// 检查是否为异步 parser（如 MinerU PDF）
+	if h.ParserRegistry != nil && state.revision.FileType != "" {
+		if parser, pErr := h.ParserRegistry.Get(state.revision.FileType); pErr == nil {
+			if asyncParser, ok := parser.(parserport.AsyncDocumentParser); ok {
+				// 异步路径：调 Start，把 externalJobId 存入 job payload
+				start, sErr := asyncParser.Start(ctx, parserport.AsyncParseInput{
+					WorkspaceID:     payload.WorkspaceID,
+					KnowledgeBaseID: payload.KnowledgeBaseID,
+					DocumentID:      payload.DocumentID,
+					RevisionID:      payload.DocumentRevisionID,
+					JobID:           payload.JobID,
+					FileType:        state.revision.FileType,
+					Title:           state.revision.OriginalFilename,
+					RawStorageKey:   state.revision.RawStorageKey,
+					ContentType:     state.revision.ContentType,
+				})
+				if sErr != nil {
+					return h.failPipelineRun(ctx, payload, sErr)
+				}
+				// 用带 external_job_id 的 payload 创建后续 poll 任务
+				enhanced := payload
+				if _, err := h.createAndEnqueueWithExternalJob(ctx, enhanced, TaskDocumentParsePoll, start.ExternalJobID, start.Payload); err != nil {
+					return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
+				}
+				return h.succeedRunningJob(ctx, payload.WorkspaceID, payload.JobID)
+			}
+		}
+	}
+
 	if _, err := h.createAndEnqueue(ctx, payload, nextType, uuid.Nil); err != nil {
 		return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
 	}
@@ -103,6 +151,15 @@ func (h DocumentHandlers) HandleDocumentParsePoll(ctx context.Context, task *asy
 			return h.failPipelineRun(ctx, payload, fmt.Errorf("%w: FAQ Revision 尚未就绪", domainerrors.ErrValidation))
 		}
 	} else if state.revision.Status != value.DocumentRevisionReady {
+		// 检查是否为异步 parser poll
+		externalJobID, _ := state.job.Payload["external_job_id"].(string)
+		if externalJobID != "" && h.ParserRegistry != nil {
+			if pErr := h.handleAsyncPoll(ctx, payload, state, externalJobID); pErr != nil {
+				return pErr
+			}
+			return h.succeedRunningJob(ctx, payload.WorkspaceID, payload.JobID)
+		}
+		// 同步解析路径
 		if err := h.Pipeline.RunParse(ctx, payload.WorkspaceID, payload.DocumentRevisionID); err != nil {
 			return h.failPipelineRun(ctx, payload, err)
 		}
@@ -111,6 +168,77 @@ func (h DocumentHandlers) HandleDocumentParsePoll(ctx context.Context, task *asy
 		return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
 	}
 	return h.succeedRunningJob(ctx, payload.WorkspaceID, payload.JobID)
+}
+
+// handleAsyncPoll 处理异步 parser（MinerU）的 poll 逻辑。
+func (h DocumentHandlers) handleAsyncPoll(
+	ctx context.Context,
+	payload DocumentTaskPayload,
+	state loadedDocumentTask,
+	externalJobID string,
+) error {
+	parser, err := h.ParserRegistry.Get(state.revision.FileType)
+	if err != nil {
+		return h.failPipelineRun(ctx, payload, fmt.Errorf("查找异步 parser 失败: %w", err))
+	}
+	asyncParser, ok := parser.(parserport.AsyncDocumentParser)
+	if !ok {
+		return h.failPipelineRun(ctx, payload, fmt.Errorf("parser 不支持异步 poll"))
+	}
+
+	result, err := asyncParser.Poll(ctx, parserport.AsyncParsePollInput{
+		AsyncParseInput: parserport.AsyncParseInput{
+			WorkspaceID:     payload.WorkspaceID,
+			KnowledgeBaseID: payload.KnowledgeBaseID,
+			DocumentID:      payload.DocumentID,
+			RevisionID:      payload.DocumentRevisionID,
+			JobID:           payload.JobID,
+			FileType:        state.revision.FileType,
+			Title:           state.revision.OriginalFilename,
+			RawStorageKey:   state.revision.RawStorageKey,
+			ContentType:     state.revision.ContentType,
+		},
+		ExternalJobID: externalJobID,
+		Payload:       state.job.Payload,
+	})
+	if err != nil {
+		return h.failPipelineRun(ctx, payload, err)
+	}
+
+	switch result.Status {
+	case parserport.AsyncRunning:
+		// 重新入队 poll，带延迟
+		if _, err := h.createAndEnqueueWithExternalJobDelayed(ctx, payload, TaskDocumentParsePoll, externalJobID, result.Payload, queue.Delay(result.RetryAfter)); err != nil {
+			return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
+		}
+		return nil
+
+	case parserport.AsyncFailed:
+		return h.failPipelineRun(ctx, payload, fmt.Errorf("%w: %s: %s",
+			parserport.ErrAsyncParseFailed, result.ErrorCode, result.ErrorMessage))
+
+	case parserport.AsyncSucceeded:
+		// 完成异步解析：存储 markdown + manifest + 归档资产
+		var assetResolver *pipeline.AssetResolver
+		if h.AssetStoreFactory != nil {
+			assetResolver = h.AssetStoreFactory(payload.WorkspaceID, payload.DocumentID, payload.DocumentRevisionID)
+		}
+		if asyncPipeline, ok := h.Pipeline.(AsyncParseSupport); ok {
+			if err := asyncPipeline.CompleteAsyncParse(ctx, payload.WorkspaceID, payload.DocumentRevisionID, result.Document, assetResolver); err != nil {
+				return h.failPipelineRun(ctx, payload, err)
+			}
+		} else {
+			return h.failPipelineRun(ctx, payload, fmt.Errorf("pipeline 不支持异步解析完成"))
+		}
+		// 入队 index
+		if _, err := h.createAndEnqueue(ctx, payload, TaskDocumentIndex, uuid.Nil); err != nil {
+			return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
+		}
+		return nil
+
+	default:
+		return h.failPipelineRun(ctx, payload, fmt.Errorf("未知异步解析状态: %s", result.Status))
+	}
 }
 
 func (h DocumentHandlers) HandleDocumentIndex(ctx context.Context, task *asynq.Task) error {
@@ -228,11 +356,68 @@ func (h DocumentHandlers) createAndEnqueue(
 	typ string,
 	chunkSetID uuid.UUID,
 ) (*dto.Job, error) {
+	return h.createAndEnqueueWithJobPayload(ctx, source, typ, chunkSetID, nil, 0)
+}
+
+// createAndEnqueueWithExternalJob 创建后续任务并携带 external_job_id（异步 parser poll 用）。
+func (h DocumentHandlers) createAndEnqueueWithExternalJob(
+	ctx context.Context,
+	source DocumentTaskPayload,
+	typ string,
+	externalJobID string,
+	extraPayload map[string]any,
+) (*dto.Job, error) {
+	jobPayload := h.buildJobPayload(source, extraPayload)
+	jobPayload["external_job_id"] = externalJobID
+	return h.createAndEnqueueWithJobPayloadAndExtra(ctx, source, typ, uuid.Nil, jobPayload, 0)
+}
+
+// createAndEnqueueWithExternalJobDelayed 创建带延迟的后续任务。
+func (h DocumentHandlers) createAndEnqueueWithExternalJobDelayed(
+	ctx context.Context,
+	source DocumentTaskPayload,
+	typ string,
+	externalJobID string,
+	extraPayload map[string]any,
+	delay queue.Delay,
+) (*dto.Job, error) {
+	jobPayload := h.buildJobPayload(source, extraPayload)
+	jobPayload["external_job_id"] = externalJobID
+	return h.createAndEnqueueWithJobPayloadAndExtra(ctx, source, typ, uuid.Nil, jobPayload, delay)
+}
+
+func (h DocumentHandlers) buildJobPayload(source DocumentTaskPayload, extra map[string]any) map[string]any {
 	jobPayload := map[string]any{
 		"workspace_id": source.WorkspaceID.String(), "knowledge_base_id": source.KnowledgeBaseID.String(),
 		"document_id": source.DocumentID.String(), "document_revision_id": source.DocumentRevisionID.String(),
 		"index_generation_id": source.GenerationID.String(),
 	}
+	for k, v := range extra {
+		jobPayload[k] = v
+	}
+	return jobPayload
+}
+
+func (h DocumentHandlers) createAndEnqueueWithJobPayload(
+	ctx context.Context,
+	source DocumentTaskPayload,
+	typ string,
+	chunkSetID uuid.UUID,
+	extra map[string]any,
+	delay queue.Delay,
+) (*dto.Job, error) {
+	jobPayload := h.buildJobPayload(source, extra)
+	return h.createAndEnqueueWithJobPayloadAndExtra(ctx, source, typ, chunkSetID, jobPayload, delay)
+}
+
+func (h DocumentHandlers) createAndEnqueueWithJobPayloadAndExtra(
+	ctx context.Context,
+	source DocumentTaskPayload,
+	typ string,
+	chunkSetID uuid.UUID,
+	jobPayload map[string]any,
+	delay queue.Delay,
+) (*dto.Job, error) {
 	job, err := h.Store.CreateNextForRevision(
 		ctx, source.WorkspaceID, source.KnowledgeBaseID, source.DocumentID,
 		source.DocumentRevisionID, source.GenerationID, typ, jobPayload,
@@ -251,6 +436,7 @@ func (h DocumentHandlers) createAndEnqueue(
 	if _, err := h.Queue.Enqueue(ctx, queue.JobRequest{
 		Type: typ, Payload: queuePayload,
 		TaskID: queue.DocumentTaskID(typ, source.WorkspaceID, source.DocumentRevisionID, source.GenerationID),
+		Delay: delay,
 	}); err != nil {
 		return nil, h.failCreatedJob(ctx, source.WorkspaceID, job.ID, err)
 	}

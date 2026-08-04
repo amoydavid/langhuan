@@ -36,6 +36,7 @@ import (
 	minerufactory "github.com/dajee/langhuan/internal/adapters/parserprovider/mineru"
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
+	s3storage "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/pipeline"
 	"github.com/dajee/langhuan/internal/application/service"
@@ -128,6 +129,8 @@ type runtimeServices struct {
 	retrievalCleanup       *service.RetrievalCleanupService
 	pipeline               *pipeline.DocumentPipeline
 	rawStore               storageport.RawDocumentStore
+	parserRegistry         *parseradapter.Registry
+	assetStore             storageport.AssetStore
 	maxFileSize            int64
 	apiKeys                *service.APIKeyService
 	mcpInlineLimit         int64
@@ -255,7 +258,7 @@ func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.services, err = buildRuntimeServices(gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, parserProviderRegistry)
+	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, parserProviderRegistry)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +270,16 @@ func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
 	if app.workerMux != nil {
 		worker.RegisterSmokeHandler(app.workerMux)
 		worker.RegisterDocumentHandlers(app.workerMux, worker.DocumentHandlers{
-			Store: app.services.documentTaskStore, Queue: app.jobQueue, Pipeline: app.services.pipeline,
+			Store:          app.services.documentTaskStore,
+			Queue:          app.jobQueue,
+			Pipeline:       app.services.pipeline,
+			ParserRegistry: app.services.parserRegistry,
+			AssetStoreFactory: func(workspaceID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
+				return pipeline.NewAssetResolver(
+					app.services.assetStore, http.DefaultClient, cfg.Storage.Assets,
+					workspaceID, documentID, revisionID,
+				)
+			},
 		})
 		worker.RegisterChunkRevisionHandler(app.workerMux, worker.ChunkRevisionHandler{
 			Indexer: app.services.chunkRevisionIndexer,
@@ -280,7 +292,7 @@ func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
 	return app, nil
 }
 
-func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry) (*runtimeServices, error) {
+func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry) (*runtimeServices, error) {
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
@@ -351,8 +363,33 @@ func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queuepor
 	invitations := service.NewInvitationService(invitationRepo, wsRepo, userRepo, hasher, cfg.Auth)
 	memberships := service.NewMembershipService(membershipRepo, userRepo)
 
-	rawStore := localstorage.NewRawDocumentStore(cfg.Storage.RawDocumentDir)
-	runtimeParser, err := buildRuntimeParser()
+	var rawStore storageport.RawDocumentStore = localstorage.NewRawDocumentStore(cfg.Storage.RawDocumentDir)
+
+	// 构建 parser registry（本地格式 + 可选 MinerU PDF）
+	var assetStore storageport.AssetStore
+	if cfg.Storage.Driver == "s3" {
+		s3Store, err := s3storage.NewStore(ctx, s3storage.Config{
+			Endpoint:       cfg.Storage.S3.Endpoint,
+			Region:         cfg.Storage.S3.Region,
+			Bucket:         cfg.Storage.S3.Bucket,
+			AccessKey:      cfg.Storage.S3.AccessKey,
+			SecretKey:      cfg.Storage.S3.SecretKey,
+			ForcePathStyle: cfg.Storage.S3.ForcePathStyle,
+			PublicBaseURL:  cfg.Storage.S3.PublicBaseURL,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("构造 S3 存储失败: %w", err)
+		}
+		rawStore = s3Store.NewRawDocumentStore()
+		assetStore = s3Store.NewAssetStore()
+	} else {
+		assetStore = localstorage.NewAssetStore(cfg.Storage.RawDocumentDir)
+	}
+
+	// MinerU 凭据选择器（ParserProviderSelector）
+	mineruSelector := service.NewParserProviderSelector(modelProviderRepo, credentialCipher)
+
+	runtimeParser, err := buildRuntimeParser(cfg, rawStore, mineruSelector)
 	if err != nil {
 		return nil, fmt.Errorf("构造 runtime parser registry 失败: %w", err)
 	}
@@ -460,6 +497,8 @@ func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queuepor
 		retrievalCleanup:       retrievalCleanup,
 		pipeline:               documentPipeline,
 		rawStore:               rawStore,
+		parserRegistry:         runtimeParser,
+		assetStore:             assetStore,
 		maxFileSize:            cfg.Ingest.MaxFileSizeBytes,
 		apiKeys:                apiKeys,
 		mcpInlineLimit:         cfg.MCP.InlineIngestMaxFileSizeBytes,
@@ -502,14 +541,48 @@ func clearSensitiveBytes(value []byte) {
 	}
 }
 
-func buildRuntimeParser() (*parseradapter.Registry, error) {
-	return parseradapter.NewRegistry(
-		parseradapter.Registration{FileType: "markdown", Parser: markdownparser.New()},
-		parseradapter.Registration{FileType: "txt", Parser: textparser.New()},
-		parseradapter.Registration{FileType: "csv", Parser: csvparser.New()},
-		parseradapter.Registration{FileType: "xlsx", Parser: xlsxparser.New()},
-		parseradapter.Registration{FileType: "docx", Parser: docxparser.New()},
-	)
+func buildRuntimeParser(cfg *config.Config, rawStore storageport.RawDocumentStore, mineruSelector *service.ParserProviderSelector) (*parseradapter.Registry, error) {
+	registrations := []parseradapter.Registration{
+		{FileType: "markdown", Parser: markdownparser.New()},
+		{FileType: "txt", Parser: textparser.New()},
+		{FileType: "csv", Parser: csvparser.New()},
+		{FileType: "xlsx", Parser: xlsxparser.New()},
+		{FileType: "docx", Parser: docxparser.New()},
+	}
+
+	// MinerU PDF parser（启用时注册）
+	if cfg.MinerU.Enabled && mineruSelector != nil {
+		mineruParser := minerufactory.NewLazyParser(&mineruSelectorAdapter{selector: mineruSelector}, rawStore, minerufactory.LazyParserConfig{
+			ModelVersion:              cfg.MinerU.ModelVersion,
+			PollInterval:              time.Duration(cfg.MinerU.PollIntervalSeconds) * time.Second,
+			MaxPollAttempts:           cfg.MinerU.MaxPollAttempts,
+			UploadTimeout:             time.Duration(cfg.MinerU.UploadTimeoutSeconds) * time.Second,
+			ResultDownloadTimeout:     time.Duration(cfg.MinerU.ResultDownloadTimeoutSeconds) * time.Second,
+		})
+		registrations = append(registrations, parseradapter.Registration{
+			FileType: "pdf",
+			Parser:   mineruParser,
+		})
+	}
+
+	return parseradapter.NewRegistry(registrations...)
+}
+
+// mineruSelectorAdapter 把 service.ParserProviderSelector 适配为 minerufactory.CredentialSelector。
+type mineruSelectorAdapter struct {
+	selector *service.ParserProviderSelector
+}
+
+func (a *mineruSelectorAdapter) SelectMinerU(ctx context.Context, workspaceID uuid.UUID) (minerufactory.SelectedCredential, error) {
+	selected, err := a.selector.SelectMinerU(ctx, workspaceID)
+	if err != nil {
+		return minerufactory.SelectedCredential{}, err
+	}
+	return minerufactory.SelectedCredential{
+		ProviderID:      selected.Provider.ID,
+		Config:          selected.Provider.Config,
+		CredentialsJSON: selected.CredentialsJSON,
+	}, nil
 }
 
 func buildHTTPRouter(services *runtimeServices) http.Handler {

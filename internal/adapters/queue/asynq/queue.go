@@ -2,6 +2,7 @@ package asynq
 
 import (
 	"context"
+	"time"
 
 	hibikenasynq "github.com/hibiken/asynq"
 
@@ -22,12 +23,15 @@ func NewQueue(client Enqueuer) *Queue {
 
 func (q *Queue) Enqueue(ctx context.Context, job queueport.JobRequest) (*queueport.JobHandle, error) {
 	task := hibikenasynq.NewTask(job.Type, job.Payload)
-	opts := make([]hibikenasynq.Option, 0, 2)
+	opts := make([]hibikenasynq.Option, 0, 3)
 	if job.Queue != "" {
 		opts = append(opts, hibikenasynq.Queue(job.Queue))
 	}
 	if job.TaskID != "" {
 		opts = append(opts, hibikenasynq.TaskID(job.TaskID))
+	}
+	if d := time.Duration(job.Delay); d > 0 {
+		opts = append(opts, hibikenasynq.ProcessIn(d))
 	}
 	info, err := q.client.EnqueueContext(ctx, task, opts...)
 	if err != nil {

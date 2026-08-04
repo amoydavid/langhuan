@@ -3,15 +3,20 @@ package queue
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+// Delay 表示入队前的等待时间。零值表示立即执行。
+type Delay time.Duration
 
 type JobRequest struct {
 	Type    string
 	Payload []byte
 	Queue   string
 	TaskID  string
+	Delay   Delay
 }
 
 type JobHandle struct {
