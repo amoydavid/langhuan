@@ -67,7 +67,7 @@ function AssetGrid({
                 href={asset.public_url}
                 target='_blank'
                 rel='noreferrer'
-                className='mt-1 inline-block truncate text-xs text-primary hover:underline'
+                className='mt-1 inline-block truncate text-primary text-xs hover:underline'
               >
                 {asset.public_url}
               </a>
@@ -229,7 +229,7 @@ export function DocumentPreview({
 
           {revision?.warnings && revision.warnings.length > 0 && (
             <div className='mt-6 border-t pt-5'>
-              <h3 className='mb-3 text-sm font-semibold'>
+              <h3 className='mb-3 font-semibold text-sm'>
                 {t('content.documentPreview.warningsTitle', {
                   count: revision.warnings.length,
                 })}
@@ -240,7 +240,7 @@ export function DocumentPreview({
                     key={`${warning.code}-${index}`}
                     className='rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm'
                   >
-                    <span className='font-mono text-xs text-amber-700'>
+                    <span className='font-mono text-amber-700 text-xs'>
                       {warning.code}
                     </span>
                     <span className='ml-2 text-muted-foreground'>
@@ -254,7 +254,7 @@ export function DocumentPreview({
 
           {showAssets && (
             <div className='mt-6 border-t pt-5'>
-              <h3 className='mb-3 flex items-center gap-2 text-sm font-semibold'>
+              <h3 className='mb-3 flex items-center gap-2 font-semibold text-sm'>
                 <ImageIcon className='size-4 text-primary' />
                 {t('content.documentPreview.assetsTitle', {
                   count: assets.length,

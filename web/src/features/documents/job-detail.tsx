@@ -14,8 +14,10 @@ import type { Job, JobStatus } from './types'
 function JobStatusBadge({ status }: { status: JobStatus }) {
   const { t } = useTranslation()
   const statusMeta = {
+    pending: { label: t('documents.job.status.pending'), tone: 'warning' },
     queued: { label: t('documents.job.status.queued'), tone: 'warning' },
     running: { label: t('documents.job.status.running'), tone: 'info' },
+    completed: { label: t('documents.job.status.completed'), tone: 'success' },
     succeeded: { label: t('documents.job.status.succeeded'), tone: 'success' },
     failed: { label: t('documents.job.status.failed'), tone: 'danger' },
     cancelled: { label: t('documents.job.status.cancelled'), tone: 'neutral' },
@@ -26,7 +28,11 @@ function JobStatusBadge({ status }: { status: JobStatus }) {
       tone: 'success' | 'warning' | 'danger' | 'info' | 'neutral'
     }
   >
-  const meta = statusMeta[status]
+  // 防御：未知状态不崩溃，回退到 neutral 显示原始状态。
+  const meta = statusMeta[status] ?? {
+    label: String(status),
+    tone: 'neutral' as const,
+  }
   return <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
 }
 

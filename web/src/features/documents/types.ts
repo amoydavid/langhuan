@@ -13,8 +13,10 @@ export type DocumentRevisionSummary = z.infer<
 >
 
 export type JobStatus =
+  | 'pending'
   | 'queued'
   | 'running'
+  | 'completed'
   | 'succeeded'
   | 'failed'
   | 'cancelled'

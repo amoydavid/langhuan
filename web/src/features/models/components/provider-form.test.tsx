@@ -8,14 +8,16 @@ import { ProviderForm } from './provider-form'
 const createModelProvider = vi.hoisted(() => vi.fn())
 const updateModelProvider = vi.hoisted(() => vi.fn())
 const getModelProviderOptions = vi.hoisted(() =>
-  vi.fn().mockResolvedValue([
-    'openai',
-    'ark',
-    'ollama',
-    'dashscope',
-    'tencentcloud',
-    'mineru',
-  ])
+  vi
+    .fn()
+    .mockResolvedValue([
+      'openai',
+      'ark',
+      'ollama',
+      'dashscope',
+      'tencentcloud',
+      'mineru',
+    ])
 )
 
 vi.mock('../api', () => ({

@@ -75,8 +75,10 @@ export const documents = {
     updatedAtLabel: 'Updated at',
     notRecorded: 'Not recorded',
     status: {
+      pending: 'Pending',
       queued: 'Queued',
       running: 'Running',
+      completed: 'Completed',
       succeeded: 'Succeeded',
       failed: 'Failed',
       cancelled: 'Cancelled',
