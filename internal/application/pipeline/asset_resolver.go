@@ -30,12 +30,19 @@ type AssetResolution struct {
 	Warnings []model.ParseWarning
 }
 
+// PublicURLBuilder 根据已归档的资产生成对外可访问的 public URL。
+// 由装配层注入：local 模式返回指向鉴权代理 handler 的绝对地址，
+// s3 模式通常返回存储层自带的 CDN URL。nil 时回退到存储层返回的
+// PublicURL（local 模式下即 storage key 相对路径）。
+type PublicURLBuilder func(asset model.Asset, stored *portstorage.StoredObject) string
+
 // AssetResolver 把 Markdown 中的图片引用归档到自有对象存储。
 type AssetResolver struct {
 	store      portstorage.AssetStore
 	httpClient *http.Client
 	cfg        config.AssetsStorageConfig
 	newID      func() uuid.UUID
+	publicURL  PublicURLBuilder
 	// lineage 用于生成 storage key 与 asset 外键
 	workspaceID     uuid.UUID
 	knowledgeBaseID uuid.UUID
@@ -61,6 +68,13 @@ func NewAssetResolver(
 		documentID:      documentID,
 		revisionID:      revisionID,
 	}
+}
+
+// WithPublicURLBuilder 注入 public URL 生成器，用于把归档图片的引用
+// 改写成对外可访问的绝对地址（否则 local 模式会退化为 storage key 相对路径）。
+func (r *AssetResolver) WithPublicURLBuilder(builder PublicURLBuilder) *AssetResolver {
+	r.publicURL = builder
+	return r
 }
 
 // markdownImgRe 匹配 ![alt](url)
@@ -211,6 +225,17 @@ func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef, candidates
 	}
 
 	hash := sha256.Sum256(data)
+	publicURL := stored.PublicURL
+	if r.publicURL != nil {
+		publicURL = r.publicURL(model.Asset{
+			ID:                 assetID,
+			WorkspaceID:        r.workspaceID,
+			DocumentRevisionID: r.revisionID,
+			DocumentID:         r.documentID,
+			StorageKey:         stored.Key,
+			MimeType:           mimeType,
+		}, stored)
+	}
 	asset := &model.Asset{
 		ID:                 assetID,
 		WorkspaceID:        r.workspaceID,
@@ -219,7 +244,7 @@ func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef, candidates
 		DocumentID:         r.documentID,
 		OriginalRef:        ref.original,
 		StorageKey:         stored.Key,
-		PublicURL:          stored.PublicURL,
+		PublicURL:          publicURL,
 		MimeType:           mimeType,
 		SHA256:             hex.EncodeToString(hash[:]),
 		SizeBytes:          int64(len(data)),
@@ -227,8 +252,9 @@ func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef, candidates
 			"alt": ref.alt,
 		},
 	}
-	if stored.PublicURL == "" {
-		// local 模式 public URL 是 key 本身，前端走代理 handler
+	if publicURL == "" {
+		// 无注入 builder 且存储层未返回 public URL：local 模式回退到 storage key，
+		// 由前端/代理按相对路径访问。
 		asset.PublicURL = stored.Key
 	}
 	return asset, nil

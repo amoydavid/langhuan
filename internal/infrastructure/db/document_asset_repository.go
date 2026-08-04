@@ -66,6 +66,21 @@ func (r *DocumentAssetRepository) ListAssetsByRevision(
 	return result, nil
 }
 
+// GetByID 按 workspace + asset ID 查询单个资产，供鉴权代理 handler 定位 storage key。
+func (r *DocumentAssetRepository) GetByID(
+	ctx context.Context,
+	workspaceID, assetID uuid.UUID,
+) (*model.Asset, error) {
+	var row DocumentAssetRow
+	err := r.db.WithContext(ctx).
+		Where("workspace_id = ? AND id = ?", workspaceID, assetID).
+		First(&row).Error
+	if err != nil {
+		return nil, translateDBError(err, "读取 DocumentAsset 失败")
+	}
+	return documentAssetFromRow(&row), nil
+}
+
 func documentAssetToRow(asset *model.Asset, now time.Time) DocumentAssetRow {
 	createdAt := asset.CreatedAt
 	if createdAt.IsZero() {

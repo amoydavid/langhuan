@@ -37,6 +37,8 @@ type Dependencies struct {
 	DocumentIngest       DocumentIngestService
 	Documents            DocumentQueryService
 	DocumentAssets       DocumentAssetListService
+	AssetGetter          DocumentAssetGetter
+	AssetContentStore    AssetContentStore
 	FAQDocuments         FAQDocumentHTTPService
 	FileTree             FileTreeHTTPService
 	ChunkRevisions       ChunkRevisionHTTPService
@@ -208,13 +210,16 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			}
 			if deps.Documents != nil {
 				doc := documentHandler{
-					ingestService:    deps.DocumentIngest,
-					queryService:     deps.Documents,
-					assetService:     deps.DocumentAssets,
-					maxFileSizeBytes: deps.MaxFileSizeBytes,
+					ingestService:     deps.DocumentIngest,
+					queryService:      deps.Documents,
+					assetService:      deps.DocumentAssets,
+					assetGetter:       deps.AssetGetter,
+					assetContentStore: deps.AssetContentStore,
+					maxFileSizeBytes:  deps.MaxFileSizeBytes,
 				}
 				memberGroup.GET("/knowledge-bases/:id/documents", doc.list)
 				memberGroup.GET("/documents/:document_id/assets", doc.assets)
+				memberGroup.GET("/documents/:document_id/assets/:asset_id", doc.assetContent)
 			}
 			if deps.FAQDocuments != nil {
 				faq := faqDocumentHandler{service: deps.FAQDocuments}

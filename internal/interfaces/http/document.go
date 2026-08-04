@@ -34,11 +34,23 @@ type DocumentAssetListService interface {
 	ListByDocument(ctx context.Context, workspaceID, documentID uuid.UUID) ([]*model.Asset, error)
 }
 
+// DocumentAssetGetter 提供按 workspace + asset ID 查询单个资产的能力。
+type DocumentAssetGetter interface {
+	GetByID(ctx context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error)
+}
+
+// AssetContentStore 按 storage key 打开资产内容，供鉴权代理 handler 返回图片。
+type AssetContentStore interface {
+	Open(ctx context.Context, key string) (io.ReadCloser, error)
+}
+
 type documentHandler struct {
-	ingestService    DocumentIngestService
-	queryService     DocumentQueryService
-	assetService     DocumentAssetListService
-	maxFileSizeBytes int64
+	ingestService     DocumentIngestService
+	queryService      DocumentQueryService
+	assetService      DocumentAssetListService
+	assetGetter       DocumentAssetGetter
+	assetContentStore AssetContentStore
+	maxFileSizeBytes  int64
 }
 
 func (h documentHandler) list(c *gin.Context) {
@@ -206,6 +218,50 @@ func (h documentHandler) assets(c *gin.Context) {
 		result = append(result, dto.DocumentAssetFromModel(asset))
 	}
 	c.JSON(stdhttp.StatusOK, result)
+}
+
+// assetContent 是 local 模式的资产代理 handler：鉴权后按 storage_key
+// 读取图片内容返回。s3 模式资产走存储层 CDN URL，无需经过该 handler。
+func (h documentHandler) assetContent(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	if h.assetGetter == nil || h.assetContentStore == nil {
+		writeError(c, stdhttp.StatusNotImplemented, "not_implemented", "资产内容服务未启用")
+		return
+	}
+	documentID, err := uuid.Parse(c.Param("document_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
+		return
+	}
+	assetID, err := uuid.Parse(c.Param("asset_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "asset_id 必须是有效 UUID")
+		return
+	}
+	asset, err := h.assetGetter.GetByID(c.Request.Context(), authCtx.WorkspaceID, assetID)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	// 归属校验：资产必须属于当前 document，防止跨文档访问
+	if asset.DocumentID != documentID {
+		writeError(c, stdhttp.StatusNotFound, "not_found", "资产不存在")
+		return
+	}
+	reader, err := h.assetContentStore.Open(c.Request.Context(), asset.StorageKey)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	defer reader.Close()
+	c.Header("Content-Type", asset.MimeType)
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Status(stdhttp.StatusOK)
+	_, _ = io.Copy(c.Writer, reader)
 }
 
 func isRequestTooLarge(err error) bool {

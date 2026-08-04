@@ -12,6 +12,8 @@ import (
 // DocumentAssetReader 读取一个 Document 的图片资产。
 type DocumentAssetReader interface {
 	ListAssetsByRevision(ctx context.Context, workspaceID, revisionID uuid.UUID) ([]*model.Asset, error)
+	// GetByID 按 workspace + asset ID 读取单个资产（供鉴权代理 handler）。
+	GetByID(ctx context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error)
 }
 
 // DocumentWithRevisionReader 读取 Document 以获取其 active revision。
@@ -53,4 +55,12 @@ func (s *DocumentAssetService) ListByDocument(ctx context.Context, workspaceID, 
 		assets = []*model.Asset{}
 	}
 	return assets, nil
+}
+
+// GetByID 按 workspace + asset ID 读取单个资产。
+func (s *DocumentAssetService) GetByID(ctx context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error) {
+	if workspaceID == uuid.Nil || assetID == uuid.Nil {
+		return nil, domainerrors.ErrValidation
+	}
+	return s.assets.GetByID(ctx, workspaceID, assetID)
 }

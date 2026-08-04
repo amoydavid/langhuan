@@ -1,14 +1,17 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	parserport "github.com/dajee/langhuan/internal/ports/parser"
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
@@ -36,6 +39,14 @@ func (s *fakeAssetStore) Put(ctx context.Context, object portstorage.ObjectInput
 func (s *fakeAssetStore) Delete(ctx context.Context, key string) error {
 	delete(s.objects, key)
 	return nil
+}
+
+func (s *fakeAssetStore) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	data, ok := s.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("asset %s not found", key)
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
 func defaultAssetsCfg() config.AssetsStorageConfig {
@@ -292,5 +303,33 @@ func TestAssetResolverUnmatchedRelativePathWarns(t *testing.T) {
 	}
 	if result.Markdown != markdown {
 		t.Fatal("Markdown should be unchanged for unsupported ref")
+	}
+}
+
+func TestAssetResolverPublicURLBuilderOverridesStoredURL(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeAssetStore()
+	workspaceID := uuid.New()
+	documentID := uuid.New()
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), workspaceID, uuid.New(), documentID, uuid.New())
+	resolver.WithPublicURLBuilder(func(asset model.Asset, stored *portstorage.StoredObject) string {
+		// 模拟 local 模式：存储层无 CDN URL，回退到代理 handler 绝对地址
+		return "http://127.0.0.1:8190/assets/" + asset.ID.String()
+	})
+
+	markdown := "![图](images/logo.png)"
+	result := resolver.ResolveWithCandidates(ctx, markdown, []parserport.AssetCandidate{
+		{RelativePath: "images/logo.png", Name: "logo.png", MimeType: "image/png", Data: []byte("png")},
+	})
+
+	if len(result.Assets) != 1 {
+		t.Fatalf("assets = %d, want 1", len(result.Assets))
+	}
+	if !strings.HasPrefix(result.Assets[0].PublicURL, "http://127.0.0.1:8190/assets/") {
+		t.Fatalf("PublicURL = %q, want proxy absolute URL", result.Assets[0].PublicURL)
+	}
+	// Markdown 中的引用应被改写为代理绝对地址
+	if !strings.Contains(result.Markdown, "http://127.0.0.1:8190/assets/") {
+		t.Fatalf("Markdown = %q, want proxy URL replaced", result.Markdown)
 	}
 }

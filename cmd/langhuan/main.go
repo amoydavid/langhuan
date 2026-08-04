@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,6 +41,7 @@ import (
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/pipeline"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
@@ -276,10 +278,26 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			Pipeline:       app.services.pipeline,
 			ParserRegistry: app.services.parserRegistry,
 			AssetStoreFactory: func(workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
-				return pipeline.NewAssetResolver(
+				resolver := pipeline.NewAssetResolver(
 					app.services.assetStore, http.DefaultClient, cfg.Storage.Assets,
 					workspaceID, knowledgeBaseID, documentID, revisionID,
 				)
+				// local 模式（存储层无 CDN public URL）时，把图片引用改写为
+				// 指向鉴权资产代理 handler 的绝对地址，确保 markdown 附件可访问。
+				resolver.WithPublicURLBuilder(func(asset model.Asset, stored *storageport.StoredObject) string {
+					if stored.PublicURL != "" {
+						return stored.PublicURL
+					}
+					ws, err := app.services.workspaces.Get(context.Background(), workspaceID)
+					if err != nil {
+						// 查不到 slug 时回退到 storage key（保持旧行为）
+						return stored.Key
+					}
+					return fmt.Sprintf("%s/api/v1/workspaces/%s/documents/%s/assets/%s",
+						strings.TrimSuffix(cfg.Server.BaseURL, "/"), ws.Slug,
+						documentID.String(), asset.ID.String())
+				})
+				return resolver
 			},
 			Logger: log,
 		})
@@ -634,6 +652,8 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		DocumentIngest:       services.documentIngest,
 		Documents:            services.documents,
 		DocumentAssets:       services.documentAssets,
+		AssetGetter:          services.documentAssets,
+		AssetContentStore:    services.assetStore,
 		FAQDocuments:         services.faqDocuments,
 		FileTree:             services.fileTree,
 		ChunkRevisions:       services.chunkRevisions,

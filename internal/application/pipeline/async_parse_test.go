@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -51,6 +53,10 @@ func (s *fakeAssetStoreForPipeline) Put(_ context.Context, object portstorage.Ob
 
 func (s *fakeAssetStoreForPipeline) Delete(_ context.Context, _ string) error {
 	return nil
+}
+
+func (s *fakeAssetStoreForPipeline) Open(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
 }
 
 func TestCompleteAsyncParsePersistsAssets(t *testing.T) {

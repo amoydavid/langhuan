@@ -2,7 +2,9 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -108,6 +110,9 @@ func (s *fakeAssetStoreForWorker) Put(_ context.Context, obj portstorage.ObjectI
 	return &portstorage.StoredObject{Key: obj.Key, PublicURL: "https://cdn/" + obj.Key, SizeBytes: int64(len(obj.Data))}, nil
 }
 func (s *fakeAssetStoreForWorker) Delete(_ context.Context, _ string) error { return nil }
+func (s *fakeAssetStoreForWorker) Open(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
+}
 
 func TestPDFPipelineParseStartEnqueuesPollWithExternalJobID(t *testing.T) {
 	asyncParser := &fakeAsyncParser{}

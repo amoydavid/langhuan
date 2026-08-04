@@ -211,9 +211,20 @@ func (a *AssetStore) Delete(ctx context.Context, key string) error {
 	return a.store.deleteObject(ctx, key)
 }
 
+// Open 按 storage key 打开已归档的资产内容，供鉴权代理 handler 读取。
+func (a *AssetStore) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	out, err := a.store.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(a.store.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("从 S3 读取资产失败: %w", err)
+	}
+	return out.Body, nil
+}
+
 // 编译期确保两个子类型实现各自的 port 接口。
 var (
 	_ portstorage.RawDocumentStore = (*RawDocumentStore)(nil)
 	_ portstorage.AssetStore       = (*AssetStore)(nil)
 )
-

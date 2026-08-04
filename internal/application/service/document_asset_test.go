@@ -13,10 +13,19 @@ import (
 
 type fakeAssetReader struct {
 	assets map[uuid.UUID][]*model.Asset // key: revisionID
+	byID   map[uuid.UUID]*model.Asset   // key: assetID
 }
 
 func (r *fakeAssetReader) ListAssetsByRevision(_ context.Context, workspaceID, revisionID uuid.UUID) ([]*model.Asset, error) {
 	return r.assets[revisionID], nil
+}
+
+func (r *fakeAssetReader) GetByID(_ context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error) {
+	asset, ok := r.byID[assetID]
+	if !ok || asset.WorkspaceID != workspaceID {
+		return nil, domainerrors.ErrNotFound
+	}
+	return asset, nil
 }
 
 type fakeAssetDocumentReader struct {
@@ -105,5 +114,38 @@ func TestDocumentAssetServiceNotFound(t *testing.T) {
 	_, err := service.ListByDocument(ctx, uuid.New(), uuid.New())
 	if !isNotFound(err) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDocumentAssetServiceGetByID(t *testing.T) {
+	ctx := context.Background()
+	workspaceID := uuid.New()
+	assetID := uuid.New()
+	asset := &model.Asset{ID: assetID, WorkspaceID: workspaceID, StorageKey: "assets/ws/doc/rev/a.png"}
+	reader := &fakeAssetReader{
+		byID: map[uuid.UUID]*model.Asset{assetID: asset},
+	}
+	service := NewDocumentAssetService(reader, &fakeAssetDocumentReader{})
+
+	got, err := service.GetByID(ctx, workspaceID, assetID)
+	if err != nil {
+		t.Fatalf("GetByID() error = %v", err)
+	}
+	if got.ID != assetID || got.StorageKey != asset.StorageKey {
+		t.Fatalf("asset = %#v, want %#v", got, asset)
+	}
+}
+
+func TestDocumentAssetServiceGetByIDCrossWorkspaceRejected(t *testing.T) {
+	ctx := context.Background()
+	assetID := uuid.New()
+	reader := &fakeAssetReader{
+		byID: map[uuid.UUID]*model.Asset{assetID: {ID: assetID, WorkspaceID: uuid.New()}},
+	}
+	service := NewDocumentAssetService(reader, &fakeAssetDocumentReader{})
+
+	_, err := service.GetByID(ctx, uuid.New(), assetID)
+	if !isNotFound(err) {
+		t.Fatalf("error = %v, want ErrNotFound (cross-workspace)", err)
 	}
 }

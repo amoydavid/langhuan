@@ -109,6 +109,29 @@ func (s *AssetStore) Delete(ctx context.Context, key string) error {
 	return ctx.Err()
 }
 
+// Open 按 storage key 打开已归档的资产内容，供鉴权代理 handler 读取。
+func (s *AssetStore) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	path, err := s.pathForKey(key)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.rejectExistingSymlinkComponents(path, true); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
 func (s *AssetStore) pathForKey(key string) (string, error) {
 	if key == "" || filepath.IsAbs(key) {
 		return "", ErrInvalidRawDocumentKey
