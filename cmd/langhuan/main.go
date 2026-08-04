@@ -406,6 +406,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Publisher:         documentPublisher,
 		Parser:            runtimeParser,
 		RawStore:          rawStore,
+		Assets:            db.NewDocumentAssetRepository(gormDB),
 		MaxFileSizeBytes:  cfg.Ingest.MaxFileSizeBytes,
 	})
 	chunkRevisions := service.NewChunkRevisionService(chunkRevisionStore, jobQueue)

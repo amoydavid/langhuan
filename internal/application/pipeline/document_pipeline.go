@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/google/uuid"
@@ -54,6 +55,12 @@ type RawDocumentReader interface {
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
+// AssetRepository owns revision-scoped asset persistence.
+type AssetRepository interface {
+	DeleteAssetsByRevision(ctx context.Context, workspaceID, revisionID uuid.UUID) error
+	CreateAssets(ctx context.Context, assets []model.Asset) error
+}
+
 // DocumentPipelineDeps contains the revision-scoped pipeline dependencies.
 type DocumentPipelineDeps struct {
 	Documents         RevisionDocumentGetter
@@ -67,6 +74,7 @@ type DocumentPipelineDeps struct {
 	Publisher         appservice.DocumentPublishStore
 	Parser            parserport.DocumentParser
 	RawStore          RawDocumentReader
+	Assets            AssetRepository
 	MaxFileSizeBytes  int64
 }
 
@@ -77,6 +85,7 @@ type DocumentPipeline struct {
 	faq       FAQChunkStage
 	index     IndexStage
 	revisions DocumentRevisionRepository
+	assets    AssetRepository
 }
 
 // NewDocumentPipeline creates the immutable-revision pipeline.
@@ -90,6 +99,7 @@ func NewDocumentPipeline(deps DocumentPipelineDeps) *DocumentPipeline {
 			Resolver: deps.EmbeddingResolver, Index: deps.RetrievalIndex, Publisher: deps.Publisher,
 		}),
 		revisions: deps.Revisions,
+		assets:    deps.Assets,
 	}
 }
 
@@ -109,7 +119,8 @@ func (p *DocumentPipeline) RunParse(ctx context.Context, workspaceID, revisionID
 
 // CompleteAsyncParse stores the result of an async parser (MinerU) and archives image assets.
 // It bypasses ParseStage (which calls the synchronous parser.Parse) and directly writes
-// the already-parsed markdown + manifest via CompleteParse, then runs AssetResolver.
+// the already-parsed markdown + manifest via CompleteParse, then runs AssetResolver
+// to archive images and persist them as document_assets.
 func (p *DocumentPipeline) CompleteAsyncParse(
 	ctx context.Context,
 	workspaceID, revisionID uuid.UUID,
@@ -129,7 +140,16 @@ func (p *DocumentPipeline) CompleteAsyncParse(
 		result := assetResolver.Resolve(ctx, markdown)
 		markdown = result.Markdown
 		manifest.Warnings = append(manifest.Warnings, result.Warnings...)
-		// TODO: 保存 result.Assets 到 document_assets 表（需要 asset repository）
+
+		// 持久化资产到 document_assets 表（幂等：先清理同 revision 旧资产再写入）
+		if p.assets != nil && len(result.Assets) > 0 {
+			if err := p.assets.DeleteAssetsByRevision(ctx, workspaceID, revision.ID); err != nil {
+				return fmt.Errorf("清理旧资产失败: %w", err)
+			}
+			if err := p.assets.CreateAssets(ctx, result.Assets); err != nil {
+				return fmt.Errorf("保存图片资产失败: %w", err)
+			}
+		}
 	}
 
 	return p.revisions.CompleteParse(ctx, workspaceID, revision.ID, markdown, manifest)
