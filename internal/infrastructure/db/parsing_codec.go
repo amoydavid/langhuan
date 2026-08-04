@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 
-	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
@@ -212,43 +211,9 @@ func decodeStrictJSON(data []byte, output any) error {
 }
 
 func validateManifestForCodec(manifest model.ParseManifest) error {
-	if manifest.Version != model.CurrentParseManifestVersion {
-		return fmt.Errorf("%w: 不支持的 parse manifest version: %d", domainerrors.ErrValidation, manifest.Version)
-	}
-	if !model.IsKnownParser(manifest.Parser) {
-		return fmt.Errorf("%w: 未知 parser: %q", domainerrors.ErrValidation, manifest.Parser)
-	}
-	if manifest.ParserVersion <= 0 {
-		return fmt.Errorf("%w: parser_version 必须大于 0", domainerrors.ErrValidation)
-	}
-	if len(manifest.Blocks) == 0 {
-		return fmt.Errorf("%w: parse manifest 至少需要一个 block", domainerrors.ErrValidation)
-	}
-	previousEnd := 0
-	for i, block := range manifest.Blocks {
-		if block.Sequence != i {
-			return fmt.Errorf("%w: block sequence 必须从 0 连续递增", domainerrors.ErrValidation)
-		}
-		switch block.Kind {
-		case model.BlockKindHeading, model.BlockKindParagraph, model.BlockKindList, model.BlockKindQuote,
-			model.BlockKindCode, model.BlockKindThematicBreak, model.BlockKindTableHeader, model.BlockKindTableRow:
-		default:
-			return fmt.Errorf("%w: 未知 block kind: %q", domainerrors.ErrValidation, block.Kind)
-		}
-		if block.NormalizedStart < previousEnd || block.NormalizedEnd <= block.NormalizedStart {
-			return fmt.Errorf("%w: block %d span 非法", domainerrors.ErrValidation, i)
-		}
-		if err := block.SourceAnchor.Validate(); err != nil {
-			return fmt.Errorf("block %d source anchor: %w", i, err)
-		}
-		previousEnd = block.NormalizedEnd
-	}
-	for i, warning := range manifest.Warnings {
-		if err := warning.SourceAnchor.Validate(); err != nil {
-			return fmt.Errorf("warning %d source anchor: %w", i, err)
-		}
-	}
-	return nil
+	// 复用 model 层的结构校验，保证 parser/block/source anchor 白名单单一来源，
+	// 避免 codec 与 ParseManifest.Validate 各自维护导致漂移。
+	return manifest.ValidateStructure()
 }
 
 func isZeroParseManifest(manifest model.ParseManifest) bool {

@@ -49,6 +49,27 @@ type ParseManifest struct {
 }
 
 func (m ParseManifest) Validate(markdown string) error {
+	if err := m.ValidateStructure(); err != nil {
+		return err
+	}
+	if !utf8.ValidString(markdown) {
+		return fmt.Errorf("%w: normalized markdown 不是有效 UTF-8", domainerrors.ErrValidation)
+	}
+	for index, block := range m.Blocks {
+		if block.NormalizedEnd > len(markdown) {
+			return fmt.Errorf("%w: block %d 超出 markdown 长度", domainerrors.ErrValidation, index)
+		}
+		if !byteBoundary(markdown, block.NormalizedStart) || !byteBoundary(markdown, block.NormalizedEnd) {
+			return fmt.Errorf("%w: block %d span 不在 UTF-8 边界", domainerrors.ErrValidation, index)
+		}
+	}
+	return nil
+}
+
+// ValidateStructure 校验 manifest 的结构约束（不依赖 markdown 内容）。
+// 供 db codec 等需要独立校验 JSON 解码结果的层复用，保证校验规则单一来源，
+// 避免与 Validate(markdown) 各自维护导致漂移。
+func (m ParseManifest) ValidateStructure() error {
 	if m.Version != CurrentParseManifestVersion {
 		return fmt.Errorf("%w: 不支持的 parse manifest version: %d", domainerrors.ErrValidation, m.Version)
 	}
@@ -57,9 +78,6 @@ func (m ParseManifest) Validate(markdown string) error {
 	}
 	if m.ParserVersion <= 0 {
 		return fmt.Errorf("%w: parser_version 必须大于 0", domainerrors.ErrValidation)
-	}
-	if !utf8.ValidString(markdown) {
-		return fmt.Errorf("%w: normalized markdown 不是有效 UTF-8", domainerrors.ErrValidation)
 	}
 	if len(m.Blocks) == 0 {
 		return fmt.Errorf("%w: parse manifest 至少需要一个 block", domainerrors.ErrValidation)
@@ -72,16 +90,18 @@ func (m ParseManifest) Validate(markdown string) error {
 		if !knownBlockKind(block.Kind) {
 			return fmt.Errorf("%w: 未知 block kind: %q", domainerrors.ErrValidation, block.Kind)
 		}
-		if block.NormalizedStart < previousEnd || block.NormalizedEnd <= block.NormalizedStart || block.NormalizedEnd > len(markdown) {
+		if block.NormalizedStart < previousEnd || block.NormalizedEnd <= block.NormalizedStart {
 			return fmt.Errorf("%w: block %d span 非法", domainerrors.ErrValidation, index)
-		}
-		if !byteBoundary(markdown, block.NormalizedStart) || !byteBoundary(markdown, block.NormalizedEnd) {
-			return fmt.Errorf("%w: block %d span 不在 UTF-8 边界", domainerrors.ErrValidation, index)
 		}
 		if err := block.SourceAnchor.Validate(); err != nil {
 			return fmt.Errorf("block %d source anchor: %w", index, err)
 		}
 		previousEnd = block.NormalizedEnd
+	}
+	for index, warning := range m.Warnings {
+		if err := warning.SourceAnchor.Validate(); err != nil {
+			return fmt.Errorf("warning %d source anchor: %w", index, err)
+		}
 	}
 	return nil
 }
