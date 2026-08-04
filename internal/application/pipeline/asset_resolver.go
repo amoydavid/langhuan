@@ -36,10 +36,11 @@ type AssetResolver struct {
 	httpClient *http.Client
 	cfg        config.AssetsStorageConfig
 	newID      func() uuid.UUID
-	// lineage 用于生成 storage key
-	workspaceID uuid.UUID
-	documentID  uuid.UUID
-	revisionID  uuid.UUID
+	// lineage 用于生成 storage key 与 asset 外键
+	workspaceID     uuid.UUID
+	knowledgeBaseID uuid.UUID
+	documentID      uuid.UUID
+	revisionID      uuid.UUID
 }
 
 // NewAssetResolver 创建 AssetResolver。
@@ -48,16 +49,17 @@ func NewAssetResolver(
 	store portstorage.AssetStore,
 	httpClient *http.Client,
 	cfg config.AssetsStorageConfig,
-	workspaceID, documentID, revisionID uuid.UUID,
+	workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID,
 ) *AssetResolver {
 	return &AssetResolver{
-		store:       store,
-		httpClient:  httpClient,
-		cfg:         cfg,
-		newID:       uuid.New,
-		workspaceID: workspaceID,
-		documentID:  documentID,
-		revisionID:  revisionID,
+		store:           store,
+		httpClient:      httpClient,
+		cfg:             cfg,
+		newID:           uuid.New,
+		workspaceID:     workspaceID,
+		knowledgeBaseID: knowledgeBaseID,
+		documentID:      documentID,
+		revisionID:      revisionID,
 	}
 }
 
@@ -212,6 +214,7 @@ func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef, candidates
 	asset := &model.Asset{
 		ID:                 assetID,
 		WorkspaceID:        r.workspaceID,
+		KnowledgeBaseID:    r.knowledgeBaseID,
 		DocumentRevisionID: r.revisionID,
 		DocumentID:         r.documentID,
 		OriginalRef:        ref.original,

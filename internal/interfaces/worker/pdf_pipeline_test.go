@@ -20,12 +20,12 @@ import (
 // fakeAsyncParser 实现 DocumentParser + AsyncDocumentParser，
 // 模拟 MinerU 的 Start/Poll 流程。
 type fakeAsyncParser struct {
-	startResult  *parserport.AsyncParseStart
-	pollResult   *parserport.AsyncParsePollResult
-	startCalls   int
-	pollCalls    int
-	lastStartIn  parserport.AsyncParseInput
-	lastPollIn   parserport.AsyncParsePollInput
+	startResult *parserport.AsyncParseStart
+	pollResult  *parserport.AsyncParsePollResult
+	startCalls  int
+	pollCalls   int
+	lastStartIn parserport.AsyncParseInput
+	lastPollIn  parserport.AsyncParsePollInput
 }
 
 func (p *fakeAsyncParser) Supports(fileType string) bool {
@@ -302,12 +302,12 @@ func (f *pdfPipelineFixture) handlers() DocumentHandlers {
 		Queue:          f.queue,
 		Pipeline:       f.asyncPipeline,
 		ParserRegistry: &fakeParserRegistry{parser: f.asyncParser},
-		AssetStoreFactory: func(workspaceID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
+		AssetStoreFactory: func(workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
 			return pipeline.NewAssetResolver(
 				&fakeAssetStoreForWorker{},
 				nil, // no HTTP client needed in this unit test
 				AssetsCfgForTest(),
-				workspaceID, documentID, revisionID,
+				workspaceID, knowledgeBaseID, documentID, revisionID,
 			)
 		},
 	}

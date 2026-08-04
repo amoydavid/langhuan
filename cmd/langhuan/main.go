@@ -275,10 +275,10 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			Queue:          app.jobQueue,
 			Pipeline:       app.services.pipeline,
 			ParserRegistry: app.services.parserRegistry,
-			AssetStoreFactory: func(workspaceID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
+			AssetStoreFactory: func(workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
 				return pipeline.NewAssetResolver(
 					app.services.assetStore, http.DefaultClient, cfg.Storage.Assets,
-					workspaceID, documentID, revisionID,
+					workspaceID, knowledgeBaseID, documentID, revisionID,
 				)
 			},
 			Logger: log,

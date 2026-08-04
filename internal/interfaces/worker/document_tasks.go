@@ -70,7 +70,7 @@ type DocumentHandlers struct {
 	Queue             queue.JobQueue
 	Pipeline          DocumentPipeline
 	ParserRegistry    ParserRegistry
-	AssetStoreFactory func(workspaceID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver
+	AssetStoreFactory func(workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver
 	Logger            *slog.Logger
 }
 
@@ -279,7 +279,7 @@ func (h DocumentHandlers) handleAsyncPoll(
 		// 完成异步解析：存储 markdown + manifest + 归档资产
 		var assetResolver *pipeline.AssetResolver
 		if h.AssetStoreFactory != nil {
-			assetResolver = h.AssetStoreFactory(payload.WorkspaceID, payload.DocumentID, payload.DocumentRevisionID)
+			assetResolver = h.AssetStoreFactory(payload.WorkspaceID, payload.KnowledgeBaseID, payload.DocumentID, payload.DocumentRevisionID)
 		}
 		if asyncPipeline, ok := h.Pipeline.(AsyncParseSupport); ok {
 			if err := asyncPipeline.CompleteAsyncParse(ctx, payload.WorkspaceID, payload.DocumentRevisionID, result.Document, assetResolver); err != nil {

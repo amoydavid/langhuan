@@ -55,7 +55,7 @@ func TestAssetResolverRewritesMarkdownImages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 	markdown := fmt.Sprintf("![alt text](%s/test.png)", server.URL)
 	result := resolver.Resolve(ctx, markdown)
 
@@ -80,7 +80,7 @@ func TestAssetResolverRewritesMarkdownImages(t *testing.T) {
 func TestAssetResolverHandlesDataURI(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAssetStore()
-	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 
 	pngBase64 := base64.StdEncoding.EncodeToString([]byte("fake png"))
 	dataURI := "data:image/png;base64," + pngBase64
@@ -108,7 +108,7 @@ func TestAssetResolverRejectsBadMimeKeepsRefAndWarns(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 	markdown := fmt.Sprintf("![svg](%s/icon.svg)", server.URL)
 	result := resolver.Resolve(ctx, markdown)
 
@@ -136,7 +136,7 @@ func TestAssetResolverDownloadFailureKeepsRefAndWarns(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 	markdown := fmt.Sprintf("![](%s/broken.png)", server.URL)
 	result := resolver.Resolve(ctx, markdown)
 
@@ -162,7 +162,7 @@ func TestAssetResolverEnforcesMaxCount(t *testing.T) {
 
 	cfg := defaultAssetsCfg()
 	cfg.MaxCountPerDocument = 2
-	resolver := NewAssetResolver(store, server.Client(), cfg, uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, server.Client(), cfg, uuid.New(), uuid.New(), uuid.New(), uuid.New())
 	markdown := fmt.Sprintf("![a](%s/1.png) ![](%s/2.png) ![](%s/3.png)", server.URL, server.URL, server.URL)
 	result := resolver.Resolve(ctx, markdown)
 
@@ -192,7 +192,7 @@ func TestAssetResolverRewritesHTMLImg(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, server.Client(), defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 	markdown := fmt.Sprintf(`<img src="%s/photo.jpg" alt="photo">`, server.URL)
 	result := resolver.Resolve(ctx, markdown)
 
@@ -207,7 +207,7 @@ func TestAssetResolverRewritesHTMLImg(t *testing.T) {
 func TestAssetResolverStripsBase64FromNormalized(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAssetStore()
-	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 
 	pngBase64 := base64.StdEncoding.EncodeToString([]byte("fake png"))
 	dataURI := "data:image/png;base64," + pngBase64
@@ -226,7 +226,7 @@ func TestAssetResolverStripsBase64FromNormalized(t *testing.T) {
 func TestAssetResolverArchivesRelativePathFromCandidates(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAssetStore()
-	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 
 	// zip 内图片候选 + Markdown 相对路径引用（如 MinerU 产出的 full.md）
 	candidates := []parserport.AssetCandidate{
@@ -261,7 +261,7 @@ func TestAssetResolverArchivesRelativePathFromCandidates(t *testing.T) {
 func TestAssetResolverNormalizesRelativePathPrefix(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAssetStore()
-	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 
 	// Markdown 中带 ./ 前缀，zip 候选路径不带
 	candidates := []parserport.AssetCandidate{
@@ -278,7 +278,7 @@ func TestAssetResolverNormalizesRelativePathPrefix(t *testing.T) {
 func TestAssetResolverUnmatchedRelativePathWarns(t *testing.T) {
 	ctx := context.Background()
 	store := newFakeAssetStore()
-	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New(), uuid.New())
 
 	// 相对路径引用但候选里没有对应文件——保持 unsupported_ref warning
 	markdown := "![missing](images/missing.png)"

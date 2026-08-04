@@ -56,6 +56,7 @@ func (s *fakeAssetStoreForPipeline) Delete(_ context.Context, _ string) error {
 func TestCompleteAsyncParsePersistsAssets(t *testing.T) {
 	ctx := context.Background()
 	workspaceID := uuid.New()
+	knowledgeBaseID := uuid.New()
 	revisionID := uuid.New()
 
 	revision := &model.DocumentRevision{
@@ -80,7 +81,7 @@ func TestCompleteAsyncParsePersistsAssets(t *testing.T) {
 		AllowedMimeTypes:    []string{"image/png"},
 	}
 	documentID := uuid.New()
-	assetResolver := NewAssetResolver(&fakeAssetStoreForPipeline{}, server.Client(), cfg, workspaceID, documentID, revisionID)
+	assetResolver := NewAssetResolver(&fakeAssetStoreForPipeline{}, server.Client(), cfg, workspaceID, knowledgeBaseID, documentID, revisionID)
 
 	p := &DocumentPipeline{
 		revisions: repo,
@@ -115,6 +116,9 @@ func TestCompleteAsyncParsePersistsAssets(t *testing.T) {
 	asset := assetRepo.createdAssets[0]
 	if asset.WorkspaceID != workspaceID {
 		t.Fatalf("asset WorkspaceID = %v, want %v", asset.WorkspaceID, workspaceID)
+	}
+	if asset.KnowledgeBaseID != knowledgeBaseID {
+		t.Fatalf("asset KnowledgeBaseID = %v, want %v", asset.KnowledgeBaseID, knowledgeBaseID)
 	}
 	if asset.DocumentID != documentID {
 		t.Fatalf("asset DocumentID = %v, want %v", asset.DocumentID, documentID)
@@ -154,6 +158,7 @@ func TestCompleteAsyncParsePersistsAssets(t *testing.T) {
 func TestCompleteAsyncParseWithoutImagesSkipsAssetRepo(t *testing.T) {
 	ctx := context.Background()
 	workspaceID := uuid.New()
+	knowledgeBaseID := uuid.New()
 	revisionID := uuid.New()
 
 	revision := &model.DocumentRevision{
@@ -188,7 +193,7 @@ func TestCompleteAsyncParseWithoutImagesSkipsAssetRepo(t *testing.T) {
 		MaxImageSizeBytes:   10 * 1024 * 1024,
 		AllowedMimeTypes:    []string{"image/png"},
 	}
-	assetResolver := NewAssetResolver(&fakeAssetStoreForPipeline{}, &http.Client{}, cfg, workspaceID, uuid.New(), revisionID)
+	assetResolver := NewAssetResolver(&fakeAssetStoreForPipeline{}, &http.Client{}, cfg, workspaceID, knowledgeBaseID, uuid.New(), revisionID)
 
 	err := p.CompleteAsyncParse(ctx, workspaceID, revisionID, parsed, assetResolver)
 	if err != nil {
