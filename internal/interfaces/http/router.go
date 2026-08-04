@@ -142,6 +142,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		if deps.ModelProviders != nil {
 			providerH := modelProviderHandler{service: deps.ModelProviders}
 			admin.GET("/admin/model-providers", providerH.listPlatform)
+			admin.GET("/admin/model-providers/options", providerH.options)
 			admin.POST("/admin/model-providers", providerH.createPlatform)
 			admin.GET("/admin/model-providers/:provider_id", providerH.getPlatform)
 			admin.PATCH("/admin/model-providers/:provider_id", providerH.updatePlatform)
@@ -196,6 +197,8 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			if deps.ModelProviders != nil {
 				providerH := modelProviderHandler{service: deps.ModelProviders}
 				memberGroup.GET("/model-providers", providerH.listWorkspace)
+				// options 必须注册在 :provider_id 之前，Gin 静态优先
+				memberGroup.GET("/model-providers/options", providerH.options)
 				memberGroup.GET("/model-providers/:provider_id", providerH.getWorkspace)
 			}
 			if deps.Models != nil {

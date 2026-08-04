@@ -57,8 +57,8 @@ function AssetGrid({
             <ImageIcon className='size-4' />
           </div>
           <div className='min-w-0'>
-            <p className='truncate text-sm font-medium'>{asset.original_ref}</p>
-            <p className='mt-0.5 truncate text-xs text-muted-foreground'>
+            <p className='truncate font-medium text-sm'>{asset.original_ref}</p>
+            <p className='mt-0.5 truncate text-muted-foreground text-xs'>
               {asset.mime_type} · {formatBytes(asset.size_bytes)} ·{' '}
               {asset.sha256.slice(0, 8)}…
             </p>

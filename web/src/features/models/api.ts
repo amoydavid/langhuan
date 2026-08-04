@@ -57,6 +57,16 @@ export async function listModelProviders(
   return response.data
 }
 
+export async function getModelProviderOptions(
+  scope: ModelScope,
+  workspaceSlug?: string
+) {
+  const response = await apiClient.get<{ supported_providers: string[] }>(
+    `${modelProviderCollectionPath(scope, workspaceSlug)}/options`
+  )
+  return response.data.supported_providers
+}
+
 export async function getModelProvider(
   scope: ModelScope,
   providerId: string,

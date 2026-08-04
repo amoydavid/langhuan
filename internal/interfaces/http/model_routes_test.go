@@ -105,6 +105,10 @@ func (s *fakeModelProviderHTTPService) DeletePlatform(_ context.Context, provide
 	return s.err
 }
 
+func (s *fakeModelProviderHTTPService) SupportedProviders() []string {
+	return []string{"openai", "ark", "ollama", "dashscope", "tencentcloud", "mineru"}
+}
+
 type fakeModelHTTPService struct {
 	createWorkspaceID uuid.UUID
 	createInput       service.CreateModelInput

@@ -51,6 +51,16 @@ func NewModelProviderService(repository ModelProviderRepository, cipher embeddin
 	return &ModelProviderService{repository: repository, cipher: cipher, resolver: resolver}
 }
 
+// SupportedProviders 返回当前可用的 provider 键列表（如 openai/ark/.../mineru）。
+// 供 Web Console 渲染 Provider 下拉选项；未启用的 provider（如 mineru.enabled=false）
+// 不出现在列表中。
+func (s *ModelProviderService) SupportedProviders() []string {
+	if s.resolver == nil {
+		return nil
+	}
+	return s.resolver.SupportedProviders()
+}
+
 // CreateWorkspace creates a Provider owned by one Workspace.
 func (s *ModelProviderService) CreateWorkspace(ctx context.Context, workspaceID uuid.UUID, input CreateModelProviderInput) (*dto.ModelProvider, error) {
 	input.Scope, input.WorkspaceID = value.ModelScopeWorkspace, &workspaceID

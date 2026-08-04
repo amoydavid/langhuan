@@ -50,6 +50,15 @@ func (r *Registry) Supports(provider string) bool {
 	return err == nil
 }
 
+// Factories 返回已注册的全部 Factory，供装配层枚举可用 provider 键。
+func (r *Registry) Factories() []parserproviderport.Factory {
+	result := make([]parserproviderport.Factory, 0, len(r.factories))
+	for _, factory := range r.factories {
+		result = append(result, factory)
+	}
+	return result
+}
+
 func factoryIsNil(factory parserproviderport.Factory) bool {
 	if factory == nil {
 		return true

@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { KeyRound, Loader2, PlugZap, RotateCcw } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -8,7 +8,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { parseApiError } from '@/lib/api/error'
-import { createModelProvider, updateModelProvider } from '../api'
+import {
+  createModelProvider,
+  getModelProviderOptions,
+  updateModelProvider,
+} from '../api'
 import { invalidateSelectableModels } from '../cache'
 import { type ProviderFormValues, providerFormSchema } from '../schemas'
 import type { ModelProvider, ModelScope, ProviderKey } from '../types'
@@ -126,8 +130,21 @@ export function ProviderForm({
   })
 
   const labels = providerLabels(t)
+  // 从后端获取当前可用的 provider 键（mineru 仅在 mineru.enabled=true 时返回），
+  // 据此过滤下拉选项，避免展示后端拒绝创建的 Provider。
+  const { data: supportedProviders = [] } = useQuery({
+    queryKey: ['model-provider-options', scope, workspaceSlug ?? null],
+    queryFn: () => getModelProviderOptions(scope, workspaceSlug),
+    enabled: !provider,
+    staleTime: 60_000,
+  })
+  const availableKeys = new Set(supportedProviders)
   const providerOptions = (Object.keys(labels) as ProviderKey[]).filter(
-    (key) => scope === 'platform' || key !== 'ollama'
+    (key) =>
+      (scope === 'platform' || key !== 'ollama') &&
+      (provider !== undefined ||
+        supportedProviders.length === 0 ||
+        availableKeys.has(key))
   )
 
   return (

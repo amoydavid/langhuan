@@ -519,7 +519,8 @@ func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
 }
 
 // buildRuntimeParserProviderRegistry 构建解析器 Provider Factory 注册表。
-// 当 MinerU 启用时注册 mineru factory；未启用时返回空 registry。
+// 仅当 mineru.enabled=true 时注册 mineru factory：未开启配置时，
+// 用户不能在 Web Console 创建 MinerU Provider（避免配置了却无法使用）。
 func buildRuntimeParserProviderRegistry(cfg *config.Config) (*parserprovideradapter.Registry, error) {
 	var factories []parserproviderport.Factory
 	if cfg.MinerU.Enabled {
@@ -535,7 +536,14 @@ func buildProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistr
 	if parserRegistry != nil {
 		adapter = service.NewParserRegistryAdapter(parserRegistry)
 	}
-	return service.NewProviderFactoryResolver(embeddingRegistry, adapter)
+	// 可用 provider 键集合：embedding 5 个 + 条件注册的 parser provider（如 mineru）。
+	supported := []string{"openai", "ark", "ollama", "dashscope", "tencentcloud"}
+	if parserRegistry != nil {
+		for _, factory := range parserRegistry.Factories() {
+			supported = append(supported, factory.Provider())
+		}
+	}
+	return service.NewProviderFactoryResolver(embeddingRegistry, adapter, supported...)
 }
 
 func clearSensitiveBytes(value []byte) {

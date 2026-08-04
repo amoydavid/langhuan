@@ -30,6 +30,9 @@ type ProviderFactoryInfo struct {
 type ProviderFactoryResolver struct {
 	embeddingRegistry embeddingport.FactoryRegistry
 	parserRegistry    *ParserRegistryAdapter
+	// supportedProviders 是装配时固定的可用 provider 键集合，
+	// 供 Web Console 渲染 Provider 选项（如 mineru 仅在启用时可用）。
+	supportedProviders []string
 }
 
 // ParserRegistryAdapter 把 parserprovider.FactoryRegistry 适配为
@@ -56,11 +59,25 @@ func (a *ParserRegistryAdapter) Factory(provider string) (parserproviderport.Fac
 
 // NewProviderFactoryResolver 创建一个同时覆盖 embedding 和 parser 能力域的解析器。
 // parserAdapter 可为 nil（表示进程未注册任何 parser provider）。
-func NewProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistry, parserAdapter *ParserRegistryAdapter) *ProviderFactoryResolver {
+// supportedProviders 为装配时确定的可用 provider 键集合，供前端渲染选项。
+func NewProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistry, parserAdapter *ParserRegistryAdapter, supportedProviders ...string) *ProviderFactoryResolver {
 	return &ProviderFactoryResolver{
-		embeddingRegistry: embeddingRegistry,
-		parserRegistry:    parserAdapter,
+		embeddingRegistry:  embeddingRegistry,
+		parserRegistry:     parserAdapter,
+		supportedProviders: append([]string(nil), supportedProviders...),
 	}
+}
+
+// SupportedProviders 返回装配时可用的 provider 键列表（如 openai/ark/ollama/dashscope/tencentcloud/mineru）。
+// 用于 Web Console 渲染 Provider 选择下拉，避免展示不可用的选项。
+func (r *ProviderFactoryResolver) SupportedProviders() []string {
+	return append([]string(nil), r.supportedProviders...)
+}
+
+// Supports 判断指定 provider 是否已注册（可用）。
+func (r *ProviderFactoryResolver) Supports(provider string) bool {
+	_, err := r.Resolve(provider)
+	return err == nil
 }
 
 // Resolve 按 provider 名称查找 Factory，返回统一视图。

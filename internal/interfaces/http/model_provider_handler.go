@@ -25,6 +25,13 @@ type ModelProviderHTTPService interface {
 	UpdatePlatform(context.Context, uuid.UUID, service.UpdateModelProviderInput) (*dto.ModelProvider, error)
 	DeleteWorkspace(context.Context, uuid.UUID, uuid.UUID) error
 	DeletePlatform(context.Context, uuid.UUID) error
+	// SupportedProviders 返回当前可用的 provider 键列表，供前端渲染 Provider 选项。
+	SupportedProviders() []string
+}
+
+// providerOptionsResponse 是 GET .../model-providers/options 的响应。
+type providerOptionsResponse struct {
+	SupportedProviders []string `json:"supported_providers"`
 }
 
 type createModelProviderRequest struct {
@@ -125,6 +132,15 @@ func (h modelProviderHandler) listWorkspace(c *gin.Context) {
 func (h modelProviderHandler) listPlatform(c *gin.Context) {
 	items, err := h.service.ListPlatform(c.Request.Context())
 	writeModelProviderList(c, items, err)
+}
+
+// options 返回当前可用的 provider 键列表，供前端渲染 Provider 下拉选项。
+func (h modelProviderHandler) options(c *gin.Context) {
+	supported := h.service.SupportedProviders()
+	if supported == nil {
+		supported = []string{}
+	}
+	c.JSON(stdhttp.StatusOK, providerOptionsResponse{SupportedProviders: supported})
 }
 
 func writeModelProviderList(c *gin.Context, items []*dto.ModelProvider, err error) {
