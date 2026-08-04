@@ -201,11 +201,53 @@ func TestDocumentTaskQueueUsesCompleteLineageAndDeterministicTaskID(t *testing.T
 	if request.Type != TaskDocumentParsePoll {
 		t.Fatalf("queue type = %q", request.Type)
 	}
-	wantTaskID := queue.DocumentTaskID(request.Type, payload.WorkspaceID, payload.DocumentRevisionID, payload.GenerationID)
+	// poll 任务使用 jobID 维度的唯一 TaskID（异步 poll 会多次重入队，不能复用固定 ID）
+	wantTaskID := queue.DocumentPollTaskID(payload.WorkspaceID, payload.DocumentRevisionID, fixture.store.created[0].ID)
 	if request.TaskID != wantTaskID {
 		t.Fatalf("task id = %q, want %q", request.TaskID, wantTaskID)
 	}
 	assertQueuedLineage(t, request, payload, uuid.Nil)
+}
+
+// TestDocumentParsePollRequeuesWithUniqueTaskID 验证异步 poll 重入队使用唯一 TaskID，
+// 避免 asynq "task ID conflicts with another task"。
+func TestDocumentParsePollRequeuesWithUniqueTaskID(t *testing.T) {
+	asyncParser := &fakeAsyncParser{
+		pollResult: &parserport.AsyncParsePollResult{
+			Status:  parserport.AsyncRunning,
+			Payload: map[string]any{"poll_count": 1},
+		},
+	}
+	fixture := newPDFPipelineFixture(asyncParser, parserport.AsyncRunning)
+	payload := fixture.payload()
+
+	fixture.store.revision.FileType = "pdf"
+	fixture.store.revision.Status = value.DocumentRevisionPending
+	fixture.store.job.Type = TaskDocumentParsePoll
+	fixture.store.job.Payload["external_job_id"] = "fake-mineru-batch-001"
+
+	err := processDocumentTask(context.Background(), TaskDocumentParsePoll, fixture.handlers(), payload)
+	if err != nil {
+		t.Fatalf("parse_poll error = %v", err)
+	}
+
+	// 重入队的 poll 任务应有唯一 TaskID（含新 job ID）
+	if len(fixture.queue.requests) == 0 {
+		t.Fatal("no poll task was re-enqueued")
+	}
+	seen := make(map[string]bool)
+	for _, request := range fixture.queue.requests {
+		if request.Type != TaskDocumentParsePoll {
+			continue
+		}
+		if request.TaskID == "" {
+			t.Fatal("poll task has empty TaskID")
+		}
+		if seen[request.TaskID] {
+			t.Fatalf("duplicate poll TaskID %q", request.TaskID)
+		}
+		seen[request.TaskID] = true
+	}
 }
 
 func assertQueuedLineage(t *testing.T, request queue.JobRequest, source DocumentTaskPayload, chunkSetID uuid.UUID) {

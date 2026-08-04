@@ -432,9 +432,15 @@ func (h DocumentHandlers) createAndEnqueueWithJobPayloadAndExtra(
 	if err != nil {
 		return nil, h.failCreatedJob(ctx, source.WorkspaceID, job.ID, err)
 	}
+	// 异步 poll 任务会多次重入队同一 revision，必须使用唯一 TaskID（jobID 维度），
+	// 否则 asynq 报 "task ID conflicts with another task"。
+	taskID := queue.DocumentTaskID(typ, source.WorkspaceID, source.DocumentRevisionID, source.GenerationID)
+	if typ == TaskDocumentParsePoll {
+		taskID = queue.DocumentPollTaskID(source.WorkspaceID, source.DocumentRevisionID, job.ID)
+	}
 	if _, err := h.Queue.Enqueue(ctx, queue.JobRequest{
 		Type: typ, Payload: queuePayload,
-		TaskID: queue.DocumentTaskID(typ, source.WorkspaceID, source.DocumentRevisionID, source.GenerationID),
+		TaskID: taskID,
 		Delay: delay,
 	}); err != nil {
 		return nil, h.failCreatedJob(ctx, source.WorkspaceID, job.ID, err)
