@@ -114,6 +114,7 @@ export const content = {
     revisionNo: 'Revision {{no}}',
     noRevision: 'No revision available',
     assetsTitle: 'Image assets ({{count}})',
+    warningsTitle: 'Parse warnings ({{count}})',
     noAssets: 'No image assets for this document',
   },
 

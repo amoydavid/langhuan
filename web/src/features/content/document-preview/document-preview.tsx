@@ -227,6 +227,31 @@ export function DocumentPreview({
             )}
           </dl>
 
+          {revision?.warnings && revision.warnings.length > 0 && (
+            <div className='mt-6 border-t pt-5'>
+              <h3 className='mb-3 text-sm font-semibold'>
+                {t('content.documentPreview.warningsTitle', {
+                  count: revision.warnings.length,
+                })}
+              </h3>
+              <div className='space-y-2'>
+                {revision.warnings.map((warning, index) => (
+                  <div
+                    key={`${warning.code}-${index}`}
+                    className='rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm'
+                  >
+                    <span className='font-mono text-xs text-amber-700'>
+                      {warning.code}
+                    </span>
+                    <span className='ml-2 text-muted-foreground'>
+                      {warning.message}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {showAssets && (
             <div className='mt-6 border-t pt-5'>
               <h3 className='mb-3 flex items-center gap-2 text-sm font-semibold'>

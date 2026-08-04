@@ -91,20 +91,23 @@ describe('DocumentPreview', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
-    client.setQueryData(['document-assets', 'workspace-1', documentId], [
-      {
-        id: '50000000-0000-4000-8000-000000000005',
-        document_id: documentId,
-        revision_id: revisionId,
-        original_ref: 'chart.png',
-        public_url: 'https://cdn.example.com/chart.png',
-        mime_type: 'image/png',
-        sha256: 'abcdef1234567890',
-        size_bytes: 15360, // 15 KB，与文档大小 2 KB 区分
-        metadata: {},
-        created_at: '2026-08-01T10:00:00Z',
-      },
-    ])
+    client.setQueryData(
+      ['document-assets', 'workspace-1', documentId],
+      [
+        {
+          id: '50000000-0000-4000-8000-000000000005',
+          document_id: documentId,
+          revision_id: revisionId,
+          original_ref: 'chart.png',
+          public_url: 'https://cdn.example.com/chart.png',
+          mime_type: 'image/png',
+          sha256: 'abcdef1234567890',
+          size_bytes: 15360, // 15 KB，与文档大小 2 KB 区分
+          metadata: {},
+          created_at: '2026-08-01T10:00:00Z',
+        },
+      ]
+    )
 
     const screen = await render(
       <QueryClientProvider client={client}>

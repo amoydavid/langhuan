@@ -42,7 +42,14 @@ type DocumentRevisionSummary struct {
 	ContentType      string                       `json:"content_type,omitempty"`
 	SHA256           string                       `json:"sha256,omitempty"`
 	SizeBytes        int64                        `json:"size_bytes"`
+	Warnings         []ParseWarningDTO            `json:"warnings,omitempty"`
 	CreatedAt        time.Time                    `json:"created_at"`
+}
+
+// ParseWarningDTO 是解析警告的安全表示（如资产超限、MIME 拒绝、图片下载失败）。
+type ParseWarningDTO struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func DocumentFromModel(doc *model.Document) *Document {
@@ -93,10 +100,20 @@ func applyDocumentRevisionSummary(result *Document, revision *model.DocumentRevi
 	result.SizeBytes = revision.SizeBytes
 	result.NormalizedMarkdown = revision.NormalizedMarkdown
 	result.ErrorMessage = revision.ErrorMessage
-	result.ActiveRevision = &DocumentRevisionSummary{
+	summary := &DocumentRevisionSummary{
 		ID: revision.ID, RevisionNo: revision.RevisionNo, Status: revision.Status,
 		OriginalFilename: revision.OriginalFilename, FileType: revision.FileType,
 		ContentType: revision.ContentType, SHA256: revision.SHA256, SizeBytes: revision.SizeBytes,
 		CreatedAt: revision.CreatedAt,
 	}
+	if revision.ParseManifest != nil {
+		summary.Warnings = make([]ParseWarningDTO, 0, len(revision.ParseManifest.Warnings))
+		for _, warning := range revision.ParseManifest.Warnings {
+			summary.Warnings = append(summary.Warnings, ParseWarningDTO{
+				Code:    warning.Code,
+				Message: warning.Message,
+			})
+		}
+	}
+	result.ActiveRevision = summary
 }

@@ -28,6 +28,11 @@ export const documentStatusSchema = z.enum([
   'deleted',
 ])
 
+export const parseWarningSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+})
+
 export const documentRevisionSummarySchema = z.object({
   id: z.uuid(),
   revision_no: z.number().int().positive(),
@@ -37,6 +42,7 @@ export const documentRevisionSummarySchema = z.object({
   content_type: z.string().optional(),
   sha256: z.string().optional(),
   size_bytes: z.number().int().nonnegative(),
+  warnings: z.array(parseWarningSchema).optional(),
   created_at: z.string(),
 })
 
