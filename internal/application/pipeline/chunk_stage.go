@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"io"
 	"time"
 
@@ -81,7 +82,7 @@ func (s ChunkStage) Run(ctx context.Context, workspaceID, revisionID, generation
 		return uuid.Nil, err
 	}
 	candidate := &model.DocumentChunkSet{
-		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: revision.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: workspaceID, KnowledgeBaseID: revision.KnowledgeBaseID,
 		DocumentID: revision.DocumentID, DocumentRevisionID: revision.ID,
 		Strategy: value.ChunkStrategyStandard, ChunkerVersion: generation.ChunkerVersion,
 		ChunkingConfig: configMap, ConfigHash: configHash, Status: value.ChunkSetBuilding,

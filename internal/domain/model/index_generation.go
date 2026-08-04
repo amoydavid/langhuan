@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -86,7 +87,7 @@ func NewIndexGeneration(input NewIndexGenerationInput) (*IndexGeneration, error)
 		disposition = value.ManualEditNotApplicable
 	}
 	return &IndexGeneration{
-		ID: uuid.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		BaseGenerationID: input.BaseGenerationID, EmbeddingModelID: input.EmbeddingModelID,
 		ProviderID: input.ProviderID, ModelName: strings.TrimSpace(input.ModelName),
 		EmbeddingDimension: input.EmbeddingDimension, ModelConfigHash: input.ModelConfigHash,

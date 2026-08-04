@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -137,7 +138,7 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 		if header != "" {
 			embedding = header + "\n\n" + draft.content
 		}
-		chunkID := uuid.New()
+		chunkID := id.New()
 		revision, err := model.NewChunkRevision(model.NewChunkRevisionInput{
 			WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 			DocumentID: input.DocumentID, DocumentRevisionID: input.DocumentRevisionID,

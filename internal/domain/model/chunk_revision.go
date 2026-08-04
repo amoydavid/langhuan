@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -79,7 +80,7 @@ func NewChunkRevision(input NewChunkRevisionInput) (*ChunkRevision, error) {
 		return nil, fmt.Errorf("%w: Chunk edit source 无效", domainerrors.ErrValidation)
 	}
 	return &ChunkRevision{
-		ID: uuid.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		DocumentID: input.DocumentID, DocumentRevisionID: input.DocumentRevisionID,
 		ChunkSetID: input.ChunkSetID, ChunkID: input.ChunkID, RevisionNo: input.RevisionNo,
 		BaseRevisionID: input.BaseRevisionID, Content: input.Content, ContextHeader: input.ContextHeader,

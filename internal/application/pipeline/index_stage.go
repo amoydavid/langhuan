@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"math"
 	"strings"
 	"time"
@@ -95,7 +96,7 @@ func (s IndexStage) Run(
 			return nil, fmt.Errorf("%w: enabled ChunkRevision content 不能为空", domainerrors.ErrValidation)
 		}
 		entries = append(entries, &model.RetrievalEntry{
-			ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: generation.KnowledgeBaseID,
+			ID: id.New(), WorkspaceID: workspaceID, KnowledgeBaseID: generation.KnowledgeBaseID,
 			IndexGenerationID: generation.ID, DocumentID: chunk.DocumentID,
 			DocumentRevisionID: chunk.DocumentRevisionID, ChunkSetID: chunk.ChunkSetID,
 			ChunkID: chunk.ID, ChunkRevisionID: revision.ID, State: value.RetrievalEntryStaging,

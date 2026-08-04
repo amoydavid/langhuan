@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,7 +35,7 @@ func NewMembership(workspaceID, userID uuid.UUID, role value.WorkspaceRole) (*Me
 
 	now := time.Now().UTC()
 	return &Membership{
-		ID:          uuid.New(),
+		ID:          id.New(),
 		WorkspaceID: workspaceID,
 		UserID:      userID,
 		Role:        role,

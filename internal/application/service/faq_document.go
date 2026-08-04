@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -210,7 +211,7 @@ func newFAQReadyRevision(
 
 func validateFAQPayload(questions []string, answer string) error {
 	document := &model.Document{
-		ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), Kind: value.DocumentKindFAQ,
+		ID: id.New(), WorkspaceID: id.New(), KnowledgeBaseID: id.New(), Kind: value.DocumentKindFAQ,
 	}
 	_, _, err := newFAQReadyRevision(
 		document, 1, value.DocumentRevisionReasonEdit, questions, answer, nil,

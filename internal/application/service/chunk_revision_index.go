@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"math"
 	"strings"
 	"time"
@@ -154,7 +155,7 @@ func (s *ChunkRevisionIndexService) stage(
 		return nil, fmt.Errorf("%w: Generation fts_config 无效", domainerrors.ErrValidation)
 	}
 	entry := &model.RetrievalEntry{
-		ID: uuid.New(), WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
 		IndexGenerationID: request.GenerationID, DocumentID: request.DocumentID,
 		DocumentRevisionID: request.DocumentRevisionID, ChunkSetID: request.ChunkSetID,
 		ChunkID: request.ChunkID, ChunkRevisionID: request.NewRevisionID,

@@ -15,10 +15,10 @@ import (
 
 	"github.com/google/uuid"
 
+	s3keys "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
-	s3keys "github.com/dajee/langhuan/internal/adapters/storage/s3"
 )
 
 // AssetResolution 是 AssetResolver.Resolve 的返回值。
@@ -30,14 +30,14 @@ type AssetResolution struct {
 
 // AssetResolver 把 Markdown 中的图片引用归档到自有对象存储。
 type AssetResolver struct {
-	store    portstorage.AssetStore
+	store      portstorage.AssetStore
 	httpClient *http.Client
-	cfg      config.AssetsStorageConfig
-	newID    func() uuid.UUID
+	cfg        config.AssetsStorageConfig
+	newID      func() uuid.UUID
 	// lineage 用于生成 storage key
-	workspaceID  uuid.UUID
-	documentID   uuid.UUID
-	revisionID   uuid.UUID
+	workspaceID uuid.UUID
+	documentID  uuid.UUID
+	revisionID  uuid.UUID
 }
 
 // NewAssetResolver 创建 AssetResolver。
@@ -49,10 +49,10 @@ func NewAssetResolver(
 	workspaceID, documentID, revisionID uuid.UUID,
 ) *AssetResolver {
 	return &AssetResolver{
-		store:      store,
-		httpClient: httpClient,
-		cfg:        cfg,
-		newID:      uuid.New,
+		store:       store,
+		httpClient:  httpClient,
+		cfg:         cfg,
+		newID:       uuid.New,
 		workspaceID: workspaceID,
 		documentID:  documentID,
 		revisionID:  revisionID,
@@ -98,9 +98,9 @@ func (r *AssetResolver) Resolve(ctx context.Context, markdown string) AssetResol
 
 // imageRef 描述一个图片引用的原始位置和来源。
 type imageRef struct {
-	original    string // Markdown 中的原始引用字符串（用于替换）
-	url         string // 图片 URL 或 data URI
-	alt         string // alt 文本
+	original string // Markdown 中的原始引用字符串（用于替换）
+	url      string // 图片 URL 或 data URI
+	alt      string // alt 文本
 }
 
 func (r *AssetResolver) collectImageRefs(markdown string) []imageRef {

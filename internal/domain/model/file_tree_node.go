@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -60,7 +61,7 @@ func NewFileTreeNode(input NewFileTreeNodeInput) (*FileTreeNode, error) {
 	}
 	now := time.Now().UTC()
 	return &FileTreeNode{
-		ID: uuid.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		ParentID: input.ParentID, NodeType: input.NodeType, Name: name,
 		DocumentID: input.DocumentID, CreatedAt: now, UpdatedAt: now,
 	}, nil

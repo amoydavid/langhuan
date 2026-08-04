@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"regexp"
 	"strings"
 	"time"
@@ -42,7 +43,7 @@ func NewWorkspace(name, slug string, metadata map[string]any) (*Workspace, error
 	}
 	now := time.Now().UTC()
 	return &Workspace{
-		ID:        uuid.New(),
+		ID:        id.New(),
 		Name:      name,
 		Slug:      slug,
 		Metadata:  metadata,

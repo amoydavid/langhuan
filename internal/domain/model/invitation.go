@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,7 +51,7 @@ func NewInvitation(workspaceID uuid.UUID, invitedEmail string, role value.Worksp
 
 	now := time.Now().UTC()
 	return &Invitation{
-		ID:           uuid.New(),
+		ID:           id.New(),
 		WorkspaceID:  workspaceID,
 		InvitedEmail: normalizedEmail,
 		Role:         role,

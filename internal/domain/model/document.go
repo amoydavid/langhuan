@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func NewDocumentIdentity(
 	}
 	now := time.Now().UTC()
 	return &Document{
-		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID,
+		ID: id.New(), WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID,
 		Kind: kind, Title: title, SourceType: sourceType, SourceURI: sourceURI,
 		Status: value.DocumentStatusPending, Metadata: metadata, CreatedAt: now, UpdatedAt: now,
 	}, nil
@@ -142,7 +143,7 @@ func NewDocument(input NewDocumentInput) (*Document, error) {
 		kind = value.DocumentKindFile
 	}
 	return &Document{
-		ID:                 uuid.New(),
+		ID:                 id.New(),
 		WorkspaceID:        input.WorkspaceID,
 		KnowledgeBaseID:    input.KnowledgeBaseID,
 		Kind:               kind,

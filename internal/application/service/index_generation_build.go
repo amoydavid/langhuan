@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"reflect"
 	"strings"
 	"time"
@@ -184,7 +185,7 @@ func (s *IndexGenerationBuildService) stage(
 				return nil, nil, fmt.Errorf("%w: enabled ChunkRevision content 不能为空", domainerrors.ErrValidation)
 			}
 			entries = append(entries, &model.RetrievalEntry{
-				ID: uuid.New(), WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
+				ID: id.New(), WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
 				IndexGenerationID: request.GenerationID, DocumentID: chunk.DocumentID,
 				DocumentRevisionID: chunk.DocumentRevisionID, ChunkSetID: chunk.ChunkSetID,
 				ChunkID: chunk.ID, ChunkRevisionID: revision.ID, State: value.RetrievalEntryStaging,

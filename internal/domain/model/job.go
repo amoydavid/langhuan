@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func NewJob(input NewJobInput) (*Job, error) {
 	}
 	now := time.Now().UTC()
 	return &Job{
-		ID:                 uuid.New(),
+		ID:                 id.New(),
 		WorkspaceID:        input.WorkspaceID,
 		KnowledgeBaseID:    input.KnowledgeBaseID,
 		DocumentID:         input.DocumentID,

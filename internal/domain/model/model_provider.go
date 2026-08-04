@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -65,7 +66,7 @@ func NewModelProvider(
 	now := time.Now().UTC()
 	actorID := createdBy
 	return &ModelProvider{
-		ID:                    uuid.New(),
+		ID:                    id.New(),
 		Scope:                 scope,
 		WorkspaceID:           cloneUUIDPointer(workspaceID),
 		Name:                  normalizedName,

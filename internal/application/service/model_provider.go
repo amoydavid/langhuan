@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"time"
 
 	"github.com/google/uuid"
@@ -262,5 +263,5 @@ func actorIDOrNew(value *uuid.UUID) uuid.UUID {
 	if value != nil && *value != uuid.Nil {
 		return *value
 	}
-	return uuid.New()
+	return id.New()
 }

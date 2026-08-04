@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -35,29 +36,29 @@ type NewDocumentRevisionInput struct {
 
 // DocumentRevision stores one immutable acquisition and parse result.
 type DocumentRevision struct {
-	ID                  uuid.UUID
-	WorkspaceID         uuid.UUID
-	KnowledgeBaseID     uuid.UUID
-	DocumentID          uuid.UUID
-	Kind                value.DocumentKind
-	RevisionNo          int64
-	Reason              value.DocumentRevisionReason
-	OriginalFilename    string
-	FileType            string
-	ContentType         string
-	RawStorageKey       string
-	SHA256              string
-	SizeBytes           int64
-	NormalizedMarkdown  string
-	ParseManifest       *ParseManifest
+	ID                   uuid.UUID
+	WorkspaceID          uuid.UUID
+	KnowledgeBaseID      uuid.UUID
+	DocumentID           uuid.UUID
+	Kind                 value.DocumentKind
+	RevisionNo           int64
+	Reason               value.DocumentRevisionReason
+	OriginalFilename     string
+	FileType             string
+	ContentType          string
+	RawStorageKey        string
+	SHA256               string
+	SizeBytes            int64
+	NormalizedMarkdown   string
+	ParseManifest        *ParseManifest
 	ParserRawMarkdownKey string
-	ProcessingVersion   int
-	Status              value.DocumentRevisionStatus
-	ErrorClass          string
-	ErrorMessage        string
-	CreatedBy           *uuid.UUID
-	CreatedAt           time.Time
-	CompletedAt         *time.Time
+	ProcessingVersion    int
+	Status               value.DocumentRevisionStatus
+	ErrorClass           string
+	ErrorMessage         string
+	CreatedBy            *uuid.UUID
+	CreatedAt            time.Time
+	CompletedAt          *time.Time
 }
 
 // NewDocumentRevision validates kind-local facts and creates an immutable revision.
@@ -102,7 +103,7 @@ func NewDocumentRevision(input NewDocumentRevisionInput) (*DocumentRevision, err
 	}
 
 	return &DocumentRevision{
-		ID: uuid.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		DocumentID: input.DocumentID, Kind: input.Kind, RevisionNo: input.RevisionNo,
 		Reason: input.Reason, OriginalFilename: input.OriginalFilename, FileType: input.FileType,
 		ContentType: strings.TrimSpace(input.ContentType), RawStorageKey: input.RawStorageKey,

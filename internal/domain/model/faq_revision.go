@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func NewFAQRevision(input NewFAQRevisionInput) (*FAQRevision, error) {
 		}
 		seen[normalized] = struct{}{}
 		questions = append(questions, FAQRevisionQuestion{
-			ID: uuid.New(), WorkspaceID: input.DocumentRevision.WorkspaceID,
+			ID: id.New(), WorkspaceID: input.DocumentRevision.WorkspaceID,
 			KnowledgeBaseID: input.DocumentRevision.KnowledgeBaseID,
 			DocumentID:      input.DocumentRevision.DocumentID, DocumentRevisionID: input.DocumentRevision.ID,
 			Sequence: sequence, Question: question, NormalizedQuestion: normalized, CreatedAt: createdAt,

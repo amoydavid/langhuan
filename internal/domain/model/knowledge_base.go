@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -59,7 +60,7 @@ func NewKnowledgeBase(workspaceID uuid.UUID, name, description string, embedding
 	}
 	now := time.Now().UTC()
 	return &KnowledgeBase{
-		ID: uuid.New(), WorkspaceID: workspaceID, EmbeddingModelID: embeddingModelID,
+		ID: id.New(), WorkspaceID: workspaceID, EmbeddingModelID: embeddingModelID,
 		Name: name, Description: description, ChunkingConfig: cfg,
 		Metadata: metadata, CreatedAt: now, UpdatedAt: now,
 	}, nil

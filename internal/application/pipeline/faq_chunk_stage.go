@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ func (s FAQChunkStage) Build(ctx context.Context, workspaceID, revisionID uuid.U
 	documentRevision := faq.DocumentRevision
 	config := map[string]any{"contract_version": faqChunkContractVersion}
 	candidate := &model.DocumentChunkSet{
-		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: documentRevision.KnowledgeBaseID,
+		ID: id.New(), WorkspaceID: workspaceID, KnowledgeBaseID: documentRevision.KnowledgeBaseID,
 		DocumentID: documentRevision.DocumentID, DocumentRevisionID: documentRevision.ID,
 		Strategy: value.ChunkStrategyFAQ, ChunkerVersion: faqChunkContractVersion,
 		ChunkingConfig: config, ConfigHash: faqChunkConfigHash(),
@@ -96,7 +97,7 @@ func buildFAQChunk(faq *model.FAQRevision, chunkSetID uuid.UUID) (*model.Chunk, 
 		sourceLines = append(sourceLines, "Q: "+question.Question)
 	}
 	sourceLines = append(sourceLines, "A: "+faq.Answer)
-	chunkID := uuid.New()
+	chunkID := id.New()
 	revision, err := model.NewChunkRevision(model.NewChunkRevisionInput{
 		WorkspaceID: documentRevision.WorkspaceID, KnowledgeBaseID: documentRevision.KnowledgeBaseID,
 		DocumentID: documentRevision.DocumentID, DocumentRevisionID: documentRevision.ID,

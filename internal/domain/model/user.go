@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"net/mail"
 	"strings"
 	"time"
@@ -43,7 +44,7 @@ func NewUser(email, nickname, passwordHash string) (*User, error) {
 
 	now := time.Now().UTC()
 	return &User{
-		ID:           uuid.New(),
+		ID:           id.New(),
 		Email:        normalizedEmail,
 		Nickname:     nickname,
 		PasswordHash: passwordHash,

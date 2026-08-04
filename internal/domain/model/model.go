@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"regexp"
 	"strings"
 	"time"
@@ -78,7 +79,7 @@ func NewModel(
 	now := time.Now().UTC()
 	actorID := createdBy
 	return &Model{
-		ID:          uuid.New(),
+		ID:          id.New(),
 		ProviderID:  providerID,
 		Name:        normalizedName,
 		DisplayName: normalizedDisplayName,

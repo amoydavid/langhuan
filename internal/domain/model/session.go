@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,7 +22,7 @@ type Session struct {
 	RevokedAt  *time.Time
 }
 
-// NewSession 创建会话，ID 使用 uuid.New() 生成（与其它模型一致），过期时间为 now + lifetime。
+// NewSession 创建会话，ID 使用 id.New() 生成（与其它模型一致），过期时间为 now + lifetime。
 func NewSession(userID uuid.UUID, lifetime time.Duration, userAgent, ipAddr string) (*Session, error) {
 	if userID == uuid.Nil {
 		return nil, fmt.Errorf("%w: user_id 不能为空", domainerrors.ErrValidation)
@@ -32,7 +33,7 @@ func NewSession(userID uuid.UUID, lifetime time.Duration, userAgent, ipAddr stri
 
 	now := time.Now().UTC()
 	return &Session{
-		ID:         uuid.New(),
+		ID:         id.New(),
 		UserID:     userID,
 		ExpiresAt:  now.Add(lifetime),
 		CreatedAt:  now,

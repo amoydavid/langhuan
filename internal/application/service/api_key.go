@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"io"
 	"log/slog"
 	"slices"
@@ -138,7 +139,7 @@ func (s *APIKeyService) Create(ctx context.Context, input CreateAPIKeyInput) (*C
 		return nil, err
 	}
 	now := s.now().UTC()
-	keyID := uuid.New()
+	keyID := id.New()
 	key := &model.WorkspaceAPIKey{
 		ID:          keyID,
 		WorkspaceID: input.WorkspaceID,
