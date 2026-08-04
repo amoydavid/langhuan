@@ -146,11 +146,12 @@ describe('v0.5.0 role boundary', () => {
         documentKind='file'
         chunks={[chunk]}
         selectedChunkId={ids.chunk}
+        page={1}
         canEdit={canManageIndex('member')}
       />
     )
     await expect
-      .element(chunkInspector.getByRole('button', { name: '编辑分块' }))
+      .element(chunkInspector.getByRole('button', { name: '编辑分块 1' }))
       .not.toBeInTheDocument()
 
     const generations = await render(

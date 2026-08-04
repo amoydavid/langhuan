@@ -217,6 +217,9 @@ export const routes = {
               '查看当前索引版本的有效分块、原始来源和修订历史。',
             dialogTitle: '创建分块修订',
             dialogDescription: '保存会创建新版本，并由后台更新当前索引。',
+            chunkPanelLabel: '分块',
+            chunkDetailTitle: '分块详情',
+            chunkDetailDescription: '查看当前内容、原始来源与修订历史。',
           },
         },
         web: {

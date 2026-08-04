@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/sheet'
 import { meQueryOptions } from '@/features/auth/queries'
 import { createChunkRevision } from '@/features/chunks/api'
+import { ChunkDetailDialog } from '@/features/chunks/inspector/chunk-detail-dialog'
 import { ChunkInspector } from '@/features/chunks/inspector/chunk-inspector'
 import {
   chunkRevisionsQueryOptions,
@@ -48,6 +49,7 @@ const fileDetailSearchSchema = z.object({
   anchor: z.number().int().nonnegative().optional(),
   enabled: z.boolean().optional(),
   job: z.string().optional(),
+  page: z.number().int().positive().optional(),
 })
 
 type FileDetailLoaderData = { documentName: string }
@@ -89,7 +91,9 @@ function FileDetailPage() {
   )
   const { data: chunkPage } = useQuery(chunkOptions)
   const chunks = chunkPage?.items ?? []
-  const selectedChunkId = search.chunk ?? chunks[0]?.id
+  const selectedChunkId = search.chunk
+  const selectedChunk = chunks.find((item) => item.id === selectedChunkId)
+  const page = search.page ?? 1
   const revisionOptions = chunkRevisionsQueryOptions(
     workspaceSlug,
     kbId,
@@ -174,12 +178,18 @@ function FileDetailPage() {
       documentTitle={displayName}
       documentKind='file'
       chunks={chunks}
-      revisions={revisions}
       selectedChunkId={selectedChunkId}
+      page={page}
       canEdit={canEdit}
       onSelectChunk={(chunkId) =>
         void navigate({
-          search: { ...search, chunk: chunkId, anchor: 1 },
+          search: { ...search, chunk: chunkId, page: undefined },
+        })
+      }
+      onPageChange={(next) =>
+        void navigate({
+          search: { ...search, page: next },
+          replace: true,
         })
       }
       onEdit={(chunk) => {
@@ -285,6 +295,27 @@ function FileDetailPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ChunkDetailDialog
+        chunk={selectedChunk}
+        documentTitle={displayName}
+        documentKind='file'
+        revisions={selectedChunk ? revisions : []}
+        canEdit={canEdit}
+        onOpenChange={(open) => {
+          if (!open) {
+            void navigate({
+              search: { ...search, chunk: undefined },
+              replace: true,
+            })
+          }
+        }}
+        onEdit={(chunk) => {
+          setLatestRevision(undefined)
+          setEditorDirty(false)
+          setEditing(chunk)
+        }}
+      />
     </div>
   )
 }

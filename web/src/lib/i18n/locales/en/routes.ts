@@ -243,6 +243,10 @@ export const routes = {
             dialogTitle: 'Create Chunk Revision',
             dialogDescription:
               'Saving creates a new version, and the background job updates the current index.',
+            chunkPanelLabel: 'Chunks',
+            chunkDetailTitle: 'Chunk detail',
+            chunkDetailDescription:
+              'View the current content, original source, and revision history.',
           },
         },
         web: {

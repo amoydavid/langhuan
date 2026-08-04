@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import type { Chunk } from '@/features/chunks/types'
 import { ChunkInspector } from './chunk-inspector'
@@ -33,52 +34,74 @@ const chunk: Chunk = {
 }
 
 describe('ChunkInspector', () => {
-  it('focuses a deep-linked chunk and shows readable source/current revision fields', async () => {
+  it('renders chunk cards with source anchor and revision preview', async () => {
+    const onSelectChunk = vi.fn()
     const screen = await render(
       <ChunkInspector
         documentTitle='installation.md'
         documentKind='file'
         chunks={[chunk]}
-        revisions={chunk.active_revision ? [chunk.active_revision] : []}
         selectedChunkId={chunkId}
+        page={1}
         canEdit={false}
+        onSelectChunk={onSelectChunk}
       />
     )
 
-    const heading = screen.getByRole('heading', {
-      name: '分块 1 · installation.md',
-    })
-    await expect.element(heading).toHaveFocus()
-    await expect.element(screen.getByText('第 24–31 行')).toBeVisible()
+    // context header + 来源锚点 + 内容预览 都在卡片上可见
     await expect
       .element(screen.getByText('安装指南 > Docker 部署', { exact: true }))
       .toBeVisible()
-    await expect.element(screen.getByText('林墨')).toBeVisible()
+    await expect.element(screen.getByText('第 24–31 行')).toBeVisible()
     await expect
-      .element(screen.getByRole('tab', { name: '修订历史' }))
+      .element(screen.getByText('通过 DATABASE_DSN 指定 PostgreSQL。'))
       .toBeVisible()
+    // 无权限时编辑按钮不渲染
     await expect
-      .element(screen.getByRole('button', { name: '编辑分块' }))
+      .element(screen.getByRole('button', { name: '编辑分块 1' }))
       .not.toBeInTheDocument()
+    // id / 内部 hash 不应泄漏到 DOM 文本中
     expect(document.body.textContent).not.toContain(chunkId)
     expect(document.body.textContent).not.toContain('must-not-render')
+
+    // 点击卡片触发查看
+    await userEvent.click(screen.getByRole('button', { name: '查看分块 1' }))
+    expect(onSelectChunk).toHaveBeenCalledWith(chunkId)
   })
 
-  it('keeps FAQ chunks immutable and allows administrators to edit File chunks', async () => {
+  it('gates the per-card edit button behind canEdit and document kind', async () => {
     const onEdit = vi.fn()
-    const screen = await render(
+
+    // FAQ 文档即便有权限也不显示编辑
+    const faqScreen = await render(
       <ChunkInspector
         documentTitle='退款政策'
         documentKind='faq'
         chunks={[chunk]}
-        selectedChunkId={chunkId}
+        page={1}
         canEdit
         onEdit={onEdit}
       />
     )
-    await expect.element(screen.getByText('由 FAQ 内容生成')).toBeVisible()
+    await expect.element(faqScreen.getByText('由 FAQ 内容生成')).toBeVisible()
     await expect
-      .element(screen.getByRole('button', { name: '编辑分块' }))
+      .element(faqScreen.getByRole('button', { name: '编辑分块 1' }))
       .not.toBeInTheDocument()
+
+    // 普通文件 + 有权限才显示编辑
+    const fileScreen = await render(
+      <ChunkInspector
+        documentTitle='installation.md'
+        documentKind='file'
+        chunks={[chunk]}
+        page={1}
+        canEdit
+        onEdit={onEdit}
+      />
+    )
+    const editBtn = fileScreen.getByRole('button', { name: '编辑分块 1' })
+    await expect.element(editBtn).toBeVisible()
+    await userEvent.click(editBtn)
+    expect(onEdit).toHaveBeenCalledWith(chunk)
   })
 })
