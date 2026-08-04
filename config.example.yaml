@@ -20,17 +20,49 @@ log:
   level: info
 
 storage:
+  # 存储后端：local（本地文件系统）或 s3（S3-compatible 对象存储）。
+  # local 模式适合单机开发；s3 模式适合生产多副本部署，支持 RustFS/MinIO/阿里云/腾讯云。
+  driver: local
   raw_document_dir: "./data/raw-documents"
+  s3:
+    endpoint: "http://127.0.0.1:19000"
+    region: "us-east-1"
+    bucket: "langhuan"
+    access_key: ""
+    secret_key: ""
+    force_path_style: true
+    public_base_url: ""
+  # 解析图片资产的归档限制（PDF 等 ParserU 产出的图片）。
+  assets:
+    max_count_per_document: 500
+    max_image_size_bytes: 10485760
+    allowed_mime_types:
+      - image/png
+      - image/jpeg
+      - image/webp
+      - image/gif
 
 ingest:
   max_file_size_bytes: 52428800
   allowed_file_types:
+    - pdf
     - markdown
     - md
     - txt
     - csv
     - xlsx
     - docx
+
+# MinerU Cloud PDF 解析运行参数。
+# MinerU token 属于敏感凭证，不在此配置；启用前先在 model_providers 表
+# （Web Console › 模型 › 创建连接 › MinerU Cloud）写入有效 token。
+mineru:
+  enabled: false
+  model_version: "vlm"          # vlm | pipeline
+  poll_interval_seconds: 10
+  max_poll_attempts: 180
+  upload_timeout_seconds: 120
+  result_download_timeout_seconds: 120
 
 retrieval:
   failed_staging_retention: 24h

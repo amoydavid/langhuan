@@ -142,6 +142,15 @@ func TestDocumentRevisionRowOwnsRawStorageFields(t *testing.T) {
 	if contentType.Type != reflect.TypeOf((*string)(nil)) {
 		t.Fatalf("ContentType type = %s, want *string", contentType.Type)
 	}
+
+	// v0.7.0: parser_raw_markdown_key 记录 MinerU 产出的原始 Markdown storage key。
+	rawMarkdownKey, ok := rowType.FieldByName("ParserRawMarkdownKey")
+	if !ok {
+		t.Fatal("DocumentRevisionRow missing ParserRawMarkdownKey")
+	}
+	if rawMarkdownKey.Type != reflect.TypeOf((*string)(nil)) {
+		t.Fatalf("ParserRawMarkdownKey type = %s, want *string", rawMarkdownKey.Type)
+	}
 }
 
 func TestV2RowsSeparateChunkIdentityFromEffectiveContent(t *testing.T) {

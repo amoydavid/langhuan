@@ -280,7 +280,7 @@ database:
 	if cfg.Ingest.MaxFileSizeBytes != 50*1024*1024 {
 		t.Fatalf("ingest.max_file_size_bytes default = %d", cfg.Ingest.MaxFileSizeBytes)
 	}
-	wantTypes := []string{"markdown", "md", "txt", "csv", "xlsx", "docx"}
+	wantTypes := []string{"pdf", "markdown", "md", "txt", "csv", "xlsx", "docx"}
 	if len(cfg.Ingest.AllowedFileTypes) != len(wantTypes) {
 		t.Fatalf("ingest.allowed_file_types default length = %d", len(cfg.Ingest.AllowedFileTypes))
 	}
@@ -292,7 +292,7 @@ database:
 }
 
 func TestDefaultConfigAllowedFileTypes(t *testing.T) {
-	want := []string{"markdown", "md", "txt", "csv", "xlsx", "docx"}
+	want := []string{"pdf", "markdown", "md", "txt", "csv", "xlsx", "docx"}
 	got := defaultConfig().Ingest.AllowedFileTypes
 	if len(got) != len(want) {
 		t.Fatalf("allowed file types = %v, want %v", got, want)
@@ -597,5 +597,116 @@ database:
 				t.Fatalf("expected non-positive auth param error for %s", tt.name)
 			}
 		})
+	}
+}
+
+func TestDefaultStorageAndMinerUConfig(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Storage.Driver != "local" {
+		t.Fatalf("storage.driver default = %q, want local", cfg.Storage.Driver)
+	}
+	if cfg.Storage.Assets.MaxCountPerDocument != 500 {
+		t.Fatalf("assets.max_count_per_document = %d", cfg.Storage.Assets.MaxCountPerDocument)
+	}
+	if cfg.Storage.Assets.MaxImageSizeBytes != 10*1024*1024 {
+		t.Fatalf("assets.max_image_size_bytes = %d", cfg.Storage.Assets.MaxImageSizeBytes)
+	}
+	wantMimes := []string{"image/png", "image/jpeg", "image/webp", "image/gif"}
+	if len(cfg.Storage.Assets.AllowedMimeTypes) != len(wantMimes) {
+		t.Fatalf("assets.allowed_mime_types = %v", cfg.Storage.Assets.AllowedMimeTypes)
+	}
+	if cfg.MinerU.Enabled {
+		t.Fatal("mineru.enabled should default to false")
+	}
+	if cfg.MinerU.ModelVersion != "vlm" {
+		t.Fatalf("mineru.model_version = %q", cfg.MinerU.ModelVersion)
+	}
+	if cfg.MinerU.PollIntervalSeconds != 10 || cfg.MinerU.MaxPollAttempts != 180 {
+		t.Fatalf("mineru poll config = %#v", cfg.MinerU)
+	}
+}
+
+func TestLoadV070S3AndMinerUConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := appendTestCredentials([]byte(`
+database:
+  dsn: "postgres://localhost:5432/langhuan?sslmode=disable"
+storage:
+  driver: s3
+  raw_document_dir: "./data/raw"
+  s3:
+    endpoint: "http://127.0.0.1:19000"
+    region: "us-east-1"
+    bucket: "langhuan-test"
+    access_key: "rustfsadmin"
+    secret_key: "rustfsadmin"
+    force_path_style: true
+    public_base_url: "http://127.0.0.1:19000/langhuan-test"
+  assets:
+    max_count_per_document: 200
+    max_image_size_bytes: 5242880
+    allowed_mime_types: ["image/png", "image/jpeg"]
+mineru:
+  enabled: true
+  model_version: "pipeline"
+  poll_interval_seconds: 15
+  max_poll_attempts: 100
+  upload_timeout_seconds: 60
+  result_download_timeout_seconds: 90
+`))
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Storage.Driver != "s3" {
+		t.Fatalf("storage.driver = %q", cfg.Storage.Driver)
+	}
+	if cfg.Storage.S3.Bucket != "langhuan-test" {
+		t.Fatalf("storage.s3.bucket = %q", cfg.Storage.S3.Bucket)
+	}
+	if cfg.Storage.Assets.MaxCountPerDocument != 200 {
+		t.Fatalf("assets.max_count_per_document = %d", cfg.Storage.Assets.MaxCountPerDocument)
+	}
+	if cfg.MinerU.Enabled != true {
+		t.Fatal("mineru.enabled = false")
+	}
+	if cfg.MinerU.ModelVersion != "pipeline" {
+		t.Fatalf("mineru.model_version = %q", cfg.MinerU.ModelVersion)
+	}
+	if cfg.MinerU.UploadTimeoutSeconds != 60 {
+		t.Fatalf("mineru.upload_timeout_seconds = %d", cfg.MinerU.UploadTimeoutSeconds)
+	}
+}
+
+func TestValidateStorageRejectsInvalidDriver(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Database.DSN = "postgres://localhost:5432/langhuan?sslmode=disable"
+	cfg.Credentials.EncryptionKey = testEncryptionKey
+	cfg.Storage.Driver = "gcs"
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected invalid storage.driver error")
+	}
+}
+
+func TestValidateStorageS3RequiresCredentials(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Database.DSN = "postgres://localhost:5432/langhuan?sslmode=disable"
+	cfg.Credentials.EncryptionKey = testEncryptionKey
+	cfg.Storage.Driver = "s3"
+	cfg.Storage.S3.Endpoint = "http://127.0.0.1:19000"
+	// bucket/access_key/secret_key 缺失
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected missing s3 credentials error")
+	}
+	cfg.Storage.S3.Bucket = "test"
+	cfg.Storage.S3.AccessKey = "ak"
+	cfg.Storage.S3.SecretKey = "sk"
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("valid s3 config rejected: %v", err)
 	}
 }

@@ -35,28 +35,29 @@ type NewDocumentRevisionInput struct {
 
 // DocumentRevision stores one immutable acquisition and parse result.
 type DocumentRevision struct {
-	ID                 uuid.UUID
-	WorkspaceID        uuid.UUID
-	KnowledgeBaseID    uuid.UUID
-	DocumentID         uuid.UUID
-	Kind               value.DocumentKind
-	RevisionNo         int64
-	Reason             value.DocumentRevisionReason
-	OriginalFilename   string
-	FileType           string
-	ContentType        string
-	RawStorageKey      string
-	SHA256             string
-	SizeBytes          int64
-	NormalizedMarkdown string
-	ParseManifest      *ParseManifest
-	ProcessingVersion  int
-	Status             value.DocumentRevisionStatus
-	ErrorClass         string
-	ErrorMessage       string
-	CreatedBy          *uuid.UUID
-	CreatedAt          time.Time
-	CompletedAt        *time.Time
+	ID                  uuid.UUID
+	WorkspaceID         uuid.UUID
+	KnowledgeBaseID     uuid.UUID
+	DocumentID          uuid.UUID
+	Kind                value.DocumentKind
+	RevisionNo          int64
+	Reason              value.DocumentRevisionReason
+	OriginalFilename    string
+	FileType            string
+	ContentType         string
+	RawStorageKey       string
+	SHA256              string
+	SizeBytes           int64
+	NormalizedMarkdown  string
+	ParseManifest       *ParseManifest
+	ParserRawMarkdownKey string
+	ProcessingVersion   int
+	Status              value.DocumentRevisionStatus
+	ErrorClass          string
+	ErrorMessage        string
+	CreatedBy           *uuid.UUID
+	CreatedAt           time.Time
+	CompletedAt         *time.Time
 }
 
 // NewDocumentRevision validates kind-local facts and creates an immutable revision.

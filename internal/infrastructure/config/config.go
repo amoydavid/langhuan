@@ -19,6 +19,7 @@ type Config struct {
 	Log         LogConfig         `yaml:"log"`
 	Storage     StorageConfig     `yaml:"storage"`
 	Ingest      IngestConfig      `yaml:"ingest"`
+	MinerU      MinerUConfig      `yaml:"mineru"`
 	Auth        AuthConfig        `yaml:"auth"`
 	Credentials CredentialsConfig `yaml:"credentials"`
 	Retrieval   RetrievalConfig   `yaml:"retrieval"`
@@ -70,8 +71,43 @@ type LogConfig struct {
 	Level string `yaml:"level"`
 }
 
+// StorageConfig 描述原始文件、解析产物与图片资产的存储后端。
+// Driver 为 "local" 时使用本地文件系统（RawDocumentDir）；为 "s3" 时使用
+// S3-compatible 对象存储（RustFS / MinIO / 阿里云 / 腾讯云等）。
 type StorageConfig struct {
-	RawDocumentDir string `yaml:"raw_document_dir"`
+	Driver         string              `yaml:"driver"`
+	RawDocumentDir string              `yaml:"raw_document_dir"`
+	S3             S3Config            `yaml:"s3"`
+	Assets         AssetsStorageConfig `yaml:"assets"`
+}
+
+// S3Config 描述 S3-compatible 对象存储连接参数。
+type S3Config struct {
+	Endpoint       string `yaml:"endpoint"`
+	Region         string `yaml:"region"`
+	Bucket         string `yaml:"bucket"`
+	AccessKey      string `yaml:"access_key"`
+	SecretKey      string `yaml:"secret_key"`
+	ForcePathStyle bool   `yaml:"force_path_style"`
+	PublicBaseURL  string `yaml:"public_base_url"`
+}
+
+// AssetsStorageConfig 描述解析图片资产的归档限制。
+type AssetsStorageConfig struct {
+	MaxCountPerDocument int      `yaml:"max_count_per_document"`
+	MaxImageSizeBytes   int64    `yaml:"max_image_size_bytes"`
+	AllowedMimeTypes    []string `yaml:"allowed_mime_types"`
+}
+
+// MinerUConfig 描述 MinerU Cloud PDF 解析的非敏感运行参数。
+// MinerU token 属于敏感凭证，保存在 model_providers 表（加密），不写入 YAML。
+type MinerUConfig struct {
+	Enabled                      bool `yaml:"enabled"`
+	ModelVersion                 string `yaml:"model_version"`
+	PollIntervalSeconds          int    `yaml:"poll_interval_seconds"`
+	MaxPollAttempts              int    `yaml:"max_poll_attempts"`
+	UploadTimeoutSeconds         int    `yaml:"upload_timeout_seconds"`
+	ResultDownloadTimeoutSeconds int    `yaml:"result_download_timeout_seconds"`
 }
 
 type IngestConfig struct {
@@ -165,10 +201,19 @@ func defaultConfig() Config {
 		Database: DatabaseConfig{Driver: "postgres", AutoMigrate: true},
 		Redis:    RedisConfig{Addr: "127.0.0.1:6379"},
 		Log:      LogConfig{Level: "info"},
-		Storage:  StorageConfig{RawDocumentDir: "./data/raw-documents"},
+		Storage: StorageConfig{
+			Driver:         "local",
+			RawDocumentDir: "./data/raw-documents",
+			Assets: AssetsStorageConfig{
+				MaxCountPerDocument: 500,
+				MaxImageSizeBytes:   10 * 1024 * 1024,
+				AllowedMimeTypes:    []string{"image/png", "image/jpeg", "image/webp", "image/gif"},
+			},
+		},
 		Ingest: IngestConfig{
 			MaxFileSizeBytes: 50 * 1024 * 1024,
 			AllowedFileTypes: []string{
+				"pdf",
 				"markdown",
 				"md",
 				"txt",
@@ -177,7 +222,8 @@ func defaultConfig() Config {
 				"docx",
 			},
 		},
-		Auth: defaultAuthConfig(),
+		MinerU: defaultMinerUConfig(),
+		Auth:   defaultAuthConfig(),
 		Retrieval: RetrievalConfig{
 			FailedStagingRetention:     24 * time.Hour,
 			RetiredGenerationRetention: 168 * time.Hour,
@@ -188,6 +234,19 @@ func defaultConfig() Config {
 			InlineIngestMaxFileSizeBytes: 8 * 1024 * 1024,
 		},
 		Search: defaultSearchConfig(),
+	}
+}
+
+// defaultMinerUConfig 返回 MinerU Cloud PDF 解析的默认运行参数。
+// 默认禁用：启用 MinerU 前必须先在 model_providers 表写入有效 token。
+func defaultMinerUConfig() MinerUConfig {
+	return MinerUConfig{
+		Enabled:                      false,
+		ModelVersion:                 "vlm",
+		PollIntervalSeconds:          10,
+		MaxPollAttempts:              180,
+		UploadTimeoutSeconds:         120,
+		ResultDownloadTimeoutSeconds: 120,
 	}
 }
 
@@ -250,6 +309,33 @@ func (c *Config) applyDefaults() {
 	if c.Storage.RawDocumentDir == "" {
 		c.Storage.RawDocumentDir = "./data/raw-documents"
 	}
+	if c.Storage.Driver == "" {
+		c.Storage.Driver = "local"
+	}
+	if c.Storage.Assets.MaxCountPerDocument == 0 {
+		c.Storage.Assets.MaxCountPerDocument = 500
+	}
+	if c.Storage.Assets.MaxImageSizeBytes == 0 {
+		c.Storage.Assets.MaxImageSizeBytes = 10 * 1024 * 1024
+	}
+	if len(c.Storage.Assets.AllowedMimeTypes) == 0 {
+		c.Storage.Assets.AllowedMimeTypes = []string{"image/png", "image/jpeg", "image/webp", "image/gif"}
+	}
+	if c.MinerU.ModelVersion == "" {
+		c.MinerU.ModelVersion = "vlm"
+	}
+	if c.MinerU.PollIntervalSeconds == 0 {
+		c.MinerU.PollIntervalSeconds = 10
+	}
+	if c.MinerU.MaxPollAttempts == 0 {
+		c.MinerU.MaxPollAttempts = 180
+	}
+	if c.MinerU.UploadTimeoutSeconds == 0 {
+		c.MinerU.UploadTimeoutSeconds = 120
+	}
+	if c.MinerU.ResultDownloadTimeoutSeconds == 0 {
+		c.MinerU.ResultDownloadTimeoutSeconds = 120
+	}
 	if c.Ingest.MaxFileSizeBytes == 0 {
 		c.Ingest.MaxFileSizeBytes = 50 * 1024 * 1024
 	}
@@ -282,6 +368,9 @@ func (c *Config) validate() error {
 	}
 	if c.Storage.RawDocumentDir == "" {
 		return errors.New("storage.raw_document_dir 不能为空")
+	}
+	if err := c.validateStorage(); err != nil {
+		return err
 	}
 	if c.Ingest.MaxFileSizeBytes <= 0 {
 		return errors.New("ingest.max_file_size_bytes 必须大于 0")
@@ -368,6 +457,34 @@ func (c *Config) validateMCP() error {
 	}
 	if c.MCP.InlineIngestMaxFileSizeBytes > c.Ingest.MaxFileSizeBytes {
 		return errors.New("mcp.inline_ingest_max_file_size_bytes 不能超过 ingest.max_file_size_bytes")
+	}
+	return nil
+}
+
+// validateStorage 校验存储后端配置：driver 必须是 local 或 s3；选择 s3 时
+// 必须提供 endpoint/bucket/credentials。资产限制只在显式配置时校验范围。
+func (c *Config) validateStorage() error {
+	switch c.Storage.Driver {
+	case "local":
+		// 本地模式只需要 RawDocumentDir（已在主 validate 中校验）。
+	case "s3":
+		if c.Storage.S3.Endpoint == "" {
+			return errors.New("storage.s3.endpoint 不能为空（driver=s3）")
+		}
+		if c.Storage.S3.Bucket == "" {
+			return errors.New("storage.s3.bucket 不能为空（driver=s3）")
+		}
+		if c.Storage.S3.AccessKey == "" || c.Storage.S3.SecretKey == "" {
+			return errors.New("storage.s3.access_key 与 secret_key 不能为空（driver=s3）")
+		}
+	default:
+		return fmt.Errorf("storage.driver 必须是 local 或 s3，当前为 %q", c.Storage.Driver)
+	}
+	if c.Storage.Assets.MaxCountPerDocument < 0 {
+		return errors.New("storage.assets.max_count_per_document 不能为负")
+	}
+	if c.Storage.Assets.MaxImageSizeBytes < 0 {
+		return errors.New("storage.assets.max_image_size_bytes 不能为负")
 	}
 	return nil
 }
