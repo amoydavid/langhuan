@@ -238,6 +238,8 @@ function FileDetailPage() {
           displayName={displayName}
           path={path}
           initialView={search.anchor !== undefined ? 'raw' : 'preview'}
+          workspaceSlug={workspaceSlug}
+          documentId={documentId}
         />
         {wideDesktop ? (
           inspector

@@ -36,6 +36,7 @@ type Dependencies struct {
 	ModelConnectionTests ModelConnectionTestHTTPService
 	DocumentIngest       DocumentIngestService
 	Documents            DocumentQueryService
+	DocumentAssets       DocumentAssetListService
 	FAQDocuments         FAQDocumentHTTPService
 	FileTree             FileTreeHTTPService
 	ChunkRevisions       ChunkRevisionHTTPService
@@ -206,9 +207,11 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				doc := documentHandler{
 					ingestService:    deps.DocumentIngest,
 					queryService:     deps.Documents,
+					assetService:     deps.DocumentAssets,
 					maxFileSizeBytes: deps.MaxFileSizeBytes,
 				}
 				memberGroup.GET("/knowledge-bases/:id/documents", doc.list)
+				memberGroup.GET("/documents/:document_id/assets", doc.assets)
 			}
 			if deps.FAQDocuments != nil {
 				faq := faqDocumentHandler{service: deps.FAQDocuments}

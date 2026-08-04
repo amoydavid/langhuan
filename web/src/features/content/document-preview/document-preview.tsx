@@ -1,10 +1,12 @@
-import { FileText } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { FileText, ImageIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { SafeMarkdown } from '@/components/safe-markdown'
 import { StatusBadge } from '@/components/status-badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { getDocumentAssets } from '@/features/documents/api'
 import { DocumentStatusBadge } from '@/features/documents/document-list'
-import type { Document } from '@/features/documents/types'
+import type { Document, DocumentAsset } from '@/features/documents/types'
 import { formatDateTime } from '@/lib/i18n/datetime'
 
 type DocumentPreviewProps = {
@@ -12,6 +14,16 @@ type DocumentPreviewProps = {
   displayName?: string
   path?: string
   initialView?: 'preview' | 'raw' | 'info'
+  /** 可选：提供 workspaceSlug + documentId 后，info tab 展示该文档的图片资产 */
+  workspaceSlug?: string
+  documentId?: string
+}
+
+function documentAssetsQueryOptions(workspaceSlug: string, documentId: string) {
+  return {
+    queryKey: ['document-assets', workspaceSlug, documentId],
+    queryFn: () => getDocumentAssets(workspaceSlug, documentId),
+  }
 }
 
 function formatBytes(value: number) {
@@ -27,15 +39,65 @@ function formatDate(value: string) {
   })
 }
 
+function AssetGrid({
+  assets,
+  name,
+}: {
+  assets: DocumentAsset[]
+  name: string
+}) {
+  return (
+    <div className='grid gap-3 sm:grid-cols-2'>
+      {assets.map((asset) => (
+        <div
+          key={asset.id}
+          className='flex items-start gap-3 rounded-lg border bg-muted/20 p-3'
+        >
+          <div className='icon-tile size-10 shrink-0 items-center justify-center'>
+            <ImageIcon className='size-4' />
+          </div>
+          <div className='min-w-0'>
+            <p className='truncate text-sm font-medium'>{asset.original_ref}</p>
+            <p className='mt-0.5 truncate text-xs text-muted-foreground'>
+              {asset.mime_type} · {formatBytes(asset.size_bytes)} ·{' '}
+              {asset.sha256.slice(0, 8)}…
+            </p>
+            {asset.public_url && (
+              <a
+                href={asset.public_url}
+                target='_blank'
+                rel='noreferrer'
+                className='mt-1 inline-block truncate text-xs text-primary hover:underline'
+              >
+                {asset.public_url}
+              </a>
+            )}
+          </div>
+        </div>
+      ))}
+      {assets.length === 0 && (
+        <p className='text-muted-foreground text-sm'>{name}</p>
+      )}
+    </div>
+  )
+}
+
 export function DocumentPreview({
   document: item,
   displayName,
   path,
   initialView = 'preview',
+  workspaceSlug,
+  documentId,
 }: DocumentPreviewProps) {
   const { t } = useTranslation()
   const name = displayName || item.title || t('content.documentPreview.unnamed')
   const revision = item.active_revision
+  const showAssets = Boolean(workspaceSlug && documentId)
+  const { data: assets = [] } = useQuery({
+    ...documentAssetsQueryOptions(workspaceSlug ?? '', documentId ?? ''),
+    enabled: showAssets,
+  })
   return (
     <article className='min-w-0 space-y-4'>
       <header className='flex flex-col justify-between gap-3 border-b pb-4 sm:flex-row sm:items-start'>
@@ -164,6 +226,21 @@ export function DocumentPreview({
               </div>
             )}
           </dl>
+
+          {showAssets && (
+            <div className='mt-6 border-t pt-5'>
+              <h3 className='mb-3 flex items-center gap-2 text-sm font-semibold'>
+                <ImageIcon className='size-4 text-primary' />
+                {t('content.documentPreview.assetsTitle', {
+                  count: assets.length,
+                })}
+              </h3>
+              <AssetGrid
+                assets={assets}
+                name={t('content.documentPreview.noAssets')}
+              />
+            </div>
+          )}
         </TabsContent>
       </Tabs>
     </article>

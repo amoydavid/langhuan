@@ -113,6 +113,8 @@ export const content = {
     unknown: 'Unknown',
     revisionNo: 'Revision {{no}}',
     noRevision: 'No revision available',
+    assetsTitle: 'Image assets ({{count}})',
+    noAssets: 'No image assets for this document',
   },
 
   // Content layout (ContentLayout)

@@ -114,6 +114,7 @@ type runtimeServices struct {
 	models                 *service.ModelService
 	modelConnectionTests   *service.ModelConnectionTestService
 	documents              *service.DocumentService
+	documentAssets         *service.DocumentAssetService
 	jobs                   *service.JobService
 	documentIngest         *service.DocumentIngestService
 	faqDocuments           *service.FAQDocumentService
@@ -475,6 +476,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry),
 		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry),
 		documents:            service.NewDocumentService(documentRepo, kbRepo),
+		documentAssets:       service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
 		jobs:                 service.NewJobService(jobRepo),
 		documentIngest: service.NewDocumentIngestService(service.DocumentIngestServiceDeps{
 			Store:            db.NewDocumentIngestDBStore(gormDB),
@@ -619,6 +621,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		ModelConnectionTests: services.modelConnectionTests,
 		DocumentIngest:       services.documentIngest,
 		Documents:            services.documents,
+		DocumentAssets:       services.documentAssets,
 		FAQDocuments:         services.faqDocuments,
 		FileTree:             services.fileTree,
 		ChunkRevisions:       services.chunkRevisions,

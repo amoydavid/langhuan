@@ -13,6 +13,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -28,9 +29,15 @@ type DocumentQueryService interface {
 	Delete(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) error
 }
 
+// DocumentAssetListService 提供按 Document 查询图片资产的能力。
+type DocumentAssetListService interface {
+	ListByDocument(ctx context.Context, workspaceID, documentID uuid.UUID) ([]*model.Asset, error)
+}
+
 type documentHandler struct {
 	ingestService    DocumentIngestService
 	queryService     DocumentQueryService
+	assetService     DocumentAssetListService
 	maxFileSizeBytes int64
 }
 
@@ -171,6 +178,34 @@ func (h documentHandler) delete(c *gin.Context) {
 		return
 	}
 	c.Status(stdhttp.StatusNoContent)
+}
+
+// assets 返回指定 Document 当前 active revision 的图片资产列表。
+func (h documentHandler) assets(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	if h.assetService == nil {
+		writeError(c, stdhttp.StatusNotImplemented, "not_implemented", "资产查询未启用")
+		return
+	}
+	documentID, err := uuid.Parse(c.Param("document_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
+		return
+	}
+	assets, err := h.assetService.ListByDocument(c.Request.Context(), authCtx.WorkspaceID, documentID)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	result := make([]dto.DocumentAsset, 0, len(assets))
+	for _, asset := range assets {
+		result = append(result, dto.DocumentAssetFromModel(asset))
+	}
+	c.JSON(stdhttp.StatusOK, result)
 }
 
 func isRequestTooLarge(err error) bool {

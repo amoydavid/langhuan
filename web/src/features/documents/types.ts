@@ -21,6 +21,20 @@ export type JobStatus =
 
 export type Document = z.infer<typeof documentResponseSchema>
 
+// DocumentAsset 是 PDF 等解析产出的图片资产（GET /documents/:id/assets 返回）。
+export type DocumentAsset = {
+  id: string
+  document_id: string
+  revision_id: string
+  original_ref: string
+  public_url: string
+  mime_type: string
+  sha256: string
+  size_bytes: number
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 export type Job = {
   id: string
   document_id: string

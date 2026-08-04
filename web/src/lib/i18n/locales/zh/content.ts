@@ -110,6 +110,8 @@ export const content = {
     unknown: '未知',
     revisionNo: '第 {{no}} 版',
     noRevision: '尚无可用版本',
+    assetsTitle: '图片资产 ({{count}})',
+    noAssets: '该文档暂无图片资产',
   },
 
   // 内容布局（ContentLayout）
