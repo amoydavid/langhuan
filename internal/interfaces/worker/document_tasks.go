@@ -472,6 +472,8 @@ func isPermanentDocumentTaskError(err error) bool {
 		errors.Is(err, parserport.ErrInvalidDocument) ||
 		errors.Is(err, parserport.ErrEmptyDocument) ||
 		errors.Is(err, parserport.ErrParseLimitExceeded) ||
+		errors.Is(err, parserport.ErrAsyncParseFailed) ||
+		errors.Is(err, parserport.ErrMissingParserProvider) ||
 		errors.Is(err, domainerrors.ErrValidation)
 }
 
@@ -487,6 +489,10 @@ func documentTaskErrorClass(err error) string {
 		return "empty_document"
 	case errors.Is(err, parserport.ErrParseLimitExceeded):
 		return "parse_limit_exceeded"
+	case errors.Is(err, parserport.ErrAsyncParseFailed):
+		return "async_parse_failed"
+	case errors.Is(err, parserport.ErrMissingParserProvider):
+		return "missing_parser_provider"
 	case errors.Is(err, domainerrors.ErrValidation):
 		return "validation_error"
 	default:
