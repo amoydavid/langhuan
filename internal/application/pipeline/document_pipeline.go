@@ -135,9 +135,9 @@ func (p *DocumentPipeline) CompleteAsyncParse(
 	markdown := parsed.Markdown
 	manifest := parsed.Manifest
 
-	// 归档图片资产并重写 markdown
+	// 归档图片资产并重写 markdown（含 parser 产出的候选资产，如 MinerU zip 图片）
 	if assetResolver != nil {
-		result := assetResolver.Resolve(ctx, markdown)
+		result := assetResolver.ResolveWithCandidates(ctx, markdown, parsed.AssetCandidates)
 		markdown = result.Markdown
 		manifest.Warnings = append(manifest.Warnings, result.Warnings...)
 

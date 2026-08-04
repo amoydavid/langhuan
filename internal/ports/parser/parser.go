@@ -11,12 +11,12 @@ import (
 )
 
 var (
-	ErrUnsupportedFileType = errors.New("unsupported file type")
-	ErrInvalidEncoding     = errors.New("invalid encoding")
-	ErrInvalidDocument     = errors.New("invalid document")
-	ErrEmptyDocument       = errors.New("empty document")
-	ErrParseLimitExceeded  = errors.New("parse limit exceeded")
-	ErrAsyncParseFailed    = errors.New("async parse failed")
+	ErrUnsupportedFileType   = errors.New("unsupported file type")
+	ErrInvalidEncoding       = errors.New("invalid encoding")
+	ErrInvalidDocument       = errors.New("invalid document")
+	ErrEmptyDocument         = errors.New("empty document")
+	ErrParseLimitExceeded    = errors.New("parse limit exceeded")
+	ErrAsyncParseFailed      = errors.New("async parse failed")
 	ErrMissingParserProvider = errors.New("missing parser provider credential")
 )
 
@@ -30,6 +30,18 @@ type ParseInput struct {
 type ParsedDocument struct {
 	Markdown string
 	Manifest model.ParseManifest
+	// AssetCandidates 是 parser 随结果一并产出的待归档资产（如 MinerU zip 内提取的图片），
+	// 由 AssetResolver 按 Markdown 中的相对路径引用匹配归档。同步 parser 无此产出时保持 nil。
+	AssetCandidates []AssetCandidate
+}
+
+// AssetCandidate 是 parser 产出的待归档资产候选。
+// RelativePath 对应 Markdown 中的相对路径引用（如 images/xxx.jpg）。
+type AssetCandidate struct {
+	RelativePath string
+	Name         string
+	MimeType     string
+	Data         []byte
 }
 
 type DocumentParser interface {

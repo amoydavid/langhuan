@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	s3keys "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	parserport "github.com/dajee/langhuan/internal/ports/parser"
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
 )
 
@@ -67,7 +69,20 @@ var htmlImgSrcRe = regexp.MustCompile(`<img[^>]+src=["']([^"']+)["']`)
 
 // Resolve 扫描 Markdown，归档所有图片引用，返回 normalized Markdown + assets + warnings。
 func (r *AssetResolver) Resolve(ctx context.Context, markdown string) AssetResolution {
+	return r.ResolveWithCandidates(ctx, markdown, nil)
+}
+
+// ResolveWithCandidates 归档 Markdown 图片引用。
+// candidates 是 parser 随结果一并产出的资产候选（如 MinerU zip 内提取的图片），
+// 相对路径引用按候选路径匹配归档，避免重新下载/丢失。
+func (r *AssetResolver) ResolveWithCandidates(ctx context.Context, markdown string, candidates []parserport.AssetCandidate) AssetResolution {
 	result := AssetResolution{Markdown: markdown}
+
+	// 候选资产按规整后的相对路径索引，用于匹配 Markdown 相对路径引用
+	byPath := make(map[string]parserport.AssetCandidate, len(candidates))
+	for _, c := range candidates {
+		byPath[normalizeRefPath(c.RelativePath)] = c
+	}
 
 	// 收集所有图片引用
 	refs := r.collectImageRefs(markdown)
@@ -81,7 +96,7 @@ func (r *AssetResolver) Resolve(ctx context.Context, markdown string) AssetResol
 			break
 		}
 
-		asset, warning := r.resolveOne(ctx, ref)
+		asset, warning := r.resolveOne(ctx, ref, byPath)
 		if warning != nil {
 			result.Warnings = append(result.Warnings, *warning)
 			continue
@@ -130,21 +145,27 @@ func (r *AssetResolver) collectImageRefs(markdown string) []imageRef {
 	return refs
 }
 
-func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef) (*model.Asset, *model.ParseWarning) {
+func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef, candidates map[string]parserport.AssetCandidate) (*model.Asset, *model.ParseWarning) {
 	var data []byte
 	var mimeType string
 	var err error
 
-	if strings.HasPrefix(ref.url, "data:") {
+	switch {
+	case strings.HasPrefix(ref.url, "data:"):
 		data, mimeType, err = decodeDataURI(ref.url, r.cfg.MaxImageSizeBytes)
-	} else if strings.HasPrefix(ref.url, "http://") || strings.HasPrefix(ref.url, "https://") {
+	case strings.HasPrefix(ref.url, "http://") || strings.HasPrefix(ref.url, "https://"):
 		data, mimeType, err = r.downloadRemote(ctx, ref.url)
-	} else {
-		// zip 相对路径等不支持的引用格式——保留原引用
-		return nil, &model.ParseWarning{
-			Code:    "asset_unsupported_ref",
-			Message: fmt.Sprintf("不支持的图片引用格式: %s", truncate(ref.url, 100)),
+	default:
+		// 相对路径引用：优先从 parser 产出的候选资产（如 MinerU zip 内图片）按路径匹配
+		cand, ok := candidates[normalizeRefPath(ref.url)]
+		if !ok {
+			return nil, &model.ParseWarning{
+				Code:    "asset_unsupported_ref",
+				Message: fmt.Sprintf("不支持的图片引用格式: %s", truncate(ref.url, 100)),
+			}
 		}
+		data = cand.Data
+		mimeType = cand.MimeType
 	}
 
 	if err != nil {
@@ -293,4 +314,15 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// normalizeRefPath 规整 Markdown 相对路径引用，用于匹配 zip 内图片路径：
+// 去掉开头的 ./、URL 解码（如 %20 → 空格）、统一为 / 分隔符。
+func normalizeRefPath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimPrefix(p, "./")
+	if decoded, err := url.PathUnescape(p); err == nil {
+		p = decoded
+	}
+	return strings.ReplaceAll(p, `\`, "/")
 }

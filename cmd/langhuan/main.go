@@ -564,11 +564,12 @@ func buildRuntimeParser(cfg *config.Config, rawStore storageport.RawDocumentStor
 	// MinerU PDF parser（启用时注册）
 	if cfg.MinerU.Enabled && mineruSelector != nil {
 		mineruParser := minerufactory.NewLazyParser(&mineruSelectorAdapter{selector: mineruSelector}, rawStore, minerufactory.LazyParserConfig{
-			ModelVersion:              cfg.MinerU.ModelVersion,
-			PollInterval:              time.Duration(cfg.MinerU.PollIntervalSeconds) * time.Second,
-			MaxPollAttempts:           cfg.MinerU.MaxPollAttempts,
-			UploadTimeout:             time.Duration(cfg.MinerU.UploadTimeoutSeconds) * time.Second,
-			ResultDownloadTimeout:     time.Duration(cfg.MinerU.ResultDownloadTimeoutSeconds) * time.Second,
+			ModelVersion:          cfg.MinerU.ModelVersion,
+			PollInterval:          time.Duration(cfg.MinerU.PollIntervalSeconds) * time.Second,
+			MaxPollAttempts:       cfg.MinerU.MaxPollAttempts,
+			UploadTimeout:         time.Duration(cfg.MinerU.UploadTimeoutSeconds) * time.Second,
+			ResultDownloadTimeout: time.Duration(cfg.MinerU.ResultDownloadTimeoutSeconds) * time.Second,
+			MaxZipImageBytes:      cfg.MinerU.MaxZipImageBytes,
 		})
 		registrations = append(registrations, parseradapter.Registration{
 			FileType: "pdf",

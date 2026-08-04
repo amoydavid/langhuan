@@ -21,22 +21,25 @@ type MinerUClient interface {
 
 // Parser 实现 parserport.DocumentParser 和 parserport.AsyncDocumentParser。
 type Parser struct {
-	client    MinerUClient
-	rawStore  storageport.RawDocumentStore
-	config    ParserConfig
+	client   MinerUClient
+	rawStore storageport.RawDocumentStore
+	config   ParserConfig
 }
 
 // ParserConfig 是 MinerU parser 的运行参数。
 type ParserConfig struct {
-	ModelVersion              string
-	PollInterval              time.Duration
-	MaxPollAttempts           int
-	UploadTimeout             time.Duration
-	ResultDownloadTimeout     time.Duration
+	ModelVersion          string
+	PollInterval          time.Duration
+	MaxPollAttempts       int
+	UploadTimeout         time.Duration
+	ResultDownloadTimeout time.Duration
+	// MaxZipImageBytes 限制 zip 内单个图片解压大小（0 表示不限制）。
+	MaxZipImageBytes int64
 }
 
 // 确保 *Client 实现 MinerUClient 接口
 var _ MinerUClient = (*Client)(nil)
+
 func NewParser(client MinerUClient, rawStore storageport.RawDocumentStore, config ParserConfig) *Parser {
 	if config.PollInterval == 0 {
 		config.PollInterval = 10 * time.Second
@@ -157,7 +160,7 @@ func (p *Parser) Poll(ctx context.Context, input parserport.AsyncParsePollInput)
 				ErrorMessage: "MinerU 成功但未返回结果下载地址",
 			}, nil
 		}
-		markdown, _, err := p.client.Download(ctx, result.FullResultURL)
+		markdown, rawBytes, err := p.client.Download(ctx, result.FullResultURL)
 		if err != nil {
 			return nil, fmt.Errorf("下载 MinerU 结果失败: %w", err)
 		}
@@ -165,6 +168,8 @@ func (p *Parser) Poll(ctx context.Context, input parserport.AsyncParsePollInput)
 		if err != nil {
 			return nil, err
 		}
+		// 从 zip 中提取图片作为待归档资产候选，供 AssetResolver 按相对路径引用匹配
+		parsed.AssetCandidates = extractAssetsFromZip(rawBytes, p.config.MaxZipImageBytes)
 		return &parserport.AsyncParsePollResult{
 			Status:   parserport.AsyncSucceeded,
 			Document: parsed,

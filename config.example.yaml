@@ -63,6 +63,7 @@ mineru:
   max_poll_attempts: 180
   upload_timeout_seconds: 120
   result_download_timeout_seconds: 120
+  max_zip_image_bytes: 20971520 # zip 内单个图片解压大小上限（默认 20MB）
 
 retrieval:
   failed_staging_retention: 24h

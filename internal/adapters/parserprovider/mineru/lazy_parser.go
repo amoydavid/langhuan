@@ -28,18 +28,19 @@ type SelectedCredential struct {
 // LazyParser 在 Start 时延迟解析 MinerU 凭据，然后委托给实际 Parser。
 // 它实现 DocumentParser + AsyncDocumentParser。
 type LazyParser struct {
-	selector  CredentialSelector
-	rawStore  storageport.RawDocumentStore
-	cfg       LazyParserConfig
+	selector CredentialSelector
+	rawStore storageport.RawDocumentStore
+	cfg      LazyParserConfig
 }
 
 // LazyParserConfig 是 LazyParser 的运行参数（来自 config.yaml 的 mineru 块）。
 type LazyParserConfig struct {
-	ModelVersion              string
-	PollInterval              time.Duration
-	MaxPollAttempts           int
-	UploadTimeout             time.Duration
-	ResultDownloadTimeout     time.Duration
+	ModelVersion          string
+	PollInterval          time.Duration
+	MaxPollAttempts       int
+	UploadTimeout         time.Duration
+	ResultDownloadTimeout time.Duration
+	MaxZipImageBytes      int64
 }
 
 // NewLazyParser 创建延迟凭据解析的 MinerU parser。
@@ -125,6 +126,7 @@ func (p *LazyParser) buildInner(ctx context.Context, workspaceID uuid.UUID) (*Pa
 		MaxPollAttempts:       p.cfg.MaxPollAttempts,
 		UploadTimeout:         p.cfg.UploadTimeout,
 		ResultDownloadTimeout: p.cfg.ResultDownloadTimeout,
+		MaxZipImageBytes:      p.cfg.MaxZipImageBytes,
 	}), nil
 }
 

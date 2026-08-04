@@ -102,12 +102,13 @@ type AssetsStorageConfig struct {
 // MinerUConfig 描述 MinerU Cloud PDF 解析的非敏感运行参数。
 // MinerU token 属于敏感凭证，保存在 model_providers 表（加密），不写入 YAML。
 type MinerUConfig struct {
-	Enabled                      bool `yaml:"enabled"`
+	Enabled                      bool   `yaml:"enabled"`
 	ModelVersion                 string `yaml:"model_version"`
 	PollIntervalSeconds          int    `yaml:"poll_interval_seconds"`
 	MaxPollAttempts              int    `yaml:"max_poll_attempts"`
 	UploadTimeoutSeconds         int    `yaml:"upload_timeout_seconds"`
 	ResultDownloadTimeoutSeconds int    `yaml:"result_download_timeout_seconds"`
+	MaxZipImageBytes             int64  `yaml:"max_zip_image_bytes"`
 }
 
 type IngestConfig struct {
@@ -247,6 +248,7 @@ func defaultMinerUConfig() MinerUConfig {
 		MaxPollAttempts:              180,
 		UploadTimeoutSeconds:         120,
 		ResultDownloadTimeoutSeconds: 120,
+		MaxZipImageBytes:             20 * 1024 * 1024, // 20MB
 	}
 }
 
@@ -335,6 +337,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MinerU.ResultDownloadTimeoutSeconds == 0 {
 		c.MinerU.ResultDownloadTimeoutSeconds = 120
+	}
+	if c.MinerU.MaxZipImageBytes == 0 {
+		c.MinerU.MaxZipImageBytes = 20 * 1024 * 1024
 	}
 	if c.Ingest.MaxFileSizeBytes == 0 {
 		c.Ingest.MaxFileSizeBytes = 50 * 1024 * 1024

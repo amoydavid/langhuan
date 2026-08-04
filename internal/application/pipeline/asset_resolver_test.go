@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	parserport "github.com/dajee/langhuan/internal/ports/parser"
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
 	"github.com/google/uuid"
 )
@@ -218,5 +220,77 @@ func TestAssetResolverStripsBase64FromNormalized(t *testing.T) {
 	}
 	if len(result.Assets) != 1 {
 		t.Fatalf("assets = %d, want 1", len(result.Assets))
+	}
+}
+
+func TestAssetResolverArchivesRelativePathFromCandidates(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeAssetStore()
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+
+	// zip 内图片候选 + Markdown 相对路径引用（如 MinerU 产出的 full.md）
+	candidates := []parserport.AssetCandidate{
+		{RelativePath: "images/logo.png", Name: "logo.png", MimeType: "image/png", Data: []byte("png-bytes")},
+	}
+	markdown := "# 标题\n\n![Logo](images/logo.png)\n\n正文"
+	result := resolver.ResolveWithCandidates(ctx, markdown, candidates)
+
+	if len(result.Assets) != 1 {
+		t.Fatalf("assets = %d, want 1", len(result.Assets))
+	}
+	asset := result.Assets[0]
+	if asset.MimeType != "image/png" {
+		t.Fatalf("MimeType = %q", asset.MimeType)
+	}
+	// 引用应被替换为归档后的 URL
+	if result.Markdown == markdown {
+		t.Fatal("Markdown was not rewritten")
+	}
+	if !strings.Contains(result.Markdown, asset.PublicURL) {
+		t.Fatalf("Markdown = %q, missing public URL %q", result.Markdown, asset.PublicURL)
+	}
+	if asset.OriginalRef != "images/logo.png" {
+		t.Fatalf("OriginalRef = %q", asset.OriginalRef)
+	}
+	// 数据来自候选（bytes 归档），不应有 warning
+	if len(result.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", result.Warnings)
+	}
+}
+
+func TestAssetResolverNormalizesRelativePathPrefix(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeAssetStore()
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+
+	// Markdown 中带 ./ 前缀，zip 候选路径不带
+	candidates := []parserport.AssetCandidate{
+		{RelativePath: "images/photo%20room.jpg", Name: "photo room.jpg", MimeType: "image/jpeg", Data: []byte("jpg")},
+	}
+	markdown := "![photo](./images/photo%20room.jpg)"
+	result := resolver.ResolveWithCandidates(ctx, markdown, candidates)
+
+	if len(result.Assets) != 1 {
+		t.Fatalf("assets = %d, want 1 (path normalized)", len(result.Assets))
+	}
+}
+
+func TestAssetResolverUnmatchedRelativePathWarns(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeAssetStore()
+	resolver := NewAssetResolver(store, &http.Client{}, defaultAssetsCfg(), uuid.New(), uuid.New(), uuid.New())
+
+	// 相对路径引用但候选里没有对应文件——保持 unsupported_ref warning
+	markdown := "![missing](images/missing.png)"
+	result := resolver.Resolve(ctx, markdown)
+
+	if len(result.Assets) != 0 {
+		t.Fatalf("assets = %d, want 0", len(result.Assets))
+	}
+	if len(result.Warnings) != 1 || result.Warnings[0].Code != "asset_unsupported_ref" {
+		t.Fatalf("warnings = %#v, want asset_unsupported_ref", result.Warnings)
+	}
+	if result.Markdown != markdown {
+		t.Fatal("Markdown should be unchanged for unsupported ref")
 	}
 }

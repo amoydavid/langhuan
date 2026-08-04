@@ -19,6 +19,7 @@ type fakeMinerUClient struct {
 	uploadURL    string
 	pollResult   *TaskResult
 	downloadMD   string
+	downloadRaw  []byte // 非空时替代 downloadMD 作为 Download 的 rawBytes
 	downloadErr  error
 	pollErr      error
 	uploadErr    error
@@ -56,6 +57,9 @@ func (f *fakeMinerUClient) Poll(ctx context.Context, batchID string) (*TaskResul
 func (f *fakeMinerUClient) Download(ctx context.Context, resultURL string) (string, []byte, error) {
 	if f.downloadErr != nil {
 		return "", nil, f.downloadErr
+	}
+	if f.downloadRaw != nil {
+		return f.downloadMD, f.downloadRaw, nil
 	}
 	if f.downloadMD != "" {
 		return f.downloadMD, []byte(f.downloadMD), nil
@@ -178,6 +182,50 @@ func TestMinerUParserPollSucceededBuildsManifest(t *testing.T) {
 	}
 	if len(result.Document.Manifest.Blocks) == 0 {
 		t.Fatal("Manifest has no blocks")
+	}
+}
+
+func TestMinerUParserPollCarriesZipImageCandidates(t *testing.T) {
+	// 模拟 MinerU 返回包含 markdown + 图片的 zip
+	zipData := buildTestZip(t, map[string][]byte{
+		"full.md":          []byte("# 第一章\n\n![图](images/logo.png)"),
+		"images/logo.png":  []byte("png-bytes"),
+		"images/photo.jpg": []byte("jpg-bytes"),
+	})
+	fakeClient := &fakeMinerUClient{
+		pollResult:  &TaskResult{Status: TaskStatusSucceeded, FullResultURL: "https://result.example.com/full.zip"},
+		downloadMD:  "# 第一章\n\n![图](images/logo.png)",
+		downloadRaw: zipData,
+	}
+	p := NewParser(fakeClient, &fakeRawStore{}, ParserConfig{MaxZipImageBytes: 10 * 1024 * 1024})
+
+	result, err := p.Poll(context.Background(), parserport.AsyncParsePollInput{
+		ExternalJobID: "batch-123",
+	})
+	if err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if result.Status != parserport.AsyncSucceeded {
+		t.Fatalf("Status = %v", result.Status)
+	}
+	if len(result.Document.AssetCandidates) != 2 {
+		t.Fatalf("AssetCandidates = %d, want 2", len(result.Document.AssetCandidates))
+	}
+
+	byPath := make(map[string]parserport.AssetCandidate, len(result.Document.AssetCandidates))
+	for _, c := range result.Document.AssetCandidates {
+		byPath[c.RelativePath] = c
+	}
+	logo, ok := byPath["images/logo.png"]
+	if !ok {
+		t.Fatal("missing images/logo.png candidate")
+	}
+	if logo.MimeType != "image/png" || string(logo.Data) != "png-bytes" {
+		t.Fatalf("logo candidate = %#v", logo)
+	}
+	// 图片引用仍保留在 markdown 中，由 AssetResolver 后续替换为 public URL
+	if !strings.Contains(result.Document.Markdown, "images/logo.png") {
+		t.Fatalf("Markdown = %q, want relative ref preserved", result.Document.Markdown)
 	}
 }
 
