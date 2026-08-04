@@ -254,7 +254,7 @@ function ChunkCard({
                 t('chunks.inspector.chunkTabNoTitle')}
             </span>
           </span>
-          <span className='mt-1.5 block line-clamp-2 text-muted-foreground text-xs'>
+          <span className='mt-1.5 line-clamp-2 block text-muted-foreground text-xs'>
             {previewText(chunk, t)}
           </span>
           <span className='mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-xs'>

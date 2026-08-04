@@ -46,6 +46,7 @@ import i18n from '@/lib/i18n'
 
 const fileDetailSearchSchema = z.object({
   chunk: z.string().optional(),
+  // 外部 deep link（如检索测试结果）用 anchor 强制初始为原文视图。
   anchor: z.number().int().nonnegative().optional(),
   enabled: z.boolean().optional(),
   job: z.string().optional(),

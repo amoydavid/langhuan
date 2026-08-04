@@ -22,8 +22,6 @@ export const chunks = {
     ariaLabel: '分块检查器',
     emptyState: '当前索引版本没有可查看的分块。',
     title: '分块 {{sequence}} · {{title}}',
-    editButton: '编辑分块',
-    chunkListAriaLabel: '分块列表',
     chunkTabNoTitle: '无标题',
     faqNotice: '由 FAQ 内容生成；请通过 FAQ 编辑器修改问题和回答。',
     tabsAriaLabel: '分块内容视图',
