@@ -88,7 +88,7 @@ func (m ParseManifest) Validate(markdown string) error {
 
 func knownParser(parser string) bool {
 	switch strings.TrimSpace(parser) {
-	case "markdown", "text", "csv", "xlsx", "docx", "stub":
+	case "markdown", "text", "csv", "xlsx", "docx", "pdf", "stub":
 		return true
 	default:
 		return false
