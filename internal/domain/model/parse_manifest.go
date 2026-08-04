@@ -52,7 +52,7 @@ func (m ParseManifest) Validate(markdown string) error {
 	if m.Version != CurrentParseManifestVersion {
 		return fmt.Errorf("%w: 不支持的 parse manifest version: %d", domainerrors.ErrValidation, m.Version)
 	}
-	if !knownParser(m.Parser) {
+	if !IsKnownParser(m.Parser) {
 		return fmt.Errorf("%w: 未知 parser: %q", domainerrors.ErrValidation, m.Parser)
 	}
 	if m.ParserVersion <= 0 {
@@ -86,7 +86,9 @@ func (m ParseManifest) Validate(markdown string) error {
 	return nil
 }
 
-func knownParser(parser string) bool {
+// IsKnownParser 判断 parser 名称是否在已知集合内。
+// 导出供 codec 等其他层共享同一份白名单，避免多处重复维护导致漂移。
+func IsKnownParser(parser string) bool {
 	switch strings.TrimSpace(parser) {
 	case "markdown", "text", "csv", "xlsx", "docx", "pdf", "stub":
 		return true

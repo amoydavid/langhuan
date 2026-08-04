@@ -78,6 +78,35 @@ func TestParseManifestFromEmptyJSONMapKeepsDocumentUnparsed(t *testing.T) {
 	}
 }
 
+// TestParseManifestPDFParserCodecRoundTrip 确保 MinerU PDF 解析产出的
+// parser="pdf" manifest 能通过 codec 白名单（回归 KB：曾因 codec 白名单
+// 漏掉 "pdf" 导致 CompleteParse 失败）。
+func TestParseManifestPDFParserCodecRoundTrip(t *testing.T) {
+	want := model.ParseManifest{
+		Version:       model.CurrentParseManifestVersion,
+		Parser:        "pdf",
+		ParserVersion: 1,
+		Blocks: []model.ParsedBlock{{
+			Sequence:        0,
+			Kind:            model.BlockKindParagraph,
+			NormalizedStart: 0,
+			NormalizedEnd:   3,
+			SourceAnchor:    value.SourceAnchor{SourceType: "pdf"},
+		}},
+	}
+	raw, err := parseManifestToJSONMap(want)
+	if err != nil {
+		t.Fatalf("encode pdf manifest failed: %v", err)
+	}
+	got, err := parseManifestFromJSONMap(raw)
+	if err != nil {
+		t.Fatalf("decode pdf manifest failed: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseManifestFromJSONMapRejectsUnknownVersion(t *testing.T) {
 	_, err := parseManifestFromJSONMap(JSONMap{
 		"version":        99,

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
@@ -216,9 +215,7 @@ func validateManifestForCodec(manifest model.ParseManifest) error {
 	if manifest.Version != model.CurrentParseManifestVersion {
 		return fmt.Errorf("%w: 不支持的 parse manifest version: %d", domainerrors.ErrValidation, manifest.Version)
 	}
-	switch strings.TrimSpace(manifest.Parser) {
-	case "markdown", "text", "csv", "xlsx", "docx", "stub":
-	default:
+	if !model.IsKnownParser(manifest.Parser) {
 		return fmt.Errorf("%w: 未知 parser: %q", domainerrors.ErrValidation, manifest.Parser)
 	}
 	if manifest.ParserVersion <= 0 {
