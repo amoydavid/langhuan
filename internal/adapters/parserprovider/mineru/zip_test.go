@@ -3,6 +3,7 @@ package mineru
 import (
 	"archive/zip"
 	"bytes"
+	"strconv"
 	"testing"
 
 	parserport "github.com/dajee/langhuan/internal/ports/parser"
@@ -85,6 +86,24 @@ func TestExtractImagesFromZipSkipsOversized(t *testing.T) {
 	}
 	if len(assets) != 0 {
 		t.Fatalf("assets = %d, want 0 (oversized)", len(assets))
+	}
+}
+
+func TestExtractImagesFromZipCapsCount(t *testing.T) {
+	// 构造超过 maxZipImages 上限的图片条目，验证数量被截断
+	entries := make(map[string][]byte)
+	total := maxZipImages + 50
+	for i := 0; i < total; i++ {
+		entries["images/img"+strconv.Itoa(i)+".png"] = []byte("x")
+	}
+	zipData := buildTestZip(t, entries)
+
+	assets, err := extractImagesFromZip(zipData, 1024)
+	if err != nil {
+		t.Fatalf("extractImagesFromZip error = %v", err)
+	}
+	if len(assets) != maxZipImages {
+		t.Fatalf("assets = %d, want capped at %d", len(assets), maxZipImages)
 	}
 }
 

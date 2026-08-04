@@ -77,6 +77,11 @@ func extractAssetsFromZip(data []byte, maxSizeBytes int64) []parserport.AssetCan
 	return candidates
 }
 
+// maxZipImages 限制单次解析从 zip 中提取的图片数量上限，
+// 防止异常/恶意 zip 一次性占用过多内存。AssetResolver 还会按
+// MaxCountPerDocument 二次截断，这里只是内存安全护栏。
+const maxZipImages = 1000
+
 // extractImagesFromZip 提取 zip 内的图片文件（images/ 目录或图片扩展名条目）。
 // maxSizeBytes 限制单个图片解压大小（0 表示不限制）。
 // 返回按 zip 内路径索引的图片，供 AssetResolver 匹配 Markdown 相对路径引用。
@@ -87,6 +92,9 @@ func extractImagesFromZip(data []byte, maxSizeBytes int64) ([]zipAsset, error) {
 	}
 	var result []zipAsset
 	for _, file := range reader.File {
+		if len(result) >= maxZipImages {
+			break
+		}
 		name := file.Name
 		if file.FileInfo().IsDir() {
 			continue
