@@ -12,7 +12,7 @@
 - GORM: PostgreSQL 数据访问
 - PostgreSQL + pgvector: 主存储、向量索引、全文索引
 - asynq + Redis: 异步文档解析、轮询、索引任务
-- MinerU Cloud: PDF 转 Markdown（v0.7.0 引入，当前内部测试阶段暂不覆盖 PDF）
+- MinerU Cloud: PDF 转 Markdown（v0.7.0 引入）
 - Embedding Provider Registry：支持五种 typed Provider，并已接入 Generation 构建、文档向量化与检索查询
 - OSS/对象存储: 保存解析得到的图片等资产
 - Web Console: `web/` 目录下的 React + Vite + shadcn/ui 管理台，已通过真实 REST 接口完成认证、Workspace、知识库、文档、成员、邀请和模型管理，并可通过 `web_embed` build tag 嵌入主二进制
@@ -353,9 +353,9 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 完成证据：v0.6.0 已交付。全局 `server.base_url` 派生 Web/REST/MCP/邀请地址（生产 HTTPS）；Workspace API Key 采用 `lhk_`+32-byte 随机的 SHA-256 鉴权 + HKDF/AES-256-GCM 可恢复密文，owner/admin 可重复 reveal；六个 typed MCP 工具（`knowledge_base_create`、`document_ingest`、`document_status`、`knowledge_search`、`document_delete`、`chunk_get`）由 mcp-go v0.57.0 stateless Streamable HTTP 提供，`/mcp` 只接受 Bearer；多知识库 `knowledge_search` 按 Embedding 模型五元组快照分组、每组一次 query embedding、统一 RRF 确定性合并；Web Console 提供列表/整页创建/详情 reveal/吊销。验收命令：`go test ./...`、`go test -tags=integration -p 1 ./internal/infrastructure/db ./internal/infrastructure/migrate ./cmd/langhuan`（含 v060 真实 E2E：admin 创建 key→Bearer REST 多库检索→reveal→吊销→401，以及 `/mcp` 有效 Bearer `tools/list` scope 过滤）、`pnpm --dir web check`、`pnpm --dir web test`（250 通过）、`pnpm --dir web build` 全部 exit 0。接入文档见 `docs/API_ACCESS.md`。
 
-### v0.7.0 - MinerU Cloud PDF 解析与资产归档
+### v0.7.0 - MinerU Cloud PDF 解析与资产归档（已完成）
 
-目标：在可视化和程序化消费闭环之上，补齐 PDF 这一最重的输入格式。执行前必须按当前 Revision/ChunkSet/Generation 事实模型重新设计。
+目标：在可视化和程序化消费闭环之上，补齐 PDF 这一最重的输入格式。
 
 - 实现 S3-compatible `RawDocumentStore` 与 `AssetStore`。
 - 实现 `parser/minerucloud` adapter，支持 MinerU Cloud 异步流程：
