@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -37,11 +38,21 @@ type ChunkRevisionIndexer interface {
 }
 
 // ChunkRevisionHandler decodes the queue protocol and forwards to the application service.
-type ChunkRevisionHandler struct{ Indexer ChunkRevisionIndexer }
+type ChunkRevisionHandler struct {
+	Indexer ChunkRevisionIndexer
+	Logger  *slog.Logger
+}
 
 // RegisterChunkRevisionHandler registers the targeted indexing consumer.
 func RegisterChunkRevisionHandler(mux *asynq.ServeMux, handler ChunkRevisionHandler) {
 	mux.HandleFunc(TaskChunkRevisionIndex, handler.Handle)
+}
+
+func (h ChunkRevisionHandler) logger() *slog.Logger {
+	if h.Logger != nil {
+		return h.Logger
+	}
+	return slog.Default()
 }
 
 // Handle validates the full payload before invoking the application layer.
@@ -61,10 +72,26 @@ func (h ChunkRevisionHandler) Handle(ctx context.Context, task *asynq.Task) erro
 		NewRevisionID: payload.NewRevisionID, ExpectedContentVersion: payload.ExpectedContentVersion,
 		JobID: payload.JobID,
 	})
-	if err != nil && isPermanentChunkRevisionTaskError(err) {
-		return errors.Join(asynq.SkipRetry, err)
+	if err != nil {
+		h.logger().LogAttrs(ctx, slog.LevelError, "ChunkRevision 索引失败",
+			slog.String("workspace_id", payload.WorkspaceID.String()),
+			slog.String("document_id", payload.DocumentID.String()),
+			slog.String("revision_id", payload.DocumentRevisionID.String()),
+			slog.String("chunk_id", payload.ChunkID.String()),
+			slog.String("job_id", payload.JobID.String()),
+			slog.String("error", err.Error()))
+		if isPermanentChunkRevisionTaskError(err) {
+			return errors.Join(asynq.SkipRetry, err)
+		}
+		return err
 	}
-	return err
+	h.logger().LogAttrs(ctx, slog.LevelDebug, "ChunkRevision 索引完成",
+		slog.String("workspace_id", payload.WorkspaceID.String()),
+		slog.String("document_id", payload.DocumentID.String()),
+		slog.String("revision_id", payload.DocumentRevisionID.String()),
+		slog.String("chunk_id", payload.ChunkID.String()),
+		slog.String("job_id", payload.JobID.String()))
+	return nil
 }
 
 func decodeChunkRevisionTaskPayload(task *asynq.Task) (ChunkRevisionTaskPayload, error) {

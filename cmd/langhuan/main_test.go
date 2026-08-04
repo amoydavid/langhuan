@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,7 +62,7 @@ func TestBuildAppWithoutServersSkipsExternalConnections(t *testing.T) {
 		},
 		Redis: config.RedisConfig{Addr: "invalid-host:6379"},
 		Log:   config.LogConfig{Level: "info"},
-	})
+	}, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +277,7 @@ func TestBuildAppHTTPOnlyWiresRuntimeServicesWithQueueClient(t *testing.T) {
 		},
 		MCP:    config.MCPConfig{InlineIngestMaxFileSizeBytes: 1024},
 		Search: config.SearchConfig{MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60},
-	})
+	}, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}

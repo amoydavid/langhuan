@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -70,6 +71,33 @@ type DocumentHandlers struct {
 	Pipeline          DocumentPipeline
 	ParserRegistry    ParserRegistry
 	AssetStoreFactory func(workspaceID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver
+	Logger            *slog.Logger
+}
+
+// logger 返回注入的 logger，未注入时回退到 slog.Default（测试友好）。
+func (h DocumentHandlers) logger() *slog.Logger {
+	if h.Logger != nil {
+		return h.Logger
+	}
+	return slog.Default()
+}
+
+// lineageAttrs 返回文档任务 lineage 的日志字段，用于追踪单条文档流水线。
+func lineageAttrs(payload DocumentTaskPayload) []slog.Attr {
+	return []slog.Attr{
+		slog.String("workspace_id", payload.WorkspaceID.String()),
+		slog.String("document_id", payload.DocumentID.String()),
+		slog.String("revision_id", payload.DocumentRevisionID.String()),
+		slog.String("job_id", payload.JobID.String()),
+	}
+}
+
+// jobAttrs 返回仅含 workspace/job 的日志字段（用于无法拿到完整 lineage 的辅助路径）。
+func jobAttrs(workspaceID, jobID uuid.UUID) []slog.Attr {
+	return []slog.Attr{
+		slog.String("workspace_id", workspaceID.String()),
+		slog.String("job_id", jobID.String()),
+	}
 }
 
 func RegisterDocumentHandlers(mux *asynq.ServeMux, handlers DocumentHandlers) {
@@ -81,6 +109,8 @@ func RegisterDocumentHandlers(mux *asynq.ServeMux, handlers DocumentHandlers) {
 func (h DocumentHandlers) HandleDocumentParseStart(ctx context.Context, task *asynq.Task) error {
 	payload, state, err := h.loadTask(ctx, task)
 	if err != nil {
+		h.logger().LogAttrs(ctx, slog.LevelError, "文档解析任务加载失败",
+			append(lineageAttrs(payload), slog.String("error", err.Error()))...)
 		return err
 	}
 	if state.job.Status == value.JobStatusCompleted {
@@ -116,6 +146,10 @@ func (h DocumentHandlers) HandleDocumentParseStart(ctx context.Context, task *as
 				if sErr != nil {
 					return h.failPipelineRun(ctx, payload, sErr)
 				}
+				h.logger().LogAttrs(ctx, slog.LevelInfo, "异步解析任务已提交（MinerU）",
+					append(lineageAttrs(payload),
+						slog.String("file_type", state.revision.FileType),
+						slog.String("external_job_id", start.ExternalJobID))...)
 				// 异步路径：用 external_job_id 入队 poll 任务
 				if _, err := h.createAndEnqueueWithExternalJob(ctx, payload, TaskDocumentParsePoll, start.ExternalJobID, start.Payload); err != nil {
 					return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
@@ -125,6 +159,8 @@ func (h DocumentHandlers) HandleDocumentParseStart(ctx context.Context, task *as
 		}
 	}
 
+	h.logger().LogAttrs(ctx, slog.LevelDebug, "同步解析路径：提交后续任务",
+		append(lineageAttrs(payload), slog.String("next_type", nextType))...)
 	if _, err := h.createAndEnqueue(ctx, payload, nextType, uuid.Nil); err != nil {
 		return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
 	}
@@ -134,6 +170,8 @@ func (h DocumentHandlers) HandleDocumentParseStart(ctx context.Context, task *as
 func (h DocumentHandlers) HandleDocumentParsePoll(ctx context.Context, task *asynq.Task) error {
 	payload, state, err := h.loadTask(ctx, task)
 	if err != nil {
+		h.logger().LogAttrs(ctx, slog.LevelError, "文档轮询任务加载失败",
+			append(lineageAttrs(payload), slog.String("error", err.Error()))...)
 		return err
 	}
 	if state.job.Status == value.JobStatusCompleted {
@@ -162,6 +200,7 @@ func (h DocumentHandlers) HandleDocumentParsePoll(ctx context.Context, task *asy
 		if err := h.Pipeline.RunParse(ctx, payload.WorkspaceID, payload.DocumentRevisionID); err != nil {
 			return h.failPipelineRun(ctx, payload, err)
 		}
+		h.logger().LogAttrs(ctx, slog.LevelInfo, "同步解析完成，提交索引任务", lineageAttrs(payload)...)
 	}
 	if _, err := h.createAndEnqueue(ctx, payload, TaskDocumentIndex, uuid.Nil); err != nil {
 		return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
@@ -207,16 +246,36 @@ func (h DocumentHandlers) handleAsyncPoll(
 	switch result.Status {
 	case parserport.AsyncRunning:
 		// 重新入队 poll，带延迟
+		h.logger().LogAttrs(ctx, slog.LevelDebug, "异步解析轮询中（MinerU）",
+			append(lineageAttrs(payload),
+				slog.String("external_job_id", externalJobID),
+				slog.Int("poll_count", pollCountFromPayload(result.Payload)),
+				slog.Duration("retry_after", result.RetryAfter))...)
 		if _, err := h.createAndEnqueueWithExternalJobDelayed(ctx, payload, TaskDocumentParsePoll, externalJobID, result.Payload, queue.Delay(result.RetryAfter)); err != nil {
 			return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
 		}
 		return nil
 
 	case parserport.AsyncFailed:
+		h.logger().LogAttrs(ctx, slog.LevelError, "异步解析失败（MinerU）",
+			append(lineageAttrs(payload),
+				slog.String("external_job_id", externalJobID),
+				slog.String("error_code", result.ErrorCode),
+				slog.String("error_message", result.ErrorMessage))...)
 		return h.failPipelineRun(ctx, payload, fmt.Errorf("%w: %s: %s",
 			parserport.ErrAsyncParseFailed, result.ErrorCode, result.ErrorMessage))
 
 	case parserport.AsyncSucceeded:
+		markdownChars, assetCandidates := 0, 0
+		if result.Document != nil {
+			markdownChars = len(result.Document.Markdown)
+			assetCandidates = len(result.Document.AssetCandidates)
+		}
+		h.logger().LogAttrs(ctx, slog.LevelInfo, "异步解析完成（MinerU）",
+			append(lineageAttrs(payload),
+				slog.String("external_job_id", externalJobID),
+				slog.Int("markdown_chars", markdownChars),
+				slog.Int("asset_candidates", assetCandidates))...)
 		// 完成异步解析：存储 markdown + manifest + 归档资产
 		var assetResolver *pipeline.AssetResolver
 		if h.AssetStoreFactory != nil {
@@ -240,9 +299,26 @@ func (h DocumentHandlers) handleAsyncPoll(
 	}
 }
 
+// pollCountFromPayload 从 job payload 安全提取 poll_count（DB JSON 数字可能为 float64）。
+func pollCountFromPayload(payload map[string]any) int {
+	if v, ok := payload["poll_count"]; ok {
+		switch n := v.(type) {
+		case int:
+			return n
+		case int64:
+			return int(n)
+		case float64:
+			return int(n)
+		}
+	}
+	return 0
+}
+
 func (h DocumentHandlers) HandleDocumentIndex(ctx context.Context, task *asynq.Task) error {
 	payload, state, err := h.loadTask(ctx, task)
 	if err != nil {
+		h.logger().LogAttrs(ctx, slog.LevelError, "文档索引任务加载失败",
+			append(lineageAttrs(payload), slog.String("error", err.Error()))...)
 		return err
 	}
 	if state.job.Status == value.JobStatusCompleted {
@@ -263,9 +339,14 @@ func (h DocumentHandlers) HandleDocumentIndex(ctx context.Context, task *asynq.T
 			return h.failPipelineRun(ctx, payload, err)
 		}
 	}
-	if _, err := h.Pipeline.RunIndex(ctx, payload.WorkspaceID, payload.GenerationID, chunkSetID); err != nil {
+	entries, err := h.Pipeline.RunIndex(ctx, payload.WorkspaceID, payload.GenerationID, chunkSetID)
+	if err != nil {
 		return h.failPipelineRun(ctx, payload, err)
 	}
+	h.logger().LogAttrs(ctx, slog.LevelInfo, "文档索引完成",
+		append(lineageAttrs(payload),
+			slog.String("chunk_set_id", chunkSetID.String()),
+			slog.Int("retrieval_entries", len(entries)))...)
 	return h.succeedRunningJob(ctx, payload.WorkspaceID, payload.JobID)
 }
 
@@ -441,7 +522,7 @@ func (h DocumentHandlers) createAndEnqueueWithJobPayloadAndExtra(
 	if _, err := h.Queue.Enqueue(ctx, queue.JobRequest{
 		Type: typ, Payload: queuePayload,
 		TaskID: taskID,
-		Delay: delay,
+		Delay:  delay,
 	}); err != nil {
 		return nil, h.failCreatedJob(ctx, source.WorkspaceID, job.ID, err)
 	}
@@ -453,6 +534,13 @@ func (h DocumentHandlers) failPipelineRun(ctx context.Context, payload DocumentT
 	retryCount, retryOK := asynq.GetRetryCount(ctx)
 	maxRetry, maxOK := asynq.GetMaxRetry(ctx)
 	terminal := permanent || (retryOK && maxOK && retryCount >= maxRetry)
+	h.logger().LogAttrs(ctx, slog.LevelError, "文档流水线失败",
+		append(lineageAttrs(payload),
+			slog.String("error", cause.Error()),
+			slog.String("error_class", documentTaskErrorClass(cause)),
+			slog.Bool("permanent", permanent),
+			slog.Bool("terminal", terminal),
+			slog.Int("retry_count", retryCount))...)
 	if terminal {
 		if err := h.Store.FailTask(
 			ctx, payload.WorkspaceID, payload.JobID, payload.DocumentRevisionID,
@@ -510,6 +598,8 @@ func (h DocumentHandlers) failCreatedJob(
 	workspaceID, jobID uuid.UUID,
 	cause error,
 ) error {
+	h.logger().LogAttrs(ctx, slog.LevelError, "文档后续任务创建失败",
+		append(jobAttrs(workspaceID, jobID), slog.String("error", cause.Error()))...)
 	if markErr := h.Store.MarkFailed(ctx, workspaceID, jobID, cause.Error()); markErr != nil {
 		return errors.Join(cause, fmt.Errorf("标记后续任务失败也失败: %w", markErr))
 	}
@@ -517,6 +607,8 @@ func (h DocumentHandlers) failCreatedJob(
 }
 
 func (h DocumentHandlers) failRunningJob(ctx context.Context, workspaceID, jobID uuid.UUID, cause error) error {
+	h.logger().LogAttrs(ctx, slog.LevelError, "文档任务失败",
+		append(jobAttrs(workspaceID, jobID), slog.String("error", cause.Error()))...)
 	if markErr := h.Store.MarkFailed(ctx, workspaceID, jobID, cause.Error()); markErr != nil {
 		return errors.Join(cause, fmt.Errorf("标记任务失败也失败: %w", markErr))
 	}
@@ -527,6 +619,7 @@ func (h DocumentHandlers) succeedRunningJob(ctx context.Context, workspaceID, jo
 	if err := h.Store.MarkSucceeded(ctx, workspaceID, jobID); err != nil {
 		return h.failRunningJob(ctx, workspaceID, jobID, err)
 	}
+	h.logger().LogAttrs(ctx, slog.LevelDebug, "文档任务成功", jobAttrs(workspaceID, jobID)...)
 	return nil
 }
 

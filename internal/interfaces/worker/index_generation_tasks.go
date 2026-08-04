@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
@@ -30,11 +31,21 @@ type IndexGenerationBuilder interface {
 }
 
 // IndexGenerationBuildHandler decodes and forwards a full rebuild task.
-type IndexGenerationBuildHandler struct{ Builder IndexGenerationBuilder }
+type IndexGenerationBuildHandler struct {
+	Builder IndexGenerationBuilder
+	Logger  *slog.Logger
+}
 
 // RegisterIndexGenerationBuildHandler registers the full rebuild consumer.
 func RegisterIndexGenerationBuildHandler(mux *asynq.ServeMux, handler IndexGenerationBuildHandler) {
 	mux.HandleFunc(TaskIndexGenerationBuild, handler.Handle)
+}
+
+func (h IndexGenerationBuildHandler) logger() *slog.Logger {
+	if h.Logger != nil {
+		return h.Logger
+	}
+	return slog.Default()
 }
 
 // Handle validates the queue protocol before invoking the application layer.
@@ -58,10 +69,24 @@ func (h IndexGenerationBuildHandler) Handle(ctx context.Context, task *asynq.Tas
 		GenerationID: payload.GenerationID, JobID: payload.JobID,
 		TerminalAttempt: indexGenerationBuildTerminalAttempt(ctx),
 	})
-	if err != nil && isPermanentIndexGenerationBuildTaskError(err) {
-		return errors.Join(asynq.SkipRetry, err)
+	if err != nil {
+		h.logger().LogAttrs(ctx, slog.LevelError, "IndexGeneration 全量重建失败",
+			slog.String("workspace_id", payload.WorkspaceID.String()),
+			slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
+			slog.String("generation_id", payload.GenerationID.String()),
+			slog.String("job_id", payload.JobID.String()),
+			slog.String("error", err.Error()))
+		if isPermanentIndexGenerationBuildTaskError(err) {
+			return errors.Join(asynq.SkipRetry, err)
+		}
+		return err
 	}
-	return err
+	h.logger().LogAttrs(ctx, slog.LevelInfo, "IndexGeneration 全量重建完成",
+		slog.String("workspace_id", payload.WorkspaceID.String()),
+		slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
+		slog.String("generation_id", payload.GenerationID.String()),
+		slog.String("job_id", payload.JobID.String()))
+	return nil
 }
 
 func indexGenerationBuildTerminalAttempt(ctx context.Context) bool {

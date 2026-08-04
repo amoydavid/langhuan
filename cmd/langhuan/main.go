@@ -172,7 +172,7 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	app, err := buildApp(ctx, cfg)
+	app, err := buildApp(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func configPath(args []string) (string, error) {
 	return *path, nil
 }
 
-func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
+func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRuntime, error) {
 	app := &appRuntime{cfg: cfg}
 	if !cfg.Server.RunHTTP && !cfg.Server.RunWorker {
 		return app, nil
@@ -281,12 +281,15 @@ func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
 					workspaceID, documentID, revisionID,
 				)
 			},
+			Logger: log,
 		})
 		worker.RegisterChunkRevisionHandler(app.workerMux, worker.ChunkRevisionHandler{
 			Indexer: app.services.chunkRevisionIndexer,
+			Logger:  log,
 		})
 		worker.RegisterIndexGenerationBuildHandler(app.workerMux, worker.IndexGenerationBuildHandler{
 			Builder: app.services.indexGenerationBuilder,
+			Logger:  log,
 		})
 	}
 
