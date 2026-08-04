@@ -85,7 +85,8 @@ func (p *Parser) Start(ctx context.Context, input parserport.AsyncParseInput) (*
 	if uploadURL == "" {
 		return nil, fmt.Errorf("MinerU 未返回上传地址")
 	}
-	if err := p.client.Upload(ctx, uploadURL, reader, "application/pdf"); err != nil {
+	// 上传 PDF 到 MinerU 预签名 URL（文档要求不带 Content-Type header）
+	if err := p.client.Upload(ctx, uploadURL, reader, ""); err != nil {
 		return nil, fmt.Errorf("上传 PDF 到 MinerU 失败: %w", err)
 	}
 
