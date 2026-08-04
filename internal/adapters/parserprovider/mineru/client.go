@@ -189,6 +189,10 @@ func (c *Client) Poll(ctx context.Context, batchID string) (*TaskResult, error) 
 		FullResultURL: apiResp.Data.FullZipURL,
 		ErrorMessage:  apiResp.Data.ErrMsg,
 	}
+	// 失败时用 state 作为 ErrorCode（MinerU 没有独立 err_code 字段）
+	if strings.ToLower(apiResp.Data.State) == "failed" {
+		result.ErrorCode = "mineru_parse_failed"
+	}
 	if apiResp.Data.ExtractProgress != nil {
 		result.ExtractedPages = apiResp.Data.ExtractProgress.ExtractedPages
 		result.TotalPages = apiResp.Data.ExtractProgress.TotalPages
@@ -230,10 +234,10 @@ func (c *Client) Download(ctx context.Context, resultURL string) (markdown strin
 		return "", nil, fmt.Errorf("读取 MinerU 结果失败: %w", err)
 	}
 
-	// 如果是 zip，提取 markdown
+	// 如果是 zip，提取 markdown（限制解压大小 100MB 防止 OOM）
 	contentType := resp.Header.Get("Content-Type")
 	if strings.Contains(contentType, "zip") || strings.HasSuffix(strings.ToLower(resultURL), ".zip") {
-		md, err := extractMarkdownFromZip(data)
+		md, err := extractMarkdownFromZip(data, 100*1024*1024)
 		if err != nil {
 			return "", nil, fmt.Errorf("从 MinerU zip 提取 Markdown 失败: %w", err)
 		}

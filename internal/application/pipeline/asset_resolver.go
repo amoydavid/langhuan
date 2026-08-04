@@ -3,7 +3,6 @@
 package pipeline
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -137,7 +136,7 @@ func (r *AssetResolver) resolveOne(ctx context.Context, ref imageRef) (*model.As
 	var err error
 
 	if strings.HasPrefix(ref.url, "data:") {
-		data, mimeType, err = decodeDataURI(ref.url)
+		data, mimeType, err = decodeDataURI(ref.url, r.cfg.MaxImageSizeBytes)
 	} else if strings.HasPrefix(ref.url, "http://") || strings.HasPrefix(ref.url, "https://") {
 		data, mimeType, err = r.downloadRemote(ctx, ref.url)
 	} else {
@@ -224,7 +223,12 @@ func (r *AssetResolver) downloadRemote(ctx context.Context, url string) ([]byte,
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, r.cfg.MaxImageSizeBytes+1))
+	// C3 修复：MaxImageSizeBytes=0 时表示不限制；>0 时多读 1 字节用于超限检测
+	limit := int64(-1) // -1 = 无限制
+	if r.cfg.MaxImageSizeBytes > 0 {
+		limit = r.cfg.MaxImageSizeBytes + 1
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, "", fmt.Errorf("读取响应失败: %w", err)
 	}
@@ -246,7 +250,8 @@ func (r *AssetResolver) isMimeAllowed(mimeType string) bool {
 }
 
 // decodeDataURI 解析 data:image/png;base64,... 格式的 URI。
-func decodeDataURI(dataURI string) ([]byte, string, error) {
+// maxBytes 限制解码后的最大字节数（0 表示不限制）。
+func decodeDataURI(dataURI string, maxBytes int64) ([]byte, string, error) {
 	// data:image/png;base64,iVBOR...
 	if !strings.HasPrefix(dataURI, "data:") {
 		return nil, "", fmt.Errorf("not a data URI")
@@ -257,6 +262,12 @@ func decodeDataURI(dataURI string) ([]byte, string, error) {
 	}
 	header := dataURI[5:commaIdx] // image/png;base64
 	dataPart := dataURI[commaIdx+1:]
+
+	// M3 修复：在解码前检查 base64 字符串长度，防止内存炸弹
+	// base64 编码后长度约为原始数据的 4/3，用 maxBytes*1.34 作为近似上限
+	if maxBytes > 0 && int64(len(dataPart)) > maxBytes*4/3+10 {
+		return nil, "", fmt.Errorf("data URI 超过最大允许大小 %d 字节", maxBytes)
+	}
 
 	semiIdx := strings.Index(header, ";")
 	mimeType := header
@@ -283,6 +294,3 @@ func truncate(s string, max int) string {
 	}
 	return s[:max] + "..."
 }
-
-// 确保 bytes 引用不会因重构丢失
-var _ = bytes.NewReader

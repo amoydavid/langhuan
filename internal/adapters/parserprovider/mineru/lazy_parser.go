@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/dajee/langhuan/internal/domain/model"
 	parserport "github.com/dajee/langhuan/internal/ports/parser"
 	storageport "github.com/dajee/langhuan/internal/ports/storage"
 )
@@ -61,7 +61,7 @@ func NewLazyParser(selector CredentialSelector, rawStore storageport.RawDocument
 
 // Supports 只支持 PDF。
 func (p *LazyParser) Supports(fileType string) bool {
-	return fileType == "pdf"
+	return strings.ToLower(fileType) == "pdf"
 }
 
 // Parse 同步路径不可用。
@@ -91,7 +91,10 @@ func (p *LazyParser) Poll(ctx context.Context, input parserport.AsyncParsePollIn
 func (p *LazyParser) buildInner(ctx context.Context, workspaceID uuid.UUID) (*Parser, error) {
 	cred, err := p.selector.SelectMinerU(ctx, workspaceID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", parserport.ErrMissingParserProvider, err)
+		// M6 修复：不包装为 ErrMissingParserProvider（permanent error），
+		// 让原始错误传播——DB 错误等瞬时故障应可重试，
+		// "没有可用的 MinerU Provider" 才是 permanent（由 selector 层自行返回）
+		return nil, err
 	}
 
 	// 从 config 和 credentials 构造 MinerU client
@@ -130,6 +133,3 @@ var (
 	_ parserport.DocumentParser      = (*LazyParser)(nil)
 	_ parserport.AsyncDocumentParser = (*LazyParser)(nil)
 )
-
-// model 引用占位（避免删除 import 导致编译问题）
-var _ = model.Asset{}

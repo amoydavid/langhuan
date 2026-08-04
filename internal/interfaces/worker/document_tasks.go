@@ -116,9 +116,8 @@ func (h DocumentHandlers) HandleDocumentParseStart(ctx context.Context, task *as
 				if sErr != nil {
 					return h.failPipelineRun(ctx, payload, sErr)
 				}
-				// 用带 external_job_id 的 payload 创建后续 poll 任务
-				enhanced := payload
-				if _, err := h.createAndEnqueueWithExternalJob(ctx, enhanced, TaskDocumentParsePoll, start.ExternalJobID, start.Payload); err != nil {
+				// 异步路径：用 external_job_id 入队 poll 任务
+				if _, err := h.createAndEnqueueWithExternalJob(ctx, payload, TaskDocumentParsePoll, start.ExternalJobID, start.Payload); err != nil {
 					return h.failRunningJob(ctx, payload.WorkspaceID, payload.JobID, err)
 				}
 				return h.succeedRunningJob(ctx, payload.WorkspaceID, payload.JobID)

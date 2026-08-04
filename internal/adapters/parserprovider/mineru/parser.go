@@ -125,7 +125,17 @@ func (p *Parser) Poll(ctx context.Context, input parserport.AsyncParsePollInput)
 
 	switch result.Status {
 	case TaskStatusRunning:
-		payload["poll_count"] = incrementPollCount(payload)
+		count := incrementPollCount(payload)
+		payload["poll_count"] = count
+		// C1 修复：达到 MaxPollAttempts 时终止轮询，返回 failed 而非无限重试
+		if p.config.MaxPollAttempts > 0 && count >= p.config.MaxPollAttempts {
+			return &parserport.AsyncParsePollResult{
+				Status:       parserport.AsyncFailed,
+				ErrorCode:    "poll_timeout",
+				ErrorMessage: fmt.Sprintf("MinerU 解析超过最大轮询次数 %d", p.config.MaxPollAttempts),
+				Payload:      payload,
+			}, nil
+		}
 		return &parserport.AsyncParsePollResult{
 			Status:     parserport.AsyncRunning,
 			Payload:    payload,
