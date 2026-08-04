@@ -25,6 +25,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      port: 8190,
+      strictPort: true,
       proxy: {
         '/api': {
           target: env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:8080',

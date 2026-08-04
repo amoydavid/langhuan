@@ -322,7 +322,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 完成证据：Workspace readiness、KnowledgeBase summary/Job/Chunk 查询与基本信息更新均已接入真实 REST；Web Console 已交付独立深链的 Overview、All、Files、FAQ、Web、Search、Indexes、Settings 页面，File Tree 仅接收 File，FAQ/Web 使用桌面表格与移动卡片。member 可管理内容与检索，Chunk Revision、Generation 和知识库设置写操作仍为 admin/owner。组件/浏览器测试、临时 pgvector + Redis 集成测试以及真实 `web_embed` 深链 smoke 均已覆盖该边界。
 
-### v0.6.0 - Workspace API Key、MCP 与程序化访问
+### v0.6.0 - Workspace API Key、MCP 与程序化访问（已完成）
 
 目标：在已交付的 REST 混合检索和 v0.5.0 可视化工作台之上，完成独立于浏览器 session 的程序化消费闭环。
 
