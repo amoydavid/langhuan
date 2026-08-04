@@ -63,7 +63,9 @@ export function ProviderForm({
   const queryClient = useQueryClient()
   const initialProvider = provider?.provider ?? 'openai'
   const form = useForm<ProviderFormValues>({
-    resolver: zodResolver(providerFormSchema),
+    // zodResolver 与 discriminated union 的类型推断在 TS 严格模式下不完美，
+    // 这里用 as 绕过 Resolver 类型不兼容问题。
+    resolver: zodResolver(providerFormSchema) as never,
     defaultValues: providerFormDefaults(scope, initialProvider, provider),
     shouldUnregister: false,
   })

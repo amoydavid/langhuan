@@ -16,6 +16,7 @@ export const models = {
     providerOllama: 'Ollama',
     providerDashscope: 'DashScope',
     providerTencentcloud: 'Tencent Cloud Hunyuan',
+    providerMinerU: 'MinerU Cloud (PDF parser)',
   },
   modelCard: {
     dimensions: '{{count}} dimensions',
@@ -52,6 +53,7 @@ export const models = {
     modeLabel: 'Mode',
     timeoutLabel: 'Timeout (seconds)',
     customHeadersLabel: 'Custom headers',
+    modelVersionLabel: 'Model version',
     customHeadersHelp:
       'Optional; one "name: value" per line. Stored encrypted with the API Key.',
     authModeLabel: 'Authentication method',
@@ -154,6 +156,7 @@ export const models = {
     apiKeyRequired: 'Enter an API Key',
     akSkRequired: 'Enter Access Key and Secret Key',
     secretIdSkRequired: 'Enter Secret ID and Secret Key',
+    tokenRequired: 'Enter API Token',
     customHeadersInvalid: 'Invalid custom header format',
     headerLineFormat: 'Line {{line}} must be "name: value"',
     headerNameDuplicate: 'Header name on line {{line}} is duplicated',

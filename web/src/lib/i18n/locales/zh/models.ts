@@ -10,6 +10,7 @@ export const models = {
     providerOllama: 'Ollama',
     providerDashscope: 'DashScope',
     providerTencentcloud: '腾讯云混元',
+    providerMinerU: 'MinerU Cloud（PDF 解析）',
   },
   modelCard: {
     dimensions: '{{count}} 维',
@@ -46,6 +47,7 @@ export const models = {
     modeLabel: '模式',
     timeoutLabel: '超时（秒）',
     customHeadersLabel: '自定义请求头',
+    modelVersionLabel: '模型版本',
     customHeadersHelp: '可选，每行一个“名称: 值”；与 API Key 一同加密保存。',
     authModeLabel: '认证方式',
     retryTimesLabel: '重试次数',
@@ -138,6 +140,7 @@ export const models = {
     apiKeyRequired: '请输入 API Key',
     akSkRequired: '请输入 Access Key 与 Secret Key',
     secretIdSkRequired: '请输入 Secret ID 与 Secret Key',
+    tokenRequired: '请输入 API Token',
     customHeadersInvalid: '自定义请求头格式无效',
     headerLineFormat: '第 {{line}} 行应为“名称: 值”',
     headerNameDuplicate: '第 {{line}} 行请求头名称重复',

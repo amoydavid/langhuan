@@ -16,6 +16,7 @@ export function providerLabels(t: TFunction): Record<ProviderKey, string> {
     ollama: t('models.common.providerOllama'),
     dashscope: t('models.common.providerDashscope'),
     tencentcloud: t('models.common.providerTencentcloud'),
+    mineru: t('models.common.providerMinerU'),
   }
 }
 
@@ -95,6 +96,16 @@ export function providerFormDefaults(
         secret_id: '',
         secret_key: '',
       }
+    case 'mineru':
+      return {
+        ...common,
+        provider: 'mineru',
+        base_url: configString(provider, 'base_url') || 'https://mineru.net',
+        model_version: (configString(provider, 'model_version') === 'pipeline'
+          ? 'pipeline'
+          : 'vlm') as 'vlm' | 'pipeline',
+        token: '',
+      }
   }
 }
 
@@ -171,6 +182,16 @@ export function toCreateProviderRequest(
           secret_id: values.secret_id,
           secret_key: values.secret_key,
         },
+      }
+    case 'mineru':
+      return {
+        ...common,
+        provider: 'mineru',
+        config: {
+          base_url: values.base_url || undefined,
+          model_version: values.model_version,
+        },
+        credentials: { token: values.token },
       }
   }
 }

@@ -7,6 +7,7 @@ export type ProviderKey =
   | 'ollama'
   | 'dashscope'
   | 'tencentcloud'
+  | 'mineru'
 
 export const embeddingDimensions = [798, 1024, 2048, 3584] as const
 export type EmbeddingDimension = (typeof embeddingDimensions)[number]
@@ -115,6 +116,11 @@ export type CreateModelProviderInput = ModelProviderInputBase &
         config: { region: string }
         credentials: { secret_id: string; secret_key: string }
       }
+    | {
+        provider: 'mineru'
+        config: { base_url?: string; model_version: string }
+        credentials: { token: string }
+      }
   )
 
 export type UpdateModelProviderInput = {
@@ -146,6 +152,6 @@ export type UpdateModelInput = {
 
 export type ConnectionTestResult = {
   ok: boolean
-  dimensions: number
+  dimensions?: number
   duration_ms: number
 }

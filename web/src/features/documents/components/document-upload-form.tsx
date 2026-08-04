@@ -22,7 +22,7 @@ import i18n from '@/lib/i18n'
 import { uploadDocument } from '../api'
 import { type DocumentUploadFormValues, documentUploadSchema } from '../schemas'
 
-export const DOCUMENT_ACCEPT = '.md,.markdown,.txt,.csv,.xlsx,.docx'
+export const DOCUMENT_ACCEPT = '.pdf,.md,.markdown,.txt,.csv,.xlsx,.docx'
 
 export function documentUploadErrorMessage(error: unknown) {
   const apiError = parseApiError(error)

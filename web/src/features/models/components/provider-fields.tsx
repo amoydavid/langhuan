@@ -1,4 +1,4 @@
-import type { useForm } from 'react-hook-form'
+import type { UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -7,7 +7,10 @@ import type { ProviderFormValues } from '../schemas'
 import type { ProviderKey } from '../types'
 
 type ProviderFieldsProps = {
-  form: ReturnType<typeof useForm<ProviderFormValues>>
+  // 使用宽松的 UseFormReturn 避免 discriminated union 下 register 名字推断冲突
+  form: UseFormReturn<ProviderFormValues> & {
+    register: UseFormReturn<ProviderFormValues>['register']
+  }
   provider: ProviderKey
   replaceCredentials: boolean
   authMode: string | undefined
@@ -181,6 +184,38 @@ export function ProviderFields({
       </div>
     )
   }
+  if (provider === 'mineru') {
+    return (
+      <div className='grid gap-4 sm:grid-cols-2'>
+        {replaceCredentials && (
+          <Field label='API Token' htmlFor='mineru-token'>
+            <Input
+              id='mineru-token'
+              type='password'
+              autoComplete='new-password'
+              {...form.register('token')}
+            />
+          </Field>
+        )}
+        <Field label='Base URL' htmlFor='mineru-base-url'>
+          <Input id='mineru-base-url' {...form.register('base_url')} />
+        </Field>
+        <Field
+          label={t('models.providerFields.modelVersionLabel')}
+          htmlFor='mineru-model-version'
+        >
+          <select
+            id='mineru-model-version'
+            className='h-9 rounded-md border bg-background px-3 text-sm'
+            {...form.register('model_version')}
+          >
+            <option value='vlm'>VLM</option>
+            <option value='pipeline'>Pipeline</option>
+          </select>
+        </Field>
+      </div>
+    )
+  }
   return (
     <div className='grid gap-4 sm:grid-cols-2'>
       <Field label='Region' htmlFor='tencent-region'>
@@ -213,7 +248,7 @@ function NumberField({
   name,
   label,
 }: {
-  form: ReturnType<typeof useForm<ProviderFormValues>>
+  form: UseFormReturn<ProviderFormValues>
   name: 'timeout_seconds' | 'retry_times'
   label: string
 }) {

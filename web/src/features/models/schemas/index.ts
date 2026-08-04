@@ -2,6 +2,7 @@ import { z } from 'zod'
 import i18n from '@/lib/i18n'
 import { arkProviderSchema } from './ark'
 import { dashScopeProviderSchema } from './dashscope'
+import { minerUProviderSchema } from './mineru'
 import { ollamaProviderSchema } from './ollama'
 import { openAIProviderSchema } from './openai'
 import { tencentCloudProviderSchema } from './tencentcloud'
@@ -15,6 +16,7 @@ export const providerFormSchema = z
     ollamaProviderSchema,
     dashScopeProviderSchema,
     tencentCloudProviderSchema,
+    minerUProviderSchema,
   ])
   .superRefine((values, context) => {
     if (values.provider === 'openai') {
@@ -82,6 +84,17 @@ export const providerFormSchema = z
         code: 'custom',
         path: ['secret_id'],
         message: i18n.t('models.schemas.secretIdSkRequired'),
+      })
+    }
+    if (
+      values.provider === 'mineru' &&
+      values.replace_credentials &&
+      !values.token.trim()
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['token'],
+        message: i18n.t('models.schemas.tokenRequired'),
       })
     }
   })

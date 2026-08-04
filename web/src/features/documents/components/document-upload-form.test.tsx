@@ -85,7 +85,7 @@ describe('DocumentUploadForm', () => {
 
   it('uses the exact supported-file accept contract', async () => {
     const { screen } = await renderForm()
-    expect(DOCUMENT_ACCEPT).toBe('.md,.markdown,.txt,.csv,.xlsx,.docx')
+    expect(DOCUMENT_ACCEPT).toBe('.pdf,.md,.markdown,.txt,.csv,.xlsx,.docx')
     await expect
       .element(screen.getByLabelText('文件', { exact: true }))
       .toHaveAttribute('accept', DOCUMENT_ACCEPT)
