@@ -38,15 +38,16 @@ type UpdateModelProviderInput struct {
 }
 
 // ModelProviderService manages model connections without exposing credentials.
+// 它通过 ProviderFactoryResolver 同时支持 embedding 和 parser 能力域的 Provider。
 type ModelProviderService struct {
 	repository ModelProviderRepository
 	cipher     embeddingport.CredentialCipher
-	registry   embeddingport.FactoryRegistry
+	resolver   *ProviderFactoryResolver
 }
 
 // NewModelProviderService creates a Provider application service.
-func NewModelProviderService(repository ModelProviderRepository, cipher embeddingport.CredentialCipher, registry embeddingport.FactoryRegistry) *ModelProviderService {
-	return &ModelProviderService{repository: repository, cipher: cipher, registry: registry}
+func NewModelProviderService(repository ModelProviderRepository, cipher embeddingport.CredentialCipher, resolver *ProviderFactoryResolver) *ModelProviderService {
+	return &ModelProviderService{repository: repository, cipher: cipher, resolver: resolver}
 }
 
 // CreateWorkspace creates a Provider owned by one Workspace.
@@ -62,27 +63,27 @@ func (s *ModelProviderService) CreatePlatform(ctx context.Context, input CreateM
 }
 
 func (s *ModelProviderService) create(ctx context.Context, input CreateModelProviderInput) (*dto.ModelProvider, error) {
-	factory, err := s.registry.Factory(value.ModelTypeEmbedding, input.Provider)
+	factory, err := s.resolver.Resolve(input.Provider)
 	if err != nil {
 		return nil, err
 	}
-	config, credentials, err := factory.DecodeProvider(embeddingport.ProviderDecodeInput{Scope: input.Scope, Config: input.Config, Credentials: input.Credentials})
+	decoded, err := factory.DecodeProvider(input.Scope, input.Config, input.Credentials)
 	if err != nil {
 		return nil, err
 	}
-	provider, err := model.NewModelProvider(input.Scope, input.WorkspaceID, input.Name, input.DisplayName, input.Description, factory.Provider(), config, nil, input.ActorID)
+	provider, err := model.NewModelProvider(input.Scope, input.WorkspaceID, input.Name, input.DisplayName, input.Description, factory.ProviderName, decoded.Config, nil, input.ActorID)
 	if err != nil {
 		return nil, err
 	}
-	provider.CredentialsCiphertext, err = s.cipher.Encrypt(provider.ID, credentials)
-	clearBytes(credentials)
+	provider.CredentialsCiphertext, err = s.cipher.Encrypt(provider.ID, decoded.CredentialsJSON)
+	clearBytes(decoded.CredentialsJSON)
 	if err != nil {
 		return nil, fmt.Errorf("加密 Provider 凭证失败: %w", err)
 	}
 	if err := s.repository.Create(ctx, provider); err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields()), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields), nil
 }
 
 // ListWorkspace lists platform-shared and Workspace-owned Providers.
@@ -103,11 +104,11 @@ func (s *ModelProviderService) providerList(items []*model.ModelProvider, err er
 	}
 	result := make([]*dto.ModelProvider, 0, len(items))
 	for _, item := range items {
-		factory, factoryErr := s.registry.Factory(value.ModelTypeEmbedding, item.Provider)
+		factory, factoryErr := s.resolver.Resolve(item.Provider)
 		if factoryErr != nil {
 			return nil, factoryErr
 		}
-		result = append(result, dto.ModelProviderFromModel(item, factory.CredentialFields()))
+		result = append(result, dto.ModelProviderFromModel(item, factory.CredentialFields))
 	}
 	return result, nil
 }
@@ -128,11 +129,11 @@ func (s *ModelProviderService) providerDTO(provider *model.ModelProvider, err er
 	if err != nil {
 		return nil, err
 	}
-	factory, err := s.registry.Factory(value.ModelTypeEmbedding, provider.Provider)
+	factory, err := s.resolver.Resolve(provider.Provider)
 	if err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields()), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields), nil
 }
 
 // UpdateWorkspace updates only a Provider owned by the given Workspace.
@@ -154,7 +155,7 @@ func (s *ModelProviderService) UpdatePlatform(ctx context.Context, providerID uu
 }
 
 func (s *ModelProviderService) update(ctx context.Context, provider *model.ModelProvider, input UpdateModelProviderInput) (*dto.ModelProvider, error) {
-	factory, err := s.registry.Factory(value.ModelTypeEmbedding, provider.Provider)
+	factory, err := s.resolver.Resolve(provider.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -186,14 +187,14 @@ func (s *ModelProviderService) update(ctx context.Context, provider *model.Model
 			}
 			defer clearBytes(credentialsRaw)
 		}
-		normalizedConfig, normalizedCredentials, err := factory.DecodeProvider(embeddingport.ProviderDecodeInput{Scope: provider.Scope, Config: configRaw, Credentials: credentialsRaw})
+		decoded, err := factory.DecodeProvider(provider.Scope, configRaw, credentialsRaw)
 		if err != nil {
 			return nil, err
 		}
-		defer clearBytes(normalizedCredentials)
-		provider.Config = normalizedConfig
+		defer clearBytes(decoded.CredentialsJSON)
+		provider.Config = decoded.Config
 		if input.Credentials != nil {
-			provider.CredentialsCiphertext, err = s.cipher.Encrypt(provider.ID, normalizedCredentials)
+			provider.CredentialsCiphertext, err = s.cipher.Encrypt(provider.ID, decoded.CredentialsJSON)
 			if err != nil {
 				return nil, fmt.Errorf("加密 Provider 凭证失败: %w", err)
 			}
@@ -208,7 +209,7 @@ func (s *ModelProviderService) update(ctx context.Context, provider *model.Model
 	if err := s.repository.Update(ctx, provider); err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields()), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields), nil
 }
 
 // DeleteWorkspace deletes an unreferenced Workspace Provider.

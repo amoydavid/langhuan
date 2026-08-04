@@ -109,7 +109,7 @@ func TestRuntimeServicesWireModelConfigurationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps, err := buildRuntimeServices(nil, cfg, nil, nil, registry)
+	deps, err := buildRuntimeServices(nil, cfg, nil, nil, registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestRuntimeServicesWireFAQDocumentDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry)
+	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestRuntimeServicesWireChunkRevisionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry)
+	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRuntimeServicesWireIndexGenerationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry)
+	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestBuildRuntimeServicesRejectsInvalidCredentialKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildRuntimeServices(nil, cfg, nil, nil, registry); err == nil {
+	if _, err := buildRuntimeServices(nil, cfg, nil, nil, registry, nil); err == nil {
 		t.Fatal("expected invalid credential key error")
 	}
 }
@@ -492,7 +492,7 @@ func buildTestRuntimeServices(t *testing.T, cfg *config.Config) *runtimeServices
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry)
+	services, err := buildRuntimeServices(nil, cfg, nil, nil, registry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,6 +32,8 @@ import (
 	markdownparser "github.com/dajee/langhuan/internal/adapters/parser/markdown"
 	textparser "github.com/dajee/langhuan/internal/adapters/parser/text"
 	xlsxparser "github.com/dajee/langhuan/internal/adapters/parser/xlsx"
+	parserprovideradapter "github.com/dajee/langhuan/internal/adapters/parserprovider"
+	minerufactory "github.com/dajee/langhuan/internal/adapters/parserprovider/mineru"
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
 	"github.com/dajee/langhuan/internal/application/dto"
@@ -48,6 +50,7 @@ import (
 	"github.com/dajee/langhuan/internal/interfaces/worker"
 	authport "github.com/dajee/langhuan/internal/ports/auth"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	parserproviderport "github.com/dajee/langhuan/internal/ports/parserprovider"
 	queueport "github.com/dajee/langhuan/internal/ports/queue"
 	storageport "github.com/dajee/langhuan/internal/ports/storage"
 	webspa "github.com/dajee/langhuan/web"
@@ -248,7 +251,11 @@ func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	app.services, err = buildRuntimeServices(gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry)
+	parserProviderRegistry, err := buildRuntimeParserProviderRegistry(cfg)
+	if err != nil {
+		return nil, err
+	}
+	app.services, err = buildRuntimeServices(gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, parserProviderRegistry)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +280,7 @@ func buildApp(ctx context.Context, cfg *config.Config) (*appRuntime, error) {
 	return app, nil
 }
 
-func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry) (*runtimeServices, error) {
+func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry) (*runtimeServices, error) {
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
@@ -426,7 +433,7 @@ func buildRuntimeServices(gormDB *gorm.DB, cfg *config.Config, jobQueue queuepor
 		workspaceReadiness:   service.NewWorkspaceReadinessService(workspaceReadinessRepo),
 		knowledgeBaseSummary: service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
 		knowledgeBases:       service.NewKnowledgeBaseService(kbRepo, kbRepo),
-		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, embeddingRegistry),
+		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, buildProviderFactoryResolver(embeddingRegistry, parserProviderRegistry)),
 		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry),
 		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry),
 		documents:            service.NewDocumentService(documentRepo, kbRepo),
@@ -467,6 +474,26 @@ func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
 		dashscopeembedding.NewFactory(),
 		tencentcloudembedding.NewFactory(),
 	)
+}
+
+// buildRuntimeParserProviderRegistry 构建解析器 Provider Factory 注册表。
+// 当 MinerU 启用时注册 mineru factory；未启用时返回空 registry。
+func buildRuntimeParserProviderRegistry(cfg *config.Config) (*parserprovideradapter.Registry, error) {
+	var factories []parserproviderport.Factory
+	if cfg.MinerU.Enabled {
+		factories = append(factories, minerufactory.NewFactory())
+	}
+	return parserprovideradapter.NewRegistry(factories...)
+}
+
+// buildProviderFactoryResolver 构建 embedding + parser 多能力域解析器。
+// parserRegistry 为 nil 时只支持 embedding 能力域。
+func buildProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistry, parserRegistry *parserprovideradapter.Registry) *service.ProviderFactoryResolver {
+	var adapter *service.ParserRegistryAdapter
+	if parserRegistry != nil {
+		adapter = service.NewParserRegistryAdapter(parserRegistry)
+	}
+	return service.NewProviderFactoryResolver(embeddingRegistry, adapter)
 }
 
 func clearSensitiveBytes(value []byte) {
