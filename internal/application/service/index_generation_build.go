@@ -177,7 +177,11 @@ func (s *IndexGenerationBuildService) stage(
 	for _, source := range sources {
 		for index, chunk := range source.Chunks {
 			revision := source.Revisions[index]
-			if !revision.Enabled {
+			role := chunk.Role
+			if role == "" {
+				role = value.ChunkRoleFlat
+			}
+			if !role.IsRetrievable() || !revision.Enabled {
 				continue
 			}
 			searchContent, content := strings.TrimSpace(revision.EmbeddingContent), strings.TrimSpace(revision.Content)
