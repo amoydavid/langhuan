@@ -26,6 +26,12 @@ export type CreateIndexGenerationInput = {
     final_top_k: number
     rrf_k: number
   }
+  rerank?: {
+    enabled: boolean
+    model_id?: string
+    candidate_top_k?: number
+    failure_mode?: 'fallback' | 'fail'
+  }
 }
 
 export type ActivateIndexGenerationInput = {

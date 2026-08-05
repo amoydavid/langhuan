@@ -54,7 +54,7 @@ function isPresetFTSConfig(value: string) {
 type SelectableGenerationModel = {
   id: string
   displayName: string
-  dimensions: number
+  dimensions?: number | null
 }
 
 type GenerationFormProps = {

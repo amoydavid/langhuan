@@ -73,6 +73,8 @@ export const indexGenerations = {
       selectFtsConfig: '请选择全文检索配置',
       chunkOverlapLessThanSize: '分块重叠必须小于分块大小',
       childLargerThanParent: '小块大小不能大于上下文块大小',
+      selectRerankModel: '请选择 Rerank 模型',
+      candidateTopKRange: '候选数量必须在 50 到 200 之间',
     },
   },
   generationList: {
@@ -105,6 +107,12 @@ export const indexGenerations = {
       chunks: '{{count}} 个分块',
       manualEdits: '{{count}} 条人工修订',
       disabledChunks: '{{count}} 条停用',
+    },
+    rerankDisabled: 'Rerank：关闭',
+    rerankCandidate: '候选 {{count}}',
+    rerankFailure: {
+      fallback: '回退到 RRF',
+      fail: '失败即报错',
     },
     dialog: {
       title: '比较并激活索引版本',

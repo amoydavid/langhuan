@@ -194,6 +194,11 @@ export function GenerationList({
                     <span>
                       Final {configNumber(item.retrieval_config, 'final_top_k')}
                     </span>
+                    <span>
+                      {item.rerank
+                        ? `${item.rerank.model_name} · ${t('indexGenerations.generationList.rerankCandidate', { count: item.rerank.candidate_top_k })} · ${t(`indexGenerations.generationList.rerankFailure.${item.rerank.failure_mode}`)}`
+                        : t('indexGenerations.generationList.rerankDisabled')}
+                    </span>
                   </div>
                   <p className='text-muted-foreground'>
                     {t('indexGenerations.generationList.stats.documents', {

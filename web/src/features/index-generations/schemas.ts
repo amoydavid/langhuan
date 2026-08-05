@@ -36,6 +36,16 @@ export const indexGenerationSchema = z.object({
   ready_at: z.string().nullable().optional(),
   activated_at: z.string().nullable().optional(),
   retired_at: z.string().nullable().optional(),
+  rerank: z
+    .object({
+      model_id: z.uuid(),
+      provider_id: z.uuid(),
+      model_name: z.string().min(1),
+      candidate_top_k: z.number().int().min(50).max(200),
+      failure_mode: z.enum(['fallback', 'fail']),
+    })
+    .nullable()
+    .optional(),
 })
 
 export const indexGenerationListSchema = z.array(indexGenerationSchema)

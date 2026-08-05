@@ -90,6 +90,8 @@ export const indexGenerations = {
       chunkOverlapLessThanSize: 'Chunk overlap must be less than chunk size',
       childLargerThanParent:
         'Child chunk size cannot be larger than context chunk size',
+      selectRerankModel: 'Select a rerank model',
+      candidateTopKRange: 'Candidate count must be between 50 and 200',
     },
   },
   generationList: {
@@ -123,6 +125,12 @@ export const indexGenerations = {
       chunks: '{{count}} chunks',
       manualEdits: '{{count}} manual edits',
       disabledChunks: '{{count}} disabled',
+    },
+    rerankDisabled: 'Rerank: off',
+    rerankCandidate: 'candidate {{count}}',
+    rerankFailure: {
+      fallback: 'fallback to RRF',
+      fail: 'fail on error',
     },
     dialog: {
       title: 'Compare and activate index version',
