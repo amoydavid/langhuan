@@ -167,7 +167,7 @@ func (s *ModelService) ListSelectableWorkspace(ctx context.Context, workspaceID 
 	}
 	result := make([]*dto.Model, 0, len(items))
 	for _, resolved := range items {
-		count, countErr := s.models.CountKnowledgeBaseReferences(ctx, resolved.Model.ID)
+		count, countErr := s.models.CountGenerationReferences(ctx, resolved.Model.ID)
 		if countErr != nil {
 			return nil, countErr
 		}
@@ -189,7 +189,7 @@ func (s *ModelService) modelList(ctx context.Context, provider *model.ModelProvi
 	}
 	result := make([]*dto.Model, 0, len(items))
 	for _, item := range items {
-		count, countErr := s.models.CountKnowledgeBaseReferences(ctx, item.ID)
+		count, countErr := s.models.CountGenerationReferences(ctx, item.ID)
 		if countErr != nil {
 			return nil, countErr
 		}
@@ -214,7 +214,7 @@ func (s *ModelService) modelDTO(ctx context.Context, resolved *model.ResolvedMod
 	if err != nil {
 		return nil, err
 	}
-	count, err := s.models.CountKnowledgeBaseReferences(ctx, resolved.Model.ID)
+	count, err := s.models.CountGenerationReferences(ctx, resolved.Model.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +280,7 @@ func (s *ModelService) update(ctx context.Context, resolved *model.ResolvedModel
 	if err := s.models.Update(ctx, item); err != nil {
 		return nil, err
 	}
-	count, err := s.models.CountKnowledgeBaseReferences(ctx, item.ID)
+	count, err := s.models.CountGenerationReferences(ctx, item.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +306,7 @@ func (s *ModelService) DeletePlatform(ctx context.Context, modelID uuid.UUID) er
 }
 
 func (s *ModelService) delete(ctx context.Context, modelID uuid.UUID) error {
-	count, err := s.models.CountKnowledgeBaseReferences(ctx, modelID)
+	count, err := s.models.CountGenerationReferences(ctx, modelID)
 	if err != nil {
 		return err
 	}

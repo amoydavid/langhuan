@@ -20,6 +20,7 @@ type ModelProviderRepository interface {
 	Update(context.Context, *model.ModelProvider) error
 	Delete(context.Context, uuid.UUID) error
 	CountModels(context.Context, uuid.UUID) (int64, error)
+	CountGenerationReferences(context.Context, uuid.UUID) (int64, error)
 }
 
 // ModelRepository 定义具体模型应用服务需要的数据访问能力。
@@ -33,5 +34,5 @@ type ModelRepository interface {
 	ListVisible(context.Context, uuid.UUID, value.ModelType, bool) ([]*model.ResolvedModel, error)
 	Update(context.Context, *model.Model) error
 	Delete(context.Context, uuid.UUID) error
-	CountKnowledgeBaseReferences(context.Context, uuid.UUID) (int64, error)
+	CountGenerationReferences(context.Context, uuid.UUID) (int64, error)
 }

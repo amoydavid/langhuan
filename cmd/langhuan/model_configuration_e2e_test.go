@@ -137,7 +137,7 @@ func TestV031ModelConfigurationSelectionE2E(t *testing.T) {
 	env.assertStatus(memberA, http.MethodPost, "/api/v1/workspaces/"+workspaceA.Slug+"/model-providers", validV031ProviderBody("member-forbidden"), http.StatusForbidden, nil)
 	connection := &dto.ConnectionTestResult{}
 	env.assertStatus(adminA, http.MethodPost, "/api/v1/workspaces/"+workspaceA.Slug+"/models/"+own.ModelID.String()+"/test", nil, http.StatusOK, connection)
-	if !connection.OK || connection.Dimensions != 1024 {
+	if !connection.OK || connection.Dimensions == nil || *connection.Dimensions != 1024 {
 		t.Fatalf("connection result = %#v", connection)
 	}
 
@@ -221,7 +221,11 @@ func startV031ModelConfigurationE2E(t *testing.T) *v031E2E {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(ctx, gormDB, cfg, nil, redisClient, registry, parserRegistry)
+	rerankRegistry, err := buildRuntimeRerankRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	services, err := buildRuntimeServices(ctx, gormDB, cfg, nil, redisClient, registry, rerankRegistry, parserRegistry)
 	if err != nil {
 		t.Fatal(err)
 	}

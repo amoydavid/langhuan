@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	appservice "github.com/dajee/langhuan/internal/application/service"
@@ -87,7 +88,7 @@ func TestModelRepositoryEnforcesOwnedReadsUpdatesAndReferenceDelete(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	count, err := modelRepo.CountKnowledgeBaseReferences(ctx, item.ID)
+	count, err := modelRepo.CountGenerationReferences(ctx, item.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,4 +216,84 @@ func createModelForTest(
 		t.Fatal(err)
 	}
 	return item
+}
+
+// createRerankModelForTest 创建一个 type=rerank 的测试模型。
+func createRerankModelForTest(
+	t *testing.T,
+	ctx context.Context,
+	repo *ModelRepository,
+	providerID uuid.UUID,
+	name string,
+) *model.Model {
+	t.Helper()
+	item, err := model.NewModel(providerID, name, name, "", value.ModelTypeRerank, name, nil, map[string]any{
+		"max_documents":      float64(100),
+		"max_query_chars":    float64(4096),
+		"max_document_chars": float64(8192),
+	}, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.CreatedBy = nil
+	if err := repo.Create(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	return item
+}
+
+// seedRerankGenerationRow 直接写入一行引用 rerank model/provider 的 IndexGenerationRow。
+func seedRerankGenerationRow(t *testing.T, ctx context.Context, db *gorm.DB, workspaceID, kbID, embeddingModelID, embeddingProviderID, rerankModelID, rerankProviderID uuid.UUID) uuid.UUID {
+	t.Helper()
+	rerankName := "rerank"
+	rerankHash := "rhash"
+	row := &IndexGenerationRow{
+		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
+		EmbeddingModelID: embeddingModelID, ProviderID: embeddingProviderID,
+		ModelName: "embed", EmbeddingDimension: 1024, ModelConfigHash: "ehash",
+		ChunkerVersion: 1, ChunkingConfig: JSONMap{}, RetrievalConfig: JSONMap{},
+		ConfigHash: "chash", Status: "ready", ManualEditDisposition: "not_applicable",
+		RerankModelID: &rerankModelID, RerankProviderID: &rerankProviderID,
+		RerankModelName: &rerankName, RerankModelConfigHash: &rerankHash,
+		RerankConfig: JSONMap{"candidate_top_k": 50, "failure_mode": "fallback"},
+	}
+	if err := db.WithContext(ctx).Create(row).Error; err != nil {
+		t.Fatalf("seed rerank generation row: %v", err)
+	}
+	return row.ID
+}
+
+func TestModelReferenceCountIncludesEmbeddingAndRerank(t *testing.T) {
+	ctx, tx := newAuthTestDB(t)
+	workspaceID := createWorkspaceRow(t, ctx, tx, "rerank-ref-count")
+	providerRepo := NewModelProviderRepository(tx)
+	modelRepo := NewModelRepository(tx)
+	provider := createProviderForTest(t, ctx, providerRepo, value.ModelScopeWorkspace, &workspaceID, "ref-provider")
+	embeddingModel := createModelForTest(t, ctx, modelRepo, provider.ID, "embed-ref", value.ModelStatusActive)
+	rerankModel := createRerankModelForTest(t, ctx, modelRepo, provider.ID, "rerank-ref")
+
+	// 创建知识库以生成 embedding 引用。
+	kbRepo := NewKnowledgeBaseRepository(tx)
+	kb, err := appservice.NewKnowledgeBaseService(kbRepo, kbRepo).Create(ctx, appservice.CreateKnowledgeBaseInput{
+		WorkspaceID: workspaceID, Name: "rerank-kb", EmbeddingModelID: embeddingModel.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 直接写一行引用 rerank 模型的 Generation。
+	seedRerankGenerationRow(t, ctx, tx, workspaceID, kb.ID, embeddingModel.ID, provider.ID, rerankModel.ID, provider.ID)
+
+	// rerank 模型被 Generation 引用，计数为 1。
+	if got, err := modelRepo.CountGenerationReferences(ctx, rerankModel.ID); err != nil || got != 1 {
+		t.Fatalf("rerank reference count = %d err = %v, want 1", got, err)
+	}
+	// 引用未变更时，rerank 模型的 display_name 可以更新。
+	rerankModel.DisplayName = "新名称"
+	if err := modelRepo.Update(ctx, rerankModel); err != nil {
+		t.Fatalf("update display name error = %v", err)
+	}
+	// 删除被引用的 rerank 模型应失败（FK ON DELETE RESTRICT）。
+	if err := modelRepo.Delete(ctx, rerankModel.ID); !errors.Is(err, domainerrors.ErrModelInUse) {
+		t.Fatalf("delete referenced rerank model error = %v", err)
+	}
 }

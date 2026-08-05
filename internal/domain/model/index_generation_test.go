@@ -34,6 +34,80 @@ func TestIndexGenerationValidateActivationRequiresManualConfirmation(t *testing.
 	}
 }
 
+func TestRerankSnapshotValidation(t *testing.T) {
+	t.Parallel()
+	valid := &RerankSnapshot{
+		ModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "rerank",
+		ModelConfigHash: "hash", CandidateTopK: 50,
+		FailureMode: value.RerankFailureFallback,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid snapshot error = %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		mutate       func(*RerankSnapshot)
+		wantSentinel error
+	}{
+		{"missing model id", func(s *RerankSnapshot) { s.ModelID = uuid.Nil }, domainerrors.ErrValidation},
+		{"missing provider id", func(s *RerankSnapshot) { s.ProviderID = uuid.Nil }, domainerrors.ErrValidation},
+		{"empty model name", func(s *RerankSnapshot) { s.ModelName = "  " }, domainerrors.ErrValidation},
+		{"empty config hash", func(s *RerankSnapshot) { s.ModelConfigHash = "" }, domainerrors.ErrValidation},
+		{"candidate below min", func(s *RerankSnapshot) { s.CandidateTopK = 49 }, domainerrors.ErrValidation},
+		{"candidate above max", func(s *RerankSnapshot) { s.CandidateTopK = 201 }, domainerrors.ErrValidation},
+		{"invalid failure mode", func(s *RerankSnapshot) { s.FailureMode = "bogus" }, domainerrors.ErrValidation},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := *valid
+			tt.mutate(&snapshot)
+			if err := (&snapshot).Validate(); !errors.Is(err, tt.wantSentinel) {
+				t.Fatalf("error = %v, want %v", err, tt.wantSentinel)
+			}
+		})
+	}
+
+	// nil 快照视为关闭 Rerank，校验通过。
+	if err := (*RerankSnapshot)(nil).Validate(); err != nil {
+		t.Fatalf("nil snapshot error = %v", err)
+	}
+}
+
+func TestNewIndexGenerationAcceptsRerankSnapshot(t *testing.T) {
+	t.Parallel()
+	rerank := &RerankSnapshot{
+		ModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "rerank",
+		ModelConfigHash: "hash", CandidateTopK: 100, FailureMode: value.RerankFailureFail,
+	}
+	generation, err := NewIndexGeneration(NewIndexGenerationInput{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(),
+		EmbeddingModelID: uuid.New(), ProviderID: uuid.New(),
+		ModelName: "embed", EmbeddingDimension: 1024, ModelConfigHash: "ehash",
+		ChunkerVersion: 1, ConfigHash: "chash", Status: value.IndexGenerationBuilding,
+		Rerank: rerank,
+	})
+	if err != nil {
+		t.Fatalf("create generation with rerank error = %v", err)
+	}
+	if generation.Rerank == nil || generation.Rerank.ModelID != rerank.ModelID {
+		t.Fatalf("generation rerank = %#v", generation.Rerank)
+	}
+
+	// 非法 rerank 快照在构造时被拒绝。
+	invalid := *rerank
+	invalid.CandidateTopK = 10
+	if _, err := NewIndexGeneration(NewIndexGenerationInput{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(),
+		EmbeddingModelID: uuid.New(), ProviderID: uuid.New(),
+		ModelName: "embed", EmbeddingDimension: 1024, ModelConfigHash: "ehash",
+		ChunkerVersion: 1, ConfigHash: "chash", Status: value.IndexGenerationBuilding,
+		Rerank: &invalid,
+	}); !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("invalid rerank error = %v", err)
+	}
+}
+
 func TestNewIndexGenerationRejectsUnsupportedDimension(t *testing.T) {
 	_, err := NewIndexGeneration(NewIndexGenerationInput{
 		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(),

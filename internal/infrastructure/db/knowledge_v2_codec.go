@@ -249,7 +249,7 @@ func chunkRevisionFromRow(row *ChunkRevisionRow) *model.ChunkRevision {
 }
 
 func indexGenerationToRow(generation *model.IndexGeneration) *IndexGenerationRow {
-	return &IndexGenerationRow{
+	row := &IndexGenerationRow{
 		ID: generation.ID, WorkspaceID: generation.WorkspaceID, KnowledgeBaseID: generation.KnowledgeBaseID,
 		BaseGenerationID: generation.BaseGenerationID, EmbeddingModelID: generation.EmbeddingModelID,
 		ProviderID: generation.ProviderID, ModelName: generation.ModelName,
@@ -264,11 +264,23 @@ func indexGenerationToRow(generation *model.IndexGeneration) *IndexGenerationRow
 		ErrorClass:            generation.ErrorClass, ErrorMessage: generation.ErrorMessage,
 		CreatedAt: generation.CreatedAt, ReadyAt: generation.ReadyAt,
 		ActivatedAt: generation.ActivatedAt, RetiredAt: generation.RetiredAt,
+		RerankConfig: JSONMap{},
 	}
+	if generation.Rerank != nil {
+		row.RerankModelID = nullableUUID(generation.Rerank.ModelID)
+		row.RerankProviderID = nullableUUID(generation.Rerank.ProviderID)
+		row.RerankModelName = nullableString(generation.Rerank.ModelName)
+		row.RerankModelConfigHash = nullableString(generation.Rerank.ModelConfigHash)
+		row.RerankConfig = JSONMap{
+			"candidate_top_k": generation.Rerank.CandidateTopK,
+			"failure_mode":    string(generation.Rerank.FailureMode),
+		}
+	}
+	return row
 }
 
 func indexGenerationFromRow(row *IndexGenerationRow) *model.IndexGeneration {
-	return &model.IndexGeneration{
+	generation := &model.IndexGeneration{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		BaseGenerationID: row.BaseGenerationID, EmbeddingModelID: row.EmbeddingModelID,
 		ProviderID: row.ProviderID, ModelName: row.ModelName,
@@ -283,6 +295,26 @@ func indexGenerationFromRow(row *IndexGenerationRow) *model.IndexGeneration {
 		ErrorClass:            row.ErrorClass, ErrorMessage: row.ErrorMessage,
 		CreatedAt: row.CreatedAt, ReadyAt: row.ReadyAt,
 		ActivatedAt: row.ActivatedAt, RetiredAt: row.RetiredAt,
+	}
+	generation.Rerank = rerankSnapshotFromRow(row)
+	return generation
+}
+
+// rerankSnapshotFromRow 在四列同时非空时重建 RerankSnapshot；全空返回 nil。
+func rerankSnapshotFromRow(row *IndexGenerationRow) *model.RerankSnapshot {
+	if row == nil || row.RerankModelID == nil || row.RerankProviderID == nil ||
+		row.RerankModelName == nil || row.RerankModelConfigHash == nil {
+		return nil
+	}
+	candidateTopK, _ := intFromAny(row.RerankConfig["candidate_top_k"])
+	failureModeRaw, _ := row.RerankConfig["failure_mode"].(string)
+	return &model.RerankSnapshot{
+		ModelID:         dereferenceUUID(row.RerankModelID),
+		ProviderID:      dereferenceUUID(row.RerankProviderID),
+		ModelName:       dereferenceString(row.RerankModelName),
+		ModelConfigHash: dereferenceString(row.RerankModelConfigHash),
+		CandidateTopK:   candidateTopK,
+		FailureMode:     value.RerankFailureMode(failureModeRaw),
 	}
 }
 
@@ -355,6 +387,20 @@ func normalizedDomainMap(input JSONMap) map[string]any {
 		result[key] = item
 	}
 	return result
+}
+
+// intFromAny 把 jsonb 反序列化后的数值（float64/int/int64）解析为 int。
+func intFromAny(value any) (int, bool) {
+	switch raw := value.(type) {
+	case int:
+		return raw, true
+	case int64:
+		return int(raw), true
+	case float64:
+		return int(raw), true
+	default:
+		return 0, false
+	}
 }
 
 func nullableString(input string) *string {

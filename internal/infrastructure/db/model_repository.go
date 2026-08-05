@@ -165,7 +165,7 @@ func (r *ModelRepository) Update(ctx context.Context, input *model.Model) error 
 		}
 		semanticChanged := current.ModelName != row.ModelName || !equalOptionalInt(current.Dimensions, row.Dimensions)
 		if semanticChanged {
-			count, err := NewModelRepository(tx).CountKnowledgeBaseReferences(ctx, input.ID)
+			count, err := NewModelRepository(tx).CountGenerationReferences(ctx, input.ID)
 			if err != nil {
 				return err
 			}
@@ -215,10 +215,10 @@ func (r *ModelRepository) Delete(ctx context.Context, modelID uuid.UUID) error {
 	return nil
 }
 
-func (r *ModelRepository) CountKnowledgeBaseReferences(ctx context.Context, modelID uuid.UUID) (int64, error) {
+func (r *ModelRepository) CountGenerationReferences(ctx context.Context, modelID uuid.UUID) (int64, error) {
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&IndexGenerationRow{}).
-		Where("embedding_model_id = ?", modelID).
+		Where("embedding_model_id = ? OR rerank_model_id = ?", modelID, modelID).
 		Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("统计模型知识库引用失败: %w", err)
 	}

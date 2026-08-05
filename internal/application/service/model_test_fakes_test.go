@@ -81,6 +81,9 @@ func (r *fakeModelProviderRepository) Delete(_ context.Context, id uuid.UUID) er
 func (r *fakeModelProviderRepository) CountModels(_ context.Context, providerID uuid.UUID) (int64, error) {
 	return 0, nil
 }
+func (r *fakeModelProviderRepository) CountGenerationReferences(_ context.Context, _ uuid.UUID) (int64, error) {
+	return 0, nil
+}
 
 type fakeModelRepository struct {
 	items      map[uuid.UUID]*model.Model
@@ -173,7 +176,7 @@ func (r *fakeModelRepository) Delete(_ context.Context, id uuid.UUID) error {
 	delete(r.items, id)
 	return nil
 }
-func (r *fakeModelRepository) CountKnowledgeBaseReferences(_ context.Context, id uuid.UUID) (int64, error) {
+func (r *fakeModelRepository) CountGenerationReferences(_ context.Context, id uuid.UUID) (int64, error) {
 	return r.references[id], nil
 }
 

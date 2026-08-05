@@ -53,6 +53,11 @@ type IndexGenerationRow struct {
 	ReadyAt               *time.Time
 	ActivatedAt           *time.Time
 	RetiredAt             *time.Time
+	RerankModelID         *uuid.UUID `gorm:"type:uuid"`
+	RerankProviderID      *uuid.UUID `gorm:"type:uuid"`
+	RerankModelName       *string
+	RerankModelConfigHash *string
+	RerankConfig          JSONMap `gorm:"type:jsonb"`
 }
 
 func (IndexGenerationRow) TableName() string { return "knowledge_base_index_generations" }

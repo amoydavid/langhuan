@@ -258,6 +258,13 @@ func (s *ModelProviderService) delete(ctx context.Context, providerID uuid.UUID)
 	if count > 0 {
 		return domainerrors.ErrProviderInUse
 	}
+	genCount, err := s.repository.CountGenerationReferences(ctx, providerID)
+	if err != nil {
+		return err
+	}
+	if genCount > 0 {
+		return domainerrors.ErrProviderInUse
+	}
 	return s.repository.Delete(ctx, providerID)
 }
 

@@ -27,29 +27,29 @@ func (DocumentRow) TableName() string { return "documents" }
 
 // DocumentRevisionRow maps immutable acquisition and parse facts.
 type DocumentRevisionRow struct {
-	ID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
-	WorkspaceID         uuid.UUID `gorm:"type:uuid;not null;index"`
-	KnowledgeBaseID     uuid.UUID `gorm:"type:uuid;not null;index"`
-	DocumentID          uuid.UUID `gorm:"type:uuid;not null;index"`
-	Kind                string
-	RevisionNo          int64
-	RevisionReason      string
-	OriginalFilename    *string
-	FileType            *string
-	ContentType         *string
-	RawStorageKey       *string
-	SHA256              *string
-	SizeBytes           int64
-	NormalizedMarkdown  *string
-	ParseManifest       *JSONMap `gorm:"type:jsonb"`
+	ID                   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	WorkspaceID          uuid.UUID `gorm:"type:uuid;not null;index"`
+	KnowledgeBaseID      uuid.UUID `gorm:"type:uuid;not null;index"`
+	DocumentID           uuid.UUID `gorm:"type:uuid;not null;index"`
+	Kind                 string
+	RevisionNo           int64
+	RevisionReason       string
+	OriginalFilename     *string
+	FileType             *string
+	ContentType          *string
+	RawStorageKey        *string
+	SHA256               *string
+	SizeBytes            int64
+	NormalizedMarkdown   *string
+	ParseManifest        *JSONMap `gorm:"type:jsonb"`
 	ParserRawMarkdownKey *string
-	ProcessingVersion   int
-	Status              string
-	ErrorClass          string
-	ErrorMessage        string
-	CreatedBy           *uuid.UUID `gorm:"type:uuid"`
-	CreatedAt           time.Time
-	CompletedAt         *time.Time
+	ProcessingVersion    int
+	Status               string
+	ErrorClass           string
+	ErrorMessage         string
+	CreatedBy            *uuid.UUID `gorm:"type:uuid"`
+	CreatedAt            time.Time
+	CompletedAt          *time.Time
 }
 
 func (DocumentRevisionRow) TableName() string { return "document_revisions" }

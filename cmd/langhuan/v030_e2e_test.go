@@ -221,7 +221,11 @@ func startV030E2E(t *testing.T) *v030E2E {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(ctx, gormDB, cfg, jobQueue, redisClient, embeddingRegistry, parserRegistry)
+	rerankRegistry, err := buildRuntimeRerankRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	services, err := buildRuntimeServices(ctx, gormDB, cfg, jobQueue, redisClient, embeddingRegistry, rerankRegistry, parserRegistry)
 	if err != nil {
 		t.Fatal(err)
 	}

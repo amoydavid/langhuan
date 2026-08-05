@@ -229,6 +229,39 @@ func TestGenerationAndRetrievalEntryV2RowRoundTrip(t *testing.T) {
 	}
 }
 
+func TestGenerationRerankSnapshotRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// 关闭 Rerank：快照为 nil，行四列为 NULL + rerank_config='{}'。
+	disabled := &model.IndexGeneration{ID: uuid.New(), Rerank: nil}
+	disabledRow := indexGenerationToRow(disabled)
+	if disabledRow.RerankModelID != nil || disabledRow.RerankProviderID != nil ||
+		disabledRow.RerankModelName != nil || disabledRow.RerankModelConfigHash != nil {
+		t.Fatalf("disabled rerank row = %#v", disabledRow)
+	}
+	if got := indexGenerationFromRow(disabledRow); got.Rerank != nil {
+		t.Fatalf("disabled rerank snapshot = %#v", got.Rerank)
+	}
+
+	// 启用 Rerank：四列与 rerank_config 应完整往返。
+	enabled := &model.IndexGeneration{
+		ID: uuid.New(),
+		Rerank: &model.RerankSnapshot{
+			ModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "bge-reranker-v2-m3",
+			ModelConfigHash: "rhash", CandidateTopK: 100, FailureMode: value.RerankFailureFail,
+		},
+	}
+	got := indexGenerationFromRow(indexGenerationToRow(enabled))
+	if got.Rerank == nil {
+		t.Fatal("enabled rerank snapshot is nil")
+	}
+	if got.Rerank.ModelID != enabled.Rerank.ModelID || got.Rerank.ProviderID != enabled.Rerank.ProviderID ||
+		got.Rerank.ModelName != "bge-reranker-v2-m3" || got.Rerank.ModelConfigHash != "rhash" ||
+		got.Rerank.CandidateTopK != 100 || got.Rerank.FailureMode != value.RerankFailureFail {
+		t.Fatalf("enabled rerank snapshot round trip = %#v", got.Rerank)
+	}
+}
+
 func TestKnowledgeBaseChunkSetAndJobV2RowRoundTrip(t *testing.T) {
 	t.Parallel()
 

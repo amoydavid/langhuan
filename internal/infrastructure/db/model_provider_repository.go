@@ -1,7 +1,9 @@
 package db
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -103,23 +105,64 @@ func (r *ModelProviderRepository) Update(ctx context.Context, provider *model.Mo
 	if err != nil {
 		return err
 	}
-	result := r.db.WithContext(ctx).Model(&ModelProviderRow{}).
-		Where("id = ?", provider.ID).
-		Updates(map[string]any{
-			"display_name":           row.DisplayName,
-			"description":            row.Description,
-			"config":                 row.Config,
-			"credentials_ciphertext": row.CredentialsCiphertext,
-			"status":                 row.Status,
-			"updated_at":             row.UpdatedAt,
-		})
-	if result.Error != nil {
-		return translateDBError(result.Error, "更新模型 Provider 失败")
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current ModelProviderRow
+		if err := tx.Where("id = ?", provider.ID).First(&current).Error; err != nil {
+			return translateDBError(err, "更新模型 Provider 失败")
+		}
+		// Provider config 属于语义字段：被 Generation 引用后不得变更，只允许轮换凭证。
+		if !providerConfigEqual(current.Config, row.Config) {
+			count, countErr := NewModelProviderRepository(tx).CountGenerationReferences(ctx, provider.ID)
+			if countErr != nil {
+				return countErr
+			}
+			if count > 0 {
+				return domainerrors.ErrImmutableModelField
+			}
+		}
+		result := tx.Model(&ModelProviderRow{}).
+			Where("id = ?", provider.ID).
+			Updates(map[string]any{
+				"display_name":           row.DisplayName,
+				"description":            row.Description,
+				"config":                 row.Config,
+				"credentials_ciphertext": row.CredentialsCiphertext,
+				"status":                 row.Status,
+				"updated_at":             row.UpdatedAt,
+			})
+		if result.Error != nil {
+			return translateDBError(result.Error, "更新模型 Provider 失败")
+		}
+		if result.RowsAffected == 0 {
+			return ErrRepositoryNotFound
+		}
+		return nil
+	})
+}
+
+// providerConfigEqual 比较两份 Provider config JSONMap 是否语义相等。
+func providerConfigEqual(left, right JSONMap) bool {
+	if len(left) != len(right) {
+		return false
 	}
-	if result.RowsAffected == 0 {
-		return ErrRepositoryNotFound
+	for key, value := range left {
+		other, ok := right[key]
+		if !ok {
+			return false
+		}
+		leftRaw, err := json.Marshal(value)
+		if err != nil {
+			return false
+		}
+		rightRaw, err := json.Marshal(other)
+		if err != nil {
+			return false
+		}
+		if !bytes.Equal(leftRaw, rightRaw) {
+			return false
+		}
 	}
-	return nil
+	return true
 }
 
 func (r *ModelProviderRepository) Delete(ctx context.Context, providerID uuid.UUID) error {
@@ -140,6 +183,18 @@ func (r *ModelProviderRepository) CountModels(ctx context.Context, providerID uu
 	var count int64
 	if err := r.db.WithContext(ctx).Model(&ModelRow{}).Where("provider_id = ?", providerID).Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("统计 Provider 模型失败: %w", err)
+	}
+	return count, nil
+}
+
+// CountGenerationReferences 统计引用该 Provider 的 Generation 数量，
+// 同时覆盖 embedding provider_id 与 rerank_provider_id。
+func (r *ModelProviderRepository) CountGenerationReferences(ctx context.Context, providerID uuid.UUID) (int64, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&IndexGenerationRow{}).
+		Where("provider_id = ? OR rerank_provider_id = ?", providerID, providerID).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("统计 Provider Generation 引用失败: %w", err)
 	}
 	return count, nil
 }

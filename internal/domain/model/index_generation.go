@@ -30,6 +30,8 @@ type NewIndexGenerationInput struct {
 	IndexedContentVersion int64
 	Status                value.IndexGenerationStatus
 	ManualEditDisposition value.ManualEditDisposition
+	// Rerank 为可选重排快照；nil 表示该 Generation 关闭 Rerank。
+	Rerank *RerankSnapshot
 }
 
 // IndexGeneration stores an immutable model/chunk/retrieval configuration snapshot.
@@ -62,6 +64,8 @@ type IndexGeneration struct {
 	ReadyAt               *time.Time
 	ActivatedAt           *time.Time
 	RetiredAt             *time.Time
+	// Rerank 为可选重排快照；nil 表示该 Generation 关闭 Rerank。
+	Rerank *RerankSnapshot
 }
 
 // NewIndexGeneration validates and copies an immutable generation snapshot.
@@ -82,6 +86,9 @@ func NewIndexGeneration(input NewIndexGenerationInput) (*IndexGeneration, error)
 	if !validIndexGenerationStatus(input.Status) {
 		return nil, fmt.Errorf("%w: generation status 无效", domainerrors.ErrValidation)
 	}
+	if err := input.Rerank.Validate(); err != nil {
+		return nil, err
+	}
 	disposition := input.ManualEditDisposition
 	if disposition == "" {
 		disposition = value.ManualEditNotApplicable
@@ -95,6 +102,7 @@ func NewIndexGeneration(input NewIndexGenerationInput) (*IndexGeneration, error)
 		RetrievalConfig: cloneStringAnyMap(input.RetrievalConfig), ConfigHash: input.ConfigHash,
 		SourceContentVersion: input.SourceContentVersion, IndexedContentVersion: input.IndexedContentVersion,
 		Status: input.Status, ManualEditDisposition: disposition, CreatedAt: time.Now().UTC(),
+		Rerank: input.Rerank.Clone(),
 	}, nil
 }
 
