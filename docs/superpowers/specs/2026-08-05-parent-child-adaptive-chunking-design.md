@@ -31,18 +31,18 @@ FAQ 保持现有的单一 `strategy=faq` 语义，不使用父子分块。
 
 `chunks` 继续是稳定来源事实，但新增：
 
-- `role`: `parent | child`。
-- `parent_chunk_id`: child 指向同一 ChunkSet 内的 parent，parent 为 NULL。
+- `role`: `parent | child | flat`。
+- `parent_chunk_id`: child 指向同一 ChunkSet 内的 parent；parent 与 flat 为 NULL。
 
-父、子均拥有完整 lineage、`source_content`、SourceAnchor、metadata 与首个 system ChunkRevision。parent 是由当前分块配置派生的上下文容器，在管理台只读；child 继续沿用现有人工 revision 编辑能力。检索始终匹配 child 的有效 revision，并返回其派生 parent 的完整正文；父块不会被人工编辑为与召回文本无关的独立内容。
+父、子与 flat 均拥有完整 lineage、`source_content`、SourceAnchor、metadata 与首个 system ChunkRevision。parent 是由当前分块配置派生的上下文容器，在管理台只读；child 与 flat 继续沿用现有人工 revision 编辑能力。开启父子分块时，检索匹配 child 并返回派生 parent 全文；关闭时，检索匹配 flat 并返回自身全文。父块不会被人工编辑为与召回文本无关的独立内容。
 
-v3 的 File/Web 文档即使只产生一个、且正文与唯一 child 完全相同的 parent，也必须同时持久化 parent 与 child。这样 child 一律可检索、parent 一律可返回；仅已存在的 v2 扁平 ChunkSet 保持 child 无 parent 的兼容读取语义。
+父子分块开启时，v3 的 File/Web 文档即使只产生一个、且正文与唯一 child 完全相同的 parent，也必须同时持久化 parent 与 child。关闭父子分块时，只持久化可检索的 flat；不产生 parent 或 child。已存在的 v2 扁平 ChunkSet 按 flat 兼容读取。
 
 迁移使用 workspace/KB/document/revision/chunk-set 复合外键与约束，确保 parent-child 关联不能跨租户或跨分块集，并为 parent 查询建立索引。
 
 ## 分块流水线
 
-标准 ChunkStage 先通过策略生成 parent windows，再在每个 parent 内按策略生成 child windows，并为所有结果计算准确的来源锚点与 metadata。child 的 sequence 在整篇文档内全局单调递增；parent 独立排序，供 UI 与检索解析使用。
+开启父子分块时，标准 ChunkStage 先通过策略生成 parent windows，再在每个 parent 内按策略生成 child windows，并为所有结果计算准确的来源锚点与 metadata。关闭时，ChunkStage 直接生成 flat。child 与 flat 的 sequence 在整篇文档内全局单调递增；parent 独立排序，供 UI 与检索解析使用。
 
 DOCX 和 Markdown 已有结构化 manifest，可直接进入该路径。PDF 先由 MinerU 转 Markdown，再使用 Markdown parser 重建 block manifest；重建后的锚点仍标记为 PDF 文档级锚点。重解析失败属于可诊断的解析错误，不能静默退化成单 paragraph 分块。
 
@@ -50,13 +50,13 @@ chunker v3 与新的完整配置共同参与 ChunkSet config hash。已激活的
 
 ## 索引与检索
 
-只有启用的 child ChunkRevision 创建 `RetrievalEntry`，写入 Embedding 和 FTS。parent 不建检索投影。
+只有启用的 child 与 flat ChunkRevision 创建 `RetrievalEntry`，写入 Embedding 和 FTS。parent 不建检索投影。
 
 查询先对 child 执行既有 vector、FTS、RRF。融合结果再按 parent 聚合：同一 parent 只返回一次，采用其命中 child 的最高融合分数。结果：
 
-- `content` 是 parent 全文；已存在的 v2 扁平 ChunkSet 因没有 parent 而返回 child 全文。
+- `content` 是 parent 全文；flat 返回自身全文。
 - source anchor 和 metadata 指向最终返回正文。
-- 新增 `matched_children`，记录命中 child 的 ID、锚点、片段与分数，便于高亮与溯源。
+- 新增 `matched_children`，记录命中 child 或 flat 的 ID、角色、锚点、片段与分数，便于高亮与溯源。
 
 `chunk_get` 保持按 Chunk ID 获取；文档 Chunk 列表公开 `role` 与 parent 关系。既有调用方继续读取 `content`，因此不会因响应扩展失效。
 
@@ -87,7 +87,7 @@ chunker v3 与新的完整配置共同参与 ChunkSet config hash。已激活的
 
 ### 文档分块检查器
 
-文件详情的既有「分块」Tab 改为层级检查器。桌面端以 parent 作为可展开组，child 为组内可选择卡片；v3 短文本也显示为仅含一个 child 的 parent 组。历史 v2 扁平 ChunkSet 显示为独立 child 卡片。查询参数继续使用现有 `?chunk=<child-id>` 选择和深链，打开检索来源时始终定位到命中的 child。
+文件详情的既有「分块」Tab 改为层级检查器。桌面端以 parent 作为可展开组，child 为组内可选择卡片；父子模式的短文本也显示为仅含一个 child 的 parent 组。关闭父子模式及历史 v2 的 ChunkSet 显示为独立 flat 卡片。查询参数继续使用 `?chunk=<chunk-id>` 选择和深链，打开检索来源时定位到命中的 child 或 flat。
 
 ```text
 分块  [仅看可检索内容 □]                     共 12 个子块

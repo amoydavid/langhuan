@@ -4,7 +4,7 @@
 
 **Goal:** 为 File/Web 文档交付 child 召回、parent 全文返回的自适应分块、索引、检索与管理台检查体验。
 
-**Architecture:** Generation 保存完整的 v3 分块快照。ChunkSet 同时持久化 parent 与 child，但 RetrievalEntry 只对应启用的 child；Search 在 child RRF 后按 parent 聚合并附带命中 child。MinerU Markdown 先重建为结构化 manifest，再与 Markdown/DOCX 进入同一分块器。
+**Architecture:** Generation 保存完整的 v3 分块快照。父子模式的 ChunkSet 同时持久化 parent 与 child，关闭时只持久化 flat；RetrievalEntry 只对应启用的 child/flat。Search 在 child RRF 后按 parent 聚合，flat 直接返回，并附带命中片段。MinerU Markdown 先重建为结构化 manifest，再与 Markdown/DOCX 进入同一分块器。
 
 **Tech Stack:** Go 1.26、Gin、GORM/PostgreSQL/pgvector、golang-migrate、TanStack Query、React 19、TypeScript、Zod、React Hook Form、Tailwind、Radix/shadcn、Vitest。
 
@@ -13,7 +13,7 @@
 - Domain 与 application 不导入或持有 `*gorm.DB`；所有数据库查询显式带 `workspace_id`。
 - parent-child 外键必须包含 workspace、KB、document、revision 与 ChunkSet lineage；数据库测试仅用临时 pgvector + zhparser Docker 容器。
 - File/Web 使用 standard chunker v3；FAQ 保持 `strategy=faq` 单块，不能进入父子路径。
-- parent 只读且不创建 RetrievalEntry；v3 的 File/Web 文档始终同时持久化 parent 与 child，child 是唯一可编辑、Embedding、FTS 的层；仅 v2 扁平 ChunkSet 可存在无 parent 的 child。
+- parent 只读且不创建 RetrievalEntry；开启父子分块时 parent/child 同时持久化，child 是唯一可编辑、Embedding、FTS 的层；关闭时只持久化可编辑、Embedding、FTS 的 flat，v2 扁平 ChunkSet 按 flat 兼容读取。
 - `content` 保持最终返回正文；Search 新增 `matched_children`。普通 UI 不显示 UUID、hash、原始 metadata 或 payload。
 - 管理台复用现有 AppShell、shadcn/Radix、TanStack Query、共享 axios client 和工程绿语义 token；禁止 `any` 与组件内 `fetch`。
 - 每个任务遵循测试先行，使用中文 Conventional Commit；迁移和结构重组不得夹带无关行为改变。
@@ -24,7 +24,7 @@
 
 | 路径 | 职责 |
 |---|---|
-| `internal/domain/value/config.go`、`chunk_role.go` | v3 配置、策略、角色与校验。 |
+| `internal/domain/value/config.go`、`chunk_role.go` | v3 配置、策略、三种角色与校验。 |
 | `internal/infrastructure/migrate/migrations/000013_parent_child_chunking.*.sql` | parent-child 列、约束、索引。 |
 | `internal/application/pipeline/chunk_strategy.go`、`chunk_hierarchy.go` | 策略选择、回退和 manifest-aware hierarchy。 |
 | `internal/adapters/parserprovider/mineru/manifest.go` | PDF Markdown 的结构化重解析。 |
@@ -107,7 +107,7 @@
 - Modify: `internal/domain/value/config.go`, `internal/domain/model/chunk.go`
 - Test: `internal/domain/value/config_test.go`, `internal/domain/model/chunk_test.go`
 
-**Interfaces:** 产出 `value.ChunkStrategy`、`value.ChunkRole`、扩展 `ChunkingConfig`，以及带 `Role/ParentChunkID` 的 `model.Chunk`，供后续所有任务使用。
+**Interfaces:** 产出 `value.ChunkingStrategy`、三角色 `value.ChunkRole`、扩展 `ChunkingConfig`，以及带 `Role/ParentChunkID` 的 `model.Chunk`，供后续所有任务使用。
 
 - [ ] **Step 1: 写失败的领域测试。**
 
@@ -134,15 +134,19 @@ Expected: FAIL，编译错误指出 strategy、role、parent 字段未定义。
 - [ ] **Step 3: 实现最小领域合同。**
 
 ```go
-type ChunkStrategy string
+type ChunkingStrategy string
 const (
-    ChunkStrategyAuto ChunkStrategy = "auto"
-    ChunkStrategyHeading ChunkStrategy = "heading"
-    ChunkStrategyHeuristic ChunkStrategy = "heuristic"
-    ChunkStrategyRecursive ChunkStrategy = "recursive"
+    ChunkingStrategyAuto ChunkingStrategy = "auto"
+    ChunkingStrategyHeading ChunkingStrategy = "heading"
+    ChunkingStrategyHeuristic ChunkingStrategy = "heuristic"
+    ChunkingStrategyRecursive ChunkingStrategy = "recursive"
 )
 type ChunkRole string
-const (ChunkRoleParent ChunkRole = "parent"; ChunkRoleChild ChunkRole = "child")
+const (
+    ChunkRoleParent ChunkRole = "parent"
+    ChunkRoleChild ChunkRole = "child"
+    ChunkRoleFlat ChunkRole = "flat"
+)
 type ChunkingConfig struct {
     ChunkSize, ChunkOverlap int
     Strategy ChunkStrategy
@@ -151,7 +155,7 @@ type ChunkingConfig struct {
 }
 ```
 
-将 `StandardChunkerVersion` 更新为 `3`。`Normalize` 对缺省配置补 `auto/on/4096/384`，`Validate` 接受四个策略；校验 parent 512..8192、child 64..2048、child 不大于 parent；关闭父子时沿用 `chunk_size > 0` 与 `0 <= overlap < chunk_size`。`Chunk.ValidateLineage` 要求 parent 无 parent ID、child 有 parent ID。
+将 `StandardChunkerVersion` 更新为 `3`。`Normalize` 对缺省配置补 `auto/on/4096/384`，`Validate` 接受四个策略；校验 parent 512..8192、child 64..2048、child 不大于 parent；关闭父子时沿用 `chunk_size > 0` 与 `0 <= overlap < chunk_size`。`Chunk.ValidateLineage` 要求 parent/flat 无 parent ID、child 有 parent ID。
 
 - [ ] **Step 4: 验证领域层。**
 
@@ -198,8 +202,8 @@ Expected: FAIL，`role`/`parent_chunk_id` 不存在或非法关联被接受。
 ```sql
 ALTER TABLE chunks ADD COLUMN role text NOT NULL DEFAULT 'child';
 ALTER TABLE chunks ADD COLUMN parent_chunk_id uuid;
-ALTER TABLE chunks ADD CONSTRAINT chunks_role_check CHECK (role IN ('parent','child'));
-ALTER TABLE chunks ADD CONSTRAINT chunks_parent_shape_check CHECK ((role = 'parent' AND parent_chunk_id IS NULL) OR role = 'child');
+ALTER TABLE chunks ADD CONSTRAINT chunks_role_check CHECK (role IN ('parent','child','flat'));
+ALTER TABLE chunks ADD CONSTRAINT chunks_parent_shape_check CHECK ((role IN ('parent','flat') AND parent_chunk_id IS NULL) OR (role = 'child' AND parent_chunk_id IS NOT NULL));
 ALTER TABLE chunks ADD CONSTRAINT chunks_parent_fk FOREIGN KEY
   (workspace_id, knowledge_base_id, document_id, document_revision_id, chunk_set_id, parent_chunk_id)
   REFERENCES chunks (workspace_id, knowledge_base_id, document_id, document_revision_id, chunk_set_id, id)
@@ -207,7 +211,7 @@ ALTER TABLE chunks ADD CONSTRAINT chunks_parent_fk FOREIGN KEY
 CREATE INDEX idx_chunks_parent ON chunks (workspace_id, chunk_set_id, parent_chunk_id, sequence);
 ```
 
-在 `ChunkRow` 与 `chunkV2ToRow/chunkV2FromRow` 映射 `Role/ParentChunkID`。`encodeChunkSetBuild` 校验 parent 在同批次、完整 lineage 相同，并允许 parent/child 各自 sequence；先插入所有 Chunk rows，再插入 revisions。Document Chunk seek cursor 改为 `(role_rank, sequence, id)`，查询使用 `ORDER BY CASE role WHEN 'parent' THEN 0 ELSE 1 END, sequence, id`，避免两层独立 sequence 漏页。
+在 `ChunkRow` 与 `chunkV2ToRow/chunkV2FromRow` 映射 `Role/ParentChunkID`。`encodeChunkSetBuild` 校验 child 的 parent 在同批次、完整 lineage 相同，并允许 parent/child 各自 sequence；flat 不得引用 parent。先插入所有 Chunk rows，再插入 revisions。Document Chunk seek cursor 改为 `(role_rank, sequence, id)`，查询使用 `ORDER BY CASE role WHEN 'parent' THEN 0 WHEN 'child' THEN 1 ELSE 2 END, sequence, id`，避免两层独立 sequence 漏页。
 
 - [ ] **Step 4: 验证迁移和真实 PostgreSQL 行为。**
 
