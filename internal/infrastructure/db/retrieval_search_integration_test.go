@@ -49,6 +49,80 @@ func TestKeywordCandidatesMapsMissingFTSConfigToValidationError(t *testing.T) {
 	}
 }
 
+func TestLoadEvidenceReturnsParentContextForChildren(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertKnowledgeSchemaSeed(t, ctx, database)
+	repository := NewRetrievalRepository(database)
+	documentID, revisionID := uuid.New(), uuid.New()
+	if err := insertFileDocumentRevision(ctx, database, seed, documentID, revisionID, "parent-child.md"); err != nil {
+		t.Fatal(err)
+	}
+	setID, parent, children, revisions := createParentChildRetrievalChunks(t, ctx, database, seed, documentID, revisionID)
+	vector := make([]float32, 1024)
+	vector[0] = 1
+	entries := make([]indexport.StageEntry, 0, len(children))
+	entryIDs := make([]uuid.UUID, 0, len(children))
+	for index, child := range children {
+		entry := &model.RetrievalEntry{
+			ID: uuid.New(), WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID,
+			IndexGenerationID: seed.generationID, DocumentID: documentID, DocumentRevisionID: revisionID,
+			ChunkSetID: setID, ChunkID: child.ID, ChunkRevisionID: revisions[index].ID,
+			State: value.RetrievalEntryStaging, SearchContent: revisions[index].EmbeddingContent,
+			Content: revisions[index].Content, SourceAnchor: child.SourceAnchor, Metadata: child.Metadata, CreatedAt: time.Now().UTC(),
+		}
+		entries = append(entries, indexport.StageEntry{Entry: entry, Embedding: vector})
+		entryIDs = append(entryIDs, entry.ID)
+	}
+	if err := repository.StageBatch(ctx, seed.workspaceID, "simple", 1024, entries); err != nil {
+		t.Fatal(err)
+	}
+	publishSearchEntries(t, ctx, database, seed.workspaceID, entryIDs...)
+
+	err := repository.WithinWorkspace(ctx, seed.workspaceID, func(txCtx context.Context, reader indexport.SearchReader) error {
+		evidence, err := reader.LoadEvidence(txCtx, seed.kbID, seed.generationID, entryIDs)
+		if err != nil {
+			return err
+		}
+		if len(evidence) != 2 {
+			t.Fatalf("evidence = %#v", evidence)
+		}
+		for _, item := range evidence {
+			if item.ChunkID != parent.ID || item.Content != "完整父块正文" || item.MatchedRole != value.ChunkRoleChild {
+				t.Fatalf("child evidence = %#v", item)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createParentChildRetrievalChunks(t *testing.T, ctx context.Context, database *gorm.DB, seed knowledgeSchemaSeed, documentID, revisionID uuid.UUID) (uuid.UUID, *model.Chunk, []*model.Chunk, []*model.ChunkRevision) {
+	t.Helper()
+	set := &model.DocumentChunkSet{ID: uuid.New(), WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID, DocumentID: documentID, DocumentRevisionID: revisionID, Strategy: value.ChunkStrategyStandard, ChunkerVersion: value.StandardChunkerVersion, ChunkingConfig: map[string]any{"enable_parent_child": true}, ConfigHash: uuid.NewString(), Status: value.ChunkSetBuilding, CreatedAt: time.Now().UTC()}
+	stored, err := NewChunkSetRepository(database).GetOrCreate(ctx, seed.workspaceID, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newChunk := func(role value.ChunkRole, parentID *uuid.UUID, sequence int, content string) (*model.Chunk, *model.ChunkRevision) {
+		chunkID := uuid.New()
+		revision, err := model.NewChunkRevision(model.NewChunkRevisionInput{WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID, DocumentID: documentID, DocumentRevisionID: revisionID, ChunkSetID: stored.ID, ChunkID: chunkID, RevisionNo: 1, Content: content, EmbeddingContent: content, Enabled: true, Status: value.ChunkRevisionPending, EditSource: value.ChunkEditSourceSystem})
+		if err != nil {
+			t.Fatal(err)
+		}
+		activeID := revision.ID
+		return &model.Chunk{ID: chunkID, WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID, DocumentID: documentID, DocumentRevisionID: revisionID, ChunkSetID: stored.ID, Role: role, ParentChunkID: parentID, Sequence: sequence, SourceContent: content, SourceAnchor: value.SourceAnchor{SourceType: "test"}, Metadata: map[string]any{}, ActiveRevisionID: &activeID, CreatedAt: time.Now().UTC()}, revision
+	}
+	parent, parentRevision := newChunk(value.ChunkRoleParent, nil, 0, "完整父块正文")
+	childA, revisionA := newChunk(value.ChunkRoleChild, &parent.ID, 0, "命中子块 A")
+	childB, revisionB := newChunk(value.ChunkRoleChild, &parent.ID, 1, "命中子块 B")
+	if _, err := NewChunkSetRepository(database).Complete(ctx, seed.workspaceID, stored.ID, []*model.Chunk{parent, childA, childB}, []*model.ChunkRevision{parentRevision, revisionA, revisionB}); err != nil {
+		t.Fatal(err)
+	}
+	return stored.ID, parent, []*model.Chunk{childA, childB}, []*model.ChunkRevision{revisionA, revisionB}
+}
+
 func TestRetrievalSearchIsWorkspaceScopedUsesFAQQuestionsAndResolvesCurrentFileName(t *testing.T) {
 	ctx, database := newAuthTestDB(t)
 	seedA := insertKnowledgeSchemaSeed(t, ctx, database)
