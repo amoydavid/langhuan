@@ -62,6 +62,9 @@ describe('ChunkInspector', () => {
     await expect
       .element(screen.getByText('上下文块 1 · 1 个子块'))
       .toBeVisible()
+    await userEvent.click(
+      screen.getByRole('button', { name: '上下文块 1 · 1 个子块' })
+    )
     await expect
       .element(screen.getByRole('button', { name: '编辑分块 0' }))
       .not.toBeInTheDocument()
