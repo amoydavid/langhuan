@@ -1,8 +1,19 @@
 import type { TFunction } from 'i18next'
-import { CheckCircle2, CircleOff, Pencil, Scissors } from 'lucide-react'
+import {
+  CheckCircle2,
+  ChevronDown,
+  CircleOff,
+  Pencil,
+  Scissors,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import type { Chunk } from '@/features/chunks/types'
 import type { DocumentKind } from '@/features/documents/types'
@@ -162,7 +173,21 @@ export function ChunkInspector({
             {countLabel}
           </p>
         ) : (
-          pageItems.map((chunk) => {
+          renderHierarchy(pageItems).map((item) => {
+            if (item.kind === 'parent') {
+              return (
+                <ParentChunkGroup
+                  key={item.parent.id}
+                  parent={item.parent}
+                  childChunks={item.children}
+                  selectedChunkId={selectedChunkId}
+                  canEdit={canEdit && documentKind !== 'faq'}
+                  onSelectChunk={onSelectChunk}
+                  onEdit={onEdit}
+                />
+              )
+            }
+            const chunk = item.chunk
             const revision = chunk.active_revision
             const isSelected = chunk.id === selectedChunkId
             return (
@@ -170,7 +195,12 @@ export function ChunkInspector({
                 key={chunk.id}
                 chunk={chunk}
                 selected={isSelected}
-                canEdit={canEdit && documentKind !== 'faq' && Boolean(revision)}
+                canEdit={
+                  canEdit &&
+                  documentKind !== 'faq' &&
+                  Boolean(revision) &&
+                  chunk.role !== 'parent'
+                }
                 onSelect={() => onSelectChunk?.(chunk.id)}
                 onEdit={() => onEdit?.(chunk)}
               />
@@ -187,6 +217,97 @@ export function ChunkInspector({
         />
       )}
     </section>
+  )
+}
+
+type HierarchyItem =
+  | { kind: 'parent'; parent: Chunk; children: Chunk[] }
+  | { kind: 'flat'; chunk: Chunk }
+
+function renderHierarchy(chunks: Chunk[]): HierarchyItem[] {
+  const parents = new Map<string, Chunk>()
+  const children = new Map<string, Chunk[]>()
+  const flat: Chunk[] = []
+  for (const chunk of chunks) {
+    if (chunk.role === 'parent') {
+      parents.set(chunk.id, chunk)
+      continue
+    }
+    if (chunk.role === 'child' && chunk.parent_chunk_id) {
+      const group = children.get(chunk.parent_chunk_id) ?? []
+      group.push(chunk)
+      children.set(chunk.parent_chunk_id, group)
+      continue
+    }
+    flat.push(chunk)
+  }
+  const result: HierarchyItem[] = []
+  for (const parent of parents.values()) {
+    result.push({
+      kind: 'parent',
+      parent,
+      children: children.get(parent.id) ?? [],
+    })
+    children.delete(parent.id)
+  }
+  for (const orphaned of children.values()) flat.push(...orphaned)
+  flat.sort((left, right) => left.sequence - right.sequence)
+  return [...result, ...flat.map((chunk) => ({ kind: 'flat' as const, chunk }))]
+}
+
+type ParentChunkGroupProps = {
+  parent: Chunk
+  childChunks: Chunk[]
+  selectedChunkId?: string
+  canEdit: boolean
+  onSelectChunk?: (chunkId: string) => void
+  onEdit?: (chunk: Chunk) => void
+}
+
+function ParentChunkGroup({
+  parent,
+  childChunks,
+  selectedChunkId,
+  canEdit,
+  onSelectChunk,
+  onEdit,
+}: ParentChunkGroupProps) {
+  const { t } = useTranslation()
+  return (
+    <Collapsible
+      defaultOpen={childChunks.some((child) => child.id === selectedChunkId)}
+      className='rounded-xl border bg-card'
+    >
+      <CollapsibleTrigger className='flex min-h-11 w-full items-center gap-2 px-3 text-left font-medium text-sm'>
+        <ChevronDown className='size-4 transition-transform [[data-state=closed]_&]:-rotate-90' />
+        {t('chunks.inspector.parentGroup', {
+          sequence: parent.sequence + 1,
+          count: childChunks.length,
+        })}
+      </CollapsibleTrigger>
+      <CollapsibleContent className='space-y-2 border-t p-2'>
+        <p className='px-1 text-muted-foreground text-xs'>
+          {t('chunks.inspector.parentReadOnly')}
+        </p>
+        <ChunkCard
+          chunk={parent}
+          selected={parent.id === selectedChunkId}
+          canEdit={false}
+          onSelect={() => onSelectChunk?.(parent.id)}
+          onEdit={() => {}}
+        />
+        {childChunks.map((child) => (
+          <ChunkCard
+            key={child.id}
+            chunk={child}
+            selected={child.id === selectedChunkId}
+            canEdit={canEdit && Boolean(child.active_revision)}
+            onSelect={() => onSelectChunk?.(child.id)}
+            onEdit={() => onEdit?.(child)}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

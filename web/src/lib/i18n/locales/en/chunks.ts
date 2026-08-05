@@ -31,6 +31,9 @@ export const chunks = {
     ariaLabel: 'Chunk inspector',
     emptyState: 'The current index version has no chunks to view.',
     title: 'Chunk {{sequence}} · {{title}}',
+    parentGroup: 'Context chunk {{sequence}} · {{count}} child chunks',
+    parentReadOnly:
+      'Parent chunks provide full context only and cannot be retrieved or edited.',
     chunkTabNoTitle: 'Untitled',
     faqNotice:
       'Generated from FAQ content; edit the question and answer in the FAQ editor.',

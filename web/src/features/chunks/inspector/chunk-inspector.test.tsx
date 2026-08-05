@@ -34,6 +34,42 @@ const chunk: Chunk = {
 }
 
 describe('ChunkInspector', () => {
+  it('groups children under their read-only parent', async () => {
+    const parentId = '30000000-0000-4000-8000-000000000009'
+    const parent: Chunk = {
+      ...chunk,
+      id: parentId,
+      role: 'parent',
+      parent_chunk_id: null,
+      sequence: 0,
+      active_revision: {
+        ...chunk.active_revision!,
+        chunk_id: parentId,
+        content: '完整上下文',
+      },
+    }
+    const child: Chunk = { ...chunk, role: 'child', parent_chunk_id: parentId }
+    const screen = await render(
+      <ChunkInspector
+        documentTitle='installation.md'
+        documentKind='file'
+        chunks={[parent, child]}
+        page={1}
+        canEdit
+      />
+    )
+
+    await expect
+      .element(screen.getByText('上下文块 1 · 1 个子块'))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole('button', { name: '编辑分块 0' }))
+      .not.toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('button', { name: '编辑分块 1' }))
+      .toBeVisible()
+  })
+
   it('renders chunk cards with source anchor and revision preview', async () => {
     const onSelectChunk = vi.fn()
     const screen = await render(

@@ -33,6 +33,8 @@ export const chunkSchema = z.object({
   document_id: z.uuid(),
   document_revision_id: z.uuid(),
   chunk_set_id: z.uuid(),
+  role: z.enum(['parent', 'child', 'flat']).optional(),
+  parent_chunk_id: z.uuid().nullable().optional(),
   sequence: z.number().int().nonnegative(),
   source_content: z.string(),
   source_anchor: z.record(z.string(), z.unknown()),
