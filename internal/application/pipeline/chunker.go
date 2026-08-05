@@ -69,18 +69,37 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 		return nil, nil, fmt.Errorf("invalid parse manifest: %w", err)
 	}
 
-	drafts := make([]chunkDraft, 0)
 	workingConfig := config
 	if config.EnableParentChild {
 		workingConfig.ChunkSize = config.ChildChunkSize
 		workingConfig.ChunkOverlap = config.ChildChunkSize / 5
 	}
+	var drafts []chunkDraft
+	var lastErr error
+	for _, strategy := range selectChunkingStrategies(input.Manifest, config) {
+		drafts, lastErr = splitChunkDrafts(input.Markdown, input.Manifest.Blocks, workingConfig, strategy)
+		if lastErr == nil {
+			break
+		}
+	}
+	if lastErr != nil {
+		return nil, nil, lastErr
+	}
+
+	if !config.EnableParentChild {
+		return materializeChunkDrafts(input, drafts, value.ChunkRoleFlat, nil)
+	}
+	return materializeParentChildDrafts(input, drafts, config)
+}
+
+func splitChunkDrafts(markdown string, blocks []model.ParsedBlock, config value.ChunkingConfig, strategy value.ChunkingStrategy) ([]chunkDraft, error) {
+	drafts := make([]chunkDraft, 0)
 	ordinary := make([]model.ParsedBlock, 0)
 	flushOrdinary := func() error {
 		if len(ordinary) == 0 {
 			return nil
 		}
-		created, err := splitOrdinary(input.Markdown, ordinary, workingConfig)
+		created, err := splitOrdinary(markdown, ordinary, config)
 		if err != nil {
 			return err
 		}
@@ -89,12 +108,11 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 		return nil
 	}
 
-	blocks := input.Manifest.Blocks
 	for index := 0; index < len(blocks); {
 		block := blocks[index]
 		if block.Kind == model.BlockKindTableHeader {
 			if err := flushOrdinary(); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			tableID, _ := block.Metadata["table_id"].(string)
 			rows := make([]model.ParsedBlock, 0)
@@ -107,34 +125,37 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 				rows = append(rows, blocks[cursor])
 				cursor++
 			}
-			created, err := splitTable(input.Markdown, block, rows, tableID, workingConfig.ChunkSize)
+			created, err := splitTable(markdown, block, rows, tableID, config.ChunkSize)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			drafts = append(drafts, created...)
 			index = cursor
 			continue
 		}
-		if block.Kind == model.BlockKindHeading && len(ordinary) > 0 {
+		if len(ordinary) > 0 && isStrategyBoundary(strategy, ordinary[0], block) {
 			if err := flushOrdinary(); err != nil {
-				return nil, nil, err
-			}
-		} else if len(ordinary) > 0 && !sameStrings(ordinary[0].HeadingPath, block.HeadingPath) {
-			if err := flushOrdinary(); err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 		ordinary = append(ordinary, block)
 		index++
 	}
 	if err := flushOrdinary(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	return drafts, nil
+}
 
-	if !config.EnableParentChild {
-		return materializeChunkDrafts(input, drafts, value.ChunkRoleFlat, nil)
+func isStrategyBoundary(strategy value.ChunkingStrategy, first, current model.ParsedBlock) bool {
+	switch strategy {
+	case value.ChunkingStrategyHeading:
+		return current.Kind == model.BlockKindHeading || !sameStrings(first.HeadingPath, current.HeadingPath)
+	case value.ChunkingStrategyHeuristic:
+		return current.Kind == model.BlockKindHeading || current.Kind == model.BlockKindThematicBreak
+	default:
+		return false
 	}
-	return materializeParentChildDrafts(input, drafts, config)
 }
 
 func materializeChunkDrafts(input ChunkInput, drafts []chunkDraft, role value.ChunkRole, parentID *uuid.UUID) ([]*model.Chunk, []*model.ChunkRevision, error) {
