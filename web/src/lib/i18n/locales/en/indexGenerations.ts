@@ -29,6 +29,17 @@ export const indexGenerations = {
     chunkStep: {
       description:
         'Changing the chunking method may prevent existing manual edits from being migrated.',
+      strategyLabel: 'Strategy',
+      strategyOptions: {
+        auto: 'Automatic',
+        heading: 'By headings',
+        heuristic: 'By document structure',
+        recursive: 'Recursive',
+      },
+      parentChildLabel: 'Parent-child chunking',
+      childSizeLabel: 'Child chunk size (for retrieval)',
+      parentSizeLabel: 'Context chunk size (for return)',
+      parentOverlapLabel: 'Parent chunk overlap',
       sizeLabel: 'Chunk size',
       sizeHint:
         'Characters per chunk. Larger chunks keep more context; smaller ones are more precise.',
@@ -77,6 +88,8 @@ export const indexGenerations = {
       chunkOverlapNonNegative: 'Chunk overlap cannot be less than 0',
       selectFtsConfig: 'Please select a full-text search configuration',
       chunkOverlapLessThanSize: 'Chunk overlap must be less than chunk size',
+      childLargerThanParent:
+        'Child chunk size cannot be larger than context chunk size',
     },
   },
   generationList: {

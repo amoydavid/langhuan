@@ -13,8 +13,15 @@ const baseGeneration = {
   model_name: 'text-embedding-3-large',
   display_label: '2026-08-01 09:42 · text-embedding-3-large · 已就绪',
   embedding_dimension: 3584,
-  chunker_version: 1,
-  chunking_config: { chunk_size: 1000, chunk_overlap: 100 },
+  chunker_version: 3,
+  chunking_config: {
+    strategy: 'auto',
+    enable_parent_child: true,
+    parent_chunk_size: 4096,
+    child_chunk_size: 384,
+    chunk_size: 1000,
+    chunk_overlap: 100,
+  },
   retrieval_config: {
     fts_config: 'simple',
     vector_top_k: 20,
@@ -59,8 +66,11 @@ describe('GenerationForm', () => {
       screen.getByRole('button', { name: '下一步：分块配置' })
     )
     await expect
-      .element(screen.getByLabelText('分块大小', { exact: true }))
-      .toHaveValue(1000)
+      .element(screen.getByLabelText('父子分块', { exact: true }))
+      .toBeChecked()
+    await expect
+      .element(screen.getByLabelText('小块大小（用于召回）', { exact: true }))
+      .toHaveValue(384)
     await userEvent.click(
       screen.getByRole('button', { name: '下一步：检索配置' })
     )
@@ -71,7 +81,14 @@ describe('GenerationForm', () => {
 
     expect(createGeneration).toHaveBeenCalledWith({
       embedding_model_id: baseGeneration.embedding_model_id,
-      chunking_config: { chunk_size: 1000, chunk_overlap: 100 },
+      chunking_config: {
+        strategy: 'auto',
+        enable_parent_child: true,
+        parent_chunk_size: 4096,
+        child_chunk_size: 384,
+        chunk_size: 1000,
+        chunk_overlap: 100,
+      },
       retrieval_config: {
         fts_config: 'simple',
         vector_top_k: 20,
@@ -80,6 +97,36 @@ describe('GenerationForm', () => {
         rrf_k: 60,
       },
     })
+  })
+
+  it('keeps parent-child draft values when switching to flat chunks and back', async () => {
+    const createGeneration = vi.fn().mockResolvedValue(baseGeneration)
+    const screen = await render(
+      <GenerationForm
+        models={[
+          {
+            id: baseGeneration.embedding_model_id,
+            displayName: 'OpenAI Embedding Large',
+            dimensions: 3584,
+          },
+        ]}
+        baseGeneration={baseGeneration}
+        createGeneration={createGeneration}
+      />
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: '下一步：分块配置' })
+    )
+    await userEvent.fill(screen.getByLabelText('小块大小（用于召回）'), '256')
+    await userEvent.click(screen.getByLabelText('父子分块'))
+    await expect
+      .element(screen.getByLabelText('分块大小', { exact: true }))
+      .toBeVisible()
+    await userEvent.click(screen.getByLabelText('父子分块'))
+    await expect
+      .element(screen.getByLabelText('小块大小（用于召回）'))
+      .toHaveValue(256)
   })
 
   it('picks the full-text search configuration from a select and shows hint tooltips', async () => {
@@ -101,15 +148,9 @@ describe('GenerationForm', () => {
     await userEvent.click(
       screen.getByRole('button', { name: '下一步：分块配置' })
     )
-    // 分块大小旁的小问号：悬停显示面向非技术人员的提示
-    const sizeHint = '每个分块包含的字符数。越大上下文越完整，越小定位越精准。'
-    const sizeHintButton = screen.getByRole('button', {
-      name: '查看“分块大小”说明',
-    })
-    expect(sizeHintButton.element().className).toContain('min-h-[44px]')
-    expect(sizeHintButton.element().className).toContain('min-w-[44px]')
-    await userEvent.hover(sizeHintButton)
-    await expect.element(screen.getByText(sizeHint)).toBeVisible()
+    await expect
+      .element(screen.getByLabelText('小块大小（用于召回）'))
+      .toHaveValue(384)
 
     await userEvent.click(
       screen.getByRole('button', { name: '下一步：检索配置' })

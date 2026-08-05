@@ -25,6 +25,17 @@ export const knowledgeBases = {
   form: {
     nameLabel: 'Name',
     descriptionLabel: 'Description',
+    strategyLabel: 'Strategy',
+    strategyOptions: {
+      auto: 'Automatic',
+      heading: 'By headings',
+      heuristic: 'By document structure',
+      recursive: 'Recursive',
+    },
+    parentChildLabel: 'Parent-child chunking',
+    childSizeLabel: 'Child chunk size (for retrieval)',
+    parentSizeLabel: 'Context chunk size (for return)',
+    parentOverlapLabel: 'Parent chunk overlap',
     chunkSizeLabel: 'Chunk size',
     chunkOverlapLabel: 'Overlap size',
     createdToast: 'Knowledge base created',
@@ -137,5 +148,7 @@ export const knowledgeBases = {
     chunkOverlapInteger: 'Overlap size must be an integer',
     chunkOverlapMin: 'Overlap size cannot be less than 0',
     chunkOverlapLessThanSize: 'Overlap size must be less than chunk size',
+    childLargerThanParent:
+      'Child chunk size cannot be larger than context chunk size',
   },
 } satisfies Widen<typeof zhKnowledgeBases>

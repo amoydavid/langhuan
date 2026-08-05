@@ -12,6 +12,10 @@ export type IndexGenerationList = z.infer<typeof indexGenerationListSchema>
 export type CreateIndexGenerationInput = {
   embedding_model_id: string
   chunking_config: {
+    strategy: 'auto' | 'heading' | 'heuristic' | 'recursive'
+    enable_parent_child: boolean
+    parent_chunk_size: number
+    child_chunk_size: number
     chunk_size: number
     chunk_overlap: number
   }

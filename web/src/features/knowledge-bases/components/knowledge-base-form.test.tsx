@@ -84,7 +84,14 @@ describe('KnowledgeBaseForm', () => {
         dimensions: 1024,
         available: true,
       },
-      chunking_config: { chunk_size: 512, chunk_overlap: 80 },
+      chunking_config: {
+        strategy: 'auto',
+        enable_parent_child: true,
+        parent_chunk_size: 4096,
+        child_chunk_size: 384,
+        chunk_size: 512,
+        chunk_overlap: 80,
+      },
       metadata: {},
       created_at: '2026-07-30T00:00:00Z',
       updated_at: '2026-07-30T00:00:00Z',
@@ -96,6 +103,10 @@ describe('KnowledgeBaseForm', () => {
       name: '产品文档',
       description: '',
       embedding_model_id: '20000000-0000-4000-8000-000000000002',
+      strategy: 'auto' as const,
+      enable_parent_child: true,
+      parent_chunk_size: 4096,
+      child_chunk_size: 384,
       chunk_size: 512,
       chunk_overlap: 80,
     }
@@ -104,7 +115,7 @@ describe('KnowledgeBaseForm', () => {
       knowledgeBaseSchema.safeParse({ ...base, embedding_model_id: '' }).success
     ).toBe(false)
     expect(
-      knowledgeBaseSchema.safeParse({ ...base, chunk_overlap: 512 }).success
+      knowledgeBaseSchema.safeParse({ ...base, chunk_overlap: 4096 }).success
     ).toBe(false)
     expect(knowledgeBaseSchema.safeParse(base).success).toBe(true)
   })
@@ -119,7 +130,14 @@ describe('KnowledgeBaseForm', () => {
       name: '产品文档',
       description: '',
       embedding_model_id: '20000000-0000-4000-8000-000000000002',
-      chunking_config: { chunk_size: 512, chunk_overlap: 80 },
+      chunking_config: {
+        strategy: 'auto',
+        enable_parent_child: true,
+        parent_chunk_size: 4096,
+        child_chunk_size: 384,
+        chunk_size: 512,
+        chunk_overlap: 80,
+      },
     })
     expect(createKnowledgeBase.mock.calls[0]?.[1]).not.toHaveProperty(
       ['embedding', 'dimension'].join('_')

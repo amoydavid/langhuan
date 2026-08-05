@@ -3,6 +3,10 @@ import type { EmbeddingDimension } from '@/features/models/types'
 import type { knowledgeBaseResponseSchema } from './schemas'
 
 export type ChunkingConfig = {
+  strategy: 'auto' | 'heading' | 'heuristic' | 'recursive'
+  enable_parent_child: boolean
+  parent_chunk_size: number
+  child_chunk_size: number
   chunk_size: number
   chunk_overlap: number
 }

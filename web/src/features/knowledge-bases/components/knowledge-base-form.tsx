@@ -15,6 +15,14 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import type { Role } from '@/features/auth/types'
 import { selectableModelsQueryOptions } from '@/features/models/queries'
@@ -44,6 +52,10 @@ export function KnowledgeBaseForm({
       name: '',
       description: '',
       embedding_model_id: '',
+      strategy: 'auto',
+      enable_parent_child: true,
+      parent_chunk_size: 4096,
+      child_chunk_size: 384,
       chunk_size: 512,
       chunk_overlap: 80,
     },
@@ -55,6 +67,10 @@ export function KnowledgeBaseForm({
         description: values.description,
         embedding_model_id: values.embedding_model_id,
         chunking_config: {
+          strategy: values.strategy,
+          enable_parent_child: values.enable_parent_child,
+          parent_chunk_size: values.parent_chunk_size,
+          child_chunk_size: values.child_chunk_size,
           chunk_size: values.chunk_size,
           chunk_overlap: values.chunk_overlap,
         },
@@ -123,35 +139,134 @@ export function KnowledgeBaseForm({
             />
           )}
         />
-        <div className='grid gap-5 sm:grid-cols-2'>
-          <FormField
-            control={form.control}
-            name='chunk_size'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('knowledgeBases.form.chunkSizeLabel')}</FormLabel>
+        <FormField
+          control={form.control}
+          name='strategy'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('knowledgeBases.form.strategyLabel')}</FormLabel>
+              <Select value={field.value} onValueChange={field.onChange}>
                 <FormControl>
-                  <Input
-                    type='number'
-                    min={1}
-                    step={1}
-                    {...field}
-                    onChange={(event) =>
-                      field.onChange(event.target.valueAsNumber)
-                    }
-                  />
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                 </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+                <SelectContent>
+                  {(['auto', 'heading', 'heuristic', 'recursive'] as const).map(
+                    (strategy) => (
+                      <SelectItem key={strategy} value={strategy}>
+                        {t(`knowledgeBases.form.strategyOptions.${strategy}`)}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name='enable_parent_child'
+          render={({ field }) => (
+            <FormItem className='flex min-h-11 items-center justify-between rounded-lg border px-3'>
+              <FormLabel>{t('knowledgeBases.form.parentChildLabel')}</FormLabel>
+              <FormControl>
+                <Switch
+                  aria-label={t('knowledgeBases.form.parentChildLabel')}
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+        <div className='grid gap-5 sm:grid-cols-2'>
+          {form.watch('enable_parent_child') ? (
+            <>
+              <FormField
+                control={form.control}
+                name='child_chunk_size'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {t('knowledgeBases.form.childSizeLabel')}
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={64}
+                        step={1}
+                        {...field}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='parent_chunk_size'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {t('knowledgeBases.form.parentSizeLabel')}
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={512}
+                        step={1}
+                        {...field}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </>
+          ) : (
+            <FormField
+              control={form.control}
+              name='chunk_size'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    {t('knowledgeBases.form.chunkSizeLabel')}
+                  </FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={1}
+                      step={1}
+                      {...field}
+                      onChange={(event) =>
+                        field.onChange(event.target.valueAsNumber)
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
           <FormField
             control={form.control}
             name='chunk_overlap'
             render={({ field }) => (
               <FormItem>
                 <FormLabel>
-                  {t('knowledgeBases.form.chunkOverlapLabel')}
+                  {t(
+                    form.watch('enable_parent_child')
+                      ? 'knowledgeBases.form.parentOverlapLabel'
+                      : 'knowledgeBases.form.chunkOverlapLabel'
+                  )}
                 </FormLabel>
                 <FormControl>
                   <Input

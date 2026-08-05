@@ -20,6 +20,17 @@ export const indexGenerations = {
     },
     chunkStep: {
       description: '改变分块方式可能导致现有人工修订无法迁移。',
+      strategyLabel: '策略',
+      strategyOptions: {
+        auto: '自动选择',
+        heading: '按标题',
+        heuristic: '按文档结构',
+        recursive: '递归切分',
+      },
+      parentChildLabel: '父子分块',
+      childSizeLabel: '小块大小（用于召回）',
+      parentSizeLabel: '上下文块大小（用于返回）',
+      parentOverlapLabel: '父块重叠',
       sizeLabel: '分块大小',
       sizeHint: '每个分块包含的字符数。越大上下文越完整，越小定位越精准。',
       overlapLabel: '分块重叠',
@@ -61,6 +72,7 @@ export const indexGenerations = {
       chunkOverlapNonNegative: '分块重叠不能小于 0',
       selectFtsConfig: '请选择全文检索配置',
       chunkOverlapLessThanSize: '分块重叠必须小于分块大小',
+      childLargerThanParent: '小块大小不能大于上下文块大小',
     },
   },
   generationList: {

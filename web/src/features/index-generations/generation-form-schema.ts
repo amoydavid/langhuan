@@ -10,6 +10,10 @@ export const generationFormSchema = z
           'indexGenerations.generationForm.validation.selectEmbeddingModel'
         ),
     }),
+    strategy: z.enum(['auto', 'heading', 'heuristic', 'recursive']),
+    enable_parent_child: z.boolean(),
+    parent_chunk_size: z.number().int().min(512).max(8192),
+    child_chunk_size: z.number().int().min(64).max(2048),
     chunk_size: z
       .number()
       .int()
@@ -40,12 +44,31 @@ export const generationFormSchema = z
     final_top_k: z.number().int().min(1).max(50),
     rrf_k: z.number().int().min(1),
   })
-  .refine((values) => values.chunk_overlap < values.chunk_size, {
-    path: ['chunk_overlap'],
-    error: () =>
-      i18n.t(
-        'indexGenerations.generationForm.validation.chunkOverlapLessThanSize'
-      ),
+  .superRefine((values, context) => {
+    const maximum = values.enable_parent_child
+      ? values.parent_chunk_size
+      : values.chunk_size
+    if (values.chunk_overlap >= maximum) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chunk_overlap'],
+        message: i18n.t(
+          'indexGenerations.generationForm.validation.chunkOverlapLessThanSize'
+        ),
+      })
+    }
+    if (
+      values.enable_parent_child &&
+      values.child_chunk_size > values.parent_chunk_size
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['child_chunk_size'],
+        message: i18n.t(
+          'indexGenerations.generationForm.validation.childLargerThanParent'
+        ),
+      })
+    }
   })
 
 export type GenerationFormValues = z.infer<typeof generationFormSchema>
@@ -71,6 +94,25 @@ export function generationFormDefaults(
 ): GenerationFormValues {
   return {
     embedding_model_id: baseGeneration.embedding_model_id,
+    strategy: configString(
+      baseGeneration.chunking_config,
+      'strategy',
+      'auto'
+    ) as GenerationFormValues['strategy'],
+    enable_parent_child:
+      typeof baseGeneration.chunking_config.enable_parent_child === 'boolean'
+        ? baseGeneration.chunking_config.enable_parent_child
+        : true,
+    parent_chunk_size: configNumber(
+      baseGeneration.chunking_config,
+      'parent_chunk_size',
+      4096
+    ),
+    child_chunk_size: configNumber(
+      baseGeneration.chunking_config,
+      'child_chunk_size',
+      384
+    ),
     chunk_size: configNumber(
       baseGeneration.chunking_config,
       'chunk_size',
@@ -111,6 +153,10 @@ export function toCreateGenerationInput(
   return {
     embedding_model_id: values.embedding_model_id,
     chunking_config: {
+      strategy: values.strategy,
+      enable_parent_child: values.enable_parent_child,
+      parent_chunk_size: values.parent_chunk_size,
+      child_chunk_size: values.child_chunk_size,
       chunk_size: values.chunk_size,
       chunk_overlap: values.chunk_overlap,
     },

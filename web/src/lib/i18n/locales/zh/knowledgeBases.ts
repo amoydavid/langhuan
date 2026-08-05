@@ -19,6 +19,17 @@ export const knowledgeBases = {
   form: {
     nameLabel: '名称',
     descriptionLabel: '描述',
+    strategyLabel: '策略',
+    strategyOptions: {
+      auto: '自动选择',
+      heading: '按标题',
+      heuristic: '按文档结构',
+      recursive: '递归切分',
+    },
+    parentChildLabel: '父子分块',
+    childSizeLabel: '小块大小（用于召回）',
+    parentSizeLabel: '上下文块大小（用于返回）',
+    parentOverlapLabel: '父块重叠',
     chunkSizeLabel: '分块大小',
     chunkOverlapLabel: '重叠大小',
     createdToast: '知识库已创建',
@@ -130,5 +141,6 @@ export const knowledgeBases = {
     chunkOverlapInteger: '重叠大小必须是整数',
     chunkOverlapMin: '重叠大小不能小于 0',
     chunkOverlapLessThanSize: '重叠大小必须小于分块大小',
+    childLargerThanParent: '小块大小不能大于上下文块大小',
   },
 } as const

@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
   TooltipContent,
@@ -107,6 +108,7 @@ export function GenerationForm({
     resolver: zodResolver(generationFormSchema),
     defaultValues: generationFormDefaults(baseGeneration),
   })
+  const parentChildEnabled = form.watch('enable_parent_child')
 
   const steps = [
     {
@@ -284,34 +286,141 @@ export function GenerationForm({
                   {t('indexGenerations.generationForm.chunkStep.description')}
                 </p>
               </div>
-              <div className='grid gap-4 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='chunk_size'
-                  render={({ field }) => (
-                    <FormItem>
-                      <HintLabel
-                        label={t(
-                          'indexGenerations.generationForm.chunkStep.sizeLabel'
-                        )}
-                        hint={t(
-                          'indexGenerations.generationForm.chunkStep.sizeHint'
-                        )}
-                      />
+              <FormField
+                control={form.control}
+                name='strategy'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      {t(
+                        'indexGenerations.generationForm.chunkStep.strategyLabel'
+                      )}
+                    </FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
                       <FormControl>
-                        <Input
-                          type='number'
-                          min={1}
-                          {...field}
-                          onChange={(event) =>
-                            field.onChange(event.target.valueAsNumber)
-                          }
-                        />
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
                       </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                      <SelectContent>
+                        {(
+                          ['auto', 'heading', 'heuristic', 'recursive'] as const
+                        ).map((strategy) => (
+                          <SelectItem key={strategy} value={strategy}>
+                            {t(
+                              `indexGenerations.generationForm.chunkStep.strategyOptions.${strategy}`
+                            )}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='enable_parent_child'
+                render={({ field }) => (
+                  <FormItem className='flex min-h-11 items-center justify-between rounded-lg border px-3'>
+                    <FormLabel>
+                      {t(
+                        'indexGenerations.generationForm.chunkStep.parentChildLabel'
+                      )}
+                    </FormLabel>
+                    <FormControl>
+                      <Switch
+                        aria-label={t(
+                          'indexGenerations.generationForm.chunkStep.parentChildLabel'
+                        )}
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <div className='grid gap-4 sm:grid-cols-2'>
+                {parentChildEnabled ? (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name='child_chunk_size'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t(
+                              'indexGenerations.generationForm.chunkStep.childSizeLabel'
+                            )}
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={64}
+                              {...field}
+                              onChange={(event) =>
+                                field.onChange(event.target.valueAsNumber)
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='parent_chunk_size'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t(
+                              'indexGenerations.generationForm.chunkStep.parentSizeLabel'
+                            )}
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={512}
+                              {...field}
+                              onChange={(event) =>
+                                field.onChange(event.target.valueAsNumber)
+                              }
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                ) : (
+                  <FormField
+                    control={form.control}
+                    name='chunk_size'
+                    render={({ field }) => (
+                      <FormItem>
+                        <HintLabel
+                          label={t(
+                            'indexGenerations.generationForm.chunkStep.sizeLabel'
+                          )}
+                          hint={t(
+                            'indexGenerations.generationForm.chunkStep.sizeHint'
+                          )}
+                        />
+                        <FormControl>
+                          <Input
+                            type='number'
+                            min={1}
+                            {...field}
+                            onChange={(event) =>
+                              field.onChange(event.target.valueAsNumber)
+                            }
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <FormField
                   control={form.control}
                   name='chunk_overlap'
@@ -319,7 +428,9 @@ export function GenerationForm({
                     <FormItem>
                       <HintLabel
                         label={t(
-                          'indexGenerations.generationForm.chunkStep.overlapLabel'
+                          parentChildEnabled
+                            ? 'indexGenerations.generationForm.chunkStep.parentOverlapLabel'
+                            : 'indexGenerations.generationForm.chunkStep.overlapLabel'
                         )}
                         hint={t(
                           'indexGenerations.generationForm.chunkStep.overlapHint'
@@ -352,7 +463,17 @@ export function GenerationForm({
                 <Button
                   type='button'
                   onClick={() =>
-                    void nextStep(['chunk_size', 'chunk_overlap'], 3)
+                    void nextStep(
+                      [
+                        'strategy',
+                        'enable_parent_child',
+                        'parent_chunk_size',
+                        'child_chunk_size',
+                        'chunk_size',
+                        'chunk_overlap',
+                      ],
+                      3
+                    )
                   }
                 >
                   {t('indexGenerations.generationForm.nextStepRetrieval')}

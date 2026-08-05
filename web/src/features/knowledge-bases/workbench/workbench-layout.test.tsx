@@ -41,7 +41,14 @@ const knowledgeBase: KnowledgeBase = {
     dimensions: 3584,
     available: true,
   },
-  chunking_config: { chunk_size: 1000, chunk_overlap: 100 },
+  chunking_config: {
+    strategy: 'auto',
+    enable_parent_child: true,
+    parent_chunk_size: 4096,
+    child_chunk_size: 384,
+    chunk_size: 1000,
+    chunk_overlap: 100,
+  },
   retrieval_config: {
     fts_config: 'simple',
     vector_top_k: 20,

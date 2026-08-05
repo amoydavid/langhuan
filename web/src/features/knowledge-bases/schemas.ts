@@ -11,6 +11,10 @@ export const knowledgeBaseSchema = z
     embedding_model_id: z.uuid({
       error: () => i18n.t('knowledgeBases.schemas.embeddingModelRequired'),
     }),
+    strategy: z.enum(['auto', 'heading', 'heuristic', 'recursive']),
+    enable_parent_child: z.boolean(),
+    parent_chunk_size: z.number().int().min(512).max(8192),
+    child_chunk_size: z.number().int().min(64).max(2048),
     chunk_size: z
       .number({
         error: () => i18n.t('knowledgeBases.schemas.chunkSizeInvalid'),
@@ -30,9 +34,27 @@ export const knowledgeBaseSchema = z
         error: () => i18n.t('knowledgeBases.schemas.chunkOverlapMin'),
       }),
   })
-  .refine((values) => values.chunk_overlap < values.chunk_size, {
-    path: ['chunk_overlap'],
-    error: () => i18n.t('knowledgeBases.schemas.chunkOverlapLessThanSize'),
+  .superRefine((values, context) => {
+    const maximum = values.enable_parent_child
+      ? values.parent_chunk_size
+      : values.chunk_size
+    if (values.chunk_overlap >= maximum) {
+      context.addIssue({
+        code: 'custom',
+        path: ['chunk_overlap'],
+        message: i18n.t('knowledgeBases.schemas.chunkOverlapLessThanSize'),
+      })
+    }
+    if (
+      values.enable_parent_child &&
+      values.child_chunk_size > values.parent_chunk_size
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['child_chunk_size'],
+        message: i18n.t('knowledgeBases.schemas.childLargerThanParent'),
+      })
+    }
   })
 
 export type KnowledgeBaseFormValues = z.infer<typeof knowledgeBaseSchema>
@@ -45,6 +67,10 @@ const embeddingDimensionSchema = z.union([
 ])
 
 export const chunkingConfigResponseSchema = z.object({
+  strategy: z.enum(['auto', 'heading', 'heuristic', 'recursive']),
+  enable_parent_child: z.boolean(),
+  parent_chunk_size: z.number().int().min(512).max(8192),
+  child_chunk_size: z.number().int().min(64).max(2048),
   chunk_size: z.number().int().positive(),
   chunk_overlap: z.number().int().nonnegative(),
 })
