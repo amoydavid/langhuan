@@ -82,6 +82,25 @@ const chunk: Chunk = {
   created_at: '2026-08-01T10:00:00Z',
 }
 
+const parentChunk: Chunk = {
+  ...chunk,
+  id: '60000000-0000-4000-8000-000000000009',
+  role: 'parent',
+  parent_chunk_id: null,
+  sequence: 0,
+  active_revision: {
+    ...chunk.active_revision!,
+    chunk_id: '60000000-0000-4000-8000-000000000009',
+    content: '安装章节的完整上下文。',
+  },
+}
+
+const childChunk: Chunk = {
+  ...chunk,
+  role: 'child',
+  parent_chunk_id: parentChunk.id,
+}
+
 const generation: IndexGeneration = {
   id: ids.generation,
   workspace_id: ids.workspace,
@@ -116,6 +135,32 @@ const generation: IndexGeneration = {
 }
 
 describe('v0.5.0 role boundary', () => {
+  it('keeps the parent context read-only while a deep-linked child remains actionable', async () => {
+    const onEdit = vi.fn()
+    const screen = await render(
+      <ChunkInspector
+        documentTitle='installation.md'
+        documentKind='file'
+        chunks={[parentChunk, childChunk]}
+        selectedChunkId={childChunk.id}
+        page={1}
+        canEdit
+        onEdit={onEdit}
+      />
+    )
+
+    await expect
+      .element(screen.getByText('上下文块 1 · 1 个子块'))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole('button', { name: '编辑分块 0' }))
+      .not.toBeInTheDocument()
+    const edit = screen.getByRole('button', { name: '编辑分块 1' })
+    await expect.element(edit).toBeVisible()
+    await userEvent.click(edit)
+    expect(onEdit).toHaveBeenCalledWith(childChunk)
+  })
+
   it('lets members manage content while keeping index mutations administrative', () => {
     expect(canManageContent('member')).toBe(true)
     expect(canManageContent('admin')).toBe(true)
