@@ -22,8 +22,12 @@ type EmbeddingModelSummary struct {
 
 // ChunkingConfig is the API representation of the standard chunker settings.
 type ChunkingConfig struct {
-	ChunkSize    int `json:"chunk_size"`
-	ChunkOverlap int `json:"chunk_overlap"`
+	ChunkSize         int                    `json:"chunk_size"`
+	ChunkOverlap      int                    `json:"chunk_overlap"`
+	Strategy          value.ChunkingStrategy `json:"strategy"`
+	EnableParentChild bool                   `json:"enable_parent_child"`
+	ParentChunkSize   int                    `json:"parent_chunk_size"`
+	ChildChunkSize    int                    `json:"child_chunk_size"`
 }
 
 // KnowledgeBase is the API representation of a resolved KnowledgeBase.
@@ -68,7 +72,7 @@ func KnowledgeBaseFromResolved(resolved *model.ResolvedKnowledgeBase) *Knowledge
 			Available:  item.Type == value.ModelTypeEmbedding && item.Status == value.ModelStatusActive && provider.Status == value.ModelStatusActive && value.IsSupportedEmbeddingDimension(dimensions),
 		},
 		ChunkingConfig: ChunkingConfig{
-			ChunkSize: kb.ChunkingConfig.ChunkSize, ChunkOverlap: kb.ChunkingConfig.ChunkOverlap,
+			ChunkSize: kb.ChunkingConfig.ChunkSize, ChunkOverlap: kb.ChunkingConfig.ChunkOverlap, Strategy: kb.ChunkingConfig.Strategy, EnableParentChild: kb.ChunkingConfig.EnableParentChild, ParentChunkSize: kb.ChunkingConfig.ParentChunkSize, ChildChunkSize: kb.ChunkingConfig.ChildChunkSize,
 		},
 		RetrievalConfig:         cloneDTOMap(resolved.RetrievalConfig),
 		ContentVersion:          kb.ContentVersion,

@@ -28,8 +28,12 @@ type createKnowledgeBaseRequest struct {
 }
 
 type chunkingConfigRequest struct {
-	ChunkSize    int `json:"chunk_size"`
-	ChunkOverlap int `json:"chunk_overlap"`
+	ChunkSize         int                    `json:"chunk_size"`
+	ChunkOverlap      int                    `json:"chunk_overlap"`
+	Strategy          value.ChunkingStrategy `json:"strategy"`
+	EnableParentChild *bool                  `json:"enable_parent_child"`
+	ParentChunkSize   int                    `json:"parent_chunk_size"`
+	ChildChunkSize    int                    `json:"child_chunk_size"`
 }
 
 type updateKnowledgeBaseBasicsRequest struct {
@@ -75,6 +79,12 @@ func (h knowledgeBaseHandler) create(c *gin.Context) {
 		chunking := value.ChunkingConfig{
 			ChunkSize:    req.ChunkingConfig.ChunkSize,
 			ChunkOverlap: req.ChunkingConfig.ChunkOverlap,
+			Strategy:     req.ChunkingConfig.Strategy, ParentChunkSize: req.ChunkingConfig.ParentChunkSize, ChildChunkSize: req.ChunkingConfig.ChildChunkSize,
+		}
+		if req.ChunkingConfig.EnableParentChild != nil {
+			chunking.EnableParentChild = *req.ChunkingConfig.EnableParentChild
+		} else {
+			chunking.EnableParentChild = true
 		}
 		input.ChunkingConfig = &chunking
 	}

@@ -243,7 +243,7 @@ func generationChunkingConfig(input *value.ChunkingConfig, fallback map[string]a
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"chunk_size": input.ChunkSize, "chunk_overlap": input.ChunkOverlap}, nil
+	return map[string]any{"strategy": string(input.Strategy), "enable_parent_child": input.EnableParentChild, "parent_chunk_size": input.ParentChunkSize, "child_chunk_size": input.ChildChunkSize, "chunk_size": input.ChunkSize, "chunk_overlap": input.ChunkOverlap}, nil
 }
 
 func generationRetrievalConfig(input *RetrievalConfig, fallback map[string]any) (map[string]any, error) {

@@ -61,7 +61,12 @@ func (h indexGenerationHandler) create(c *gin.Context) {
 	var chunkingConfig *value.ChunkingConfig
 	if request.ChunkingConfig != nil {
 		chunkingConfig = &value.ChunkingConfig{
-			ChunkSize: request.ChunkingConfig.ChunkSize, ChunkOverlap: request.ChunkingConfig.ChunkOverlap,
+			ChunkSize: request.ChunkingConfig.ChunkSize, ChunkOverlap: request.ChunkingConfig.ChunkOverlap, Strategy: request.ChunkingConfig.Strategy, ParentChunkSize: request.ChunkingConfig.ParentChunkSize, ChildChunkSize: request.ChunkingConfig.ChildChunkSize,
+		}
+		if request.ChunkingConfig.EnableParentChild != nil {
+			chunkingConfig.EnableParentChild = *request.ChunkingConfig.EnableParentChild
+		} else {
+			chunkingConfig.EnableParentChild = true
 		}
 	}
 	result, err := h.service.Create(c.Request.Context(), service.CreateIndexGenerationInput{
