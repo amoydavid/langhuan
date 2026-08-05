@@ -43,12 +43,20 @@ File/Web/FAQ 导入
   -> 创建稳定 Document 身份与不可变 DocumentRevision
   -> File 进入独立知识库文件树；FAQ 原子保存问题集合与回答
   -> asynq 按 Revision 驱动 parse/chunk/index
-  -> DocumentChunkSet -> Chunk -> ChunkRevision 保存可追溯事实
-  -> EmbeddingClient 只处理 search_content
-  -> RetrievalEntry 同行保存 halfvec、FTS 与返回 content
+  -> DocumentChunkSet -> parent/child/flat Chunk -> ChunkRevision 保存可追溯事实
+  -> EmbeddingClient 只处理可检索 child/flat 的 search_content
+  -> RetrievalEntry 只为 child/flat 保存 halfvec、FTS 与返回内容
   -> 原子发布到唯一 active Generation
-  -> Vector + FTS + deterministic RRF 返回 evidence
+  -> Vector + FTS + deterministic RRF，按父块聚合后返回 evidence
 ```
+
+## 当前分块合同
+
+标准分块当前为 `chunker_version=3`。Generation 快照固定保存 `strategy`、`enable_parent_child`、`parent_chunk_size`、`child_chunk_size`、`chunk_size`、`chunk_overlap` 六个字段；默认使用 `auto` 策略、启用父子模式、父块 `4096` 字符、子块 `384` 字符。`auto` 会优先采用标题结构，再尝试启发式章节边界，最后回退 recursive。
+
+父子模式下，每个可检索 child 都必须有一个 parent；短文本也生成 parent + child。parent 持有完整返回上下文，不进入向量或全文索引，也不能直接编辑；child 是向量/FTS 召回单元。关闭父子模式时只有 flat，flat 同时承担召回与返回职责。检索会先召回 child/flat，再按 parent 聚合：主结果返回完整父块正文，`matched_children` 标明实际命中的 child；flat 以自身作为结果并在该字段中标记。
+
+PDF 经 MinerU Cloud 转为 Markdown 后，会重新建立结构化 `parse_manifest`，再进入与其它文件相同的分块路径。
 
 ## 分层规划
 
@@ -196,6 +204,8 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 目标：不依赖外部解析服务，先跑通 Markdown/TXT/CSV/XLSX/DOCX 的导入 -> normalized markdown -> chunk 全链路，形成稳定 chunk 模型。PDF/MinerU 暂不在本版本范围内（见 v0.7.0）。
 
+> 历史合同注记：本版本中的单层 `512/80` 分块是当时的交付基线；当前实际合同以「当前分块合同」的 v3 父子/flat 模式为准。
+
 - 实现 Markdown parser。
 - 实现 TXT parser。
 - 实现 CSV parser。
@@ -253,9 +263,9 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - Document kind 固定为 `file|faq|web`；文件类型、raw key、hash 与解析产物归属不可变 DocumentRevision。
 - FAQ 以“一组问题 + 一个回答”的完整 Revision 保存，固定生成一个 FAQ Chunk；问题进入 Embedding/FTS，召回返回回答。
 - File Document 使用独立 `file_tree_nodes` 组织；rename/move 不改变内容版本、对象键或 Generation。
-- 使用 `DocumentRevision -> DocumentChunkSet -> Chunk -> ChunkRevision` 保存解析、分块与人工编辑历史。
+- 使用 `DocumentRevision -> DocumentChunkSet -> Chunk -> ChunkRevision` 保存解析、分块与人工编辑历史；当前标准分块在 Chunk 层显式表达 parent/child/flat lineage。
 - 使用单 active、双缓冲 `knowledge_base_index_generations` 保存模型、分块和检索配置快照，支持重建、stale 检测和原子激活。
-- `retrieval_entries` 同行保存 `search_content`、返回 `content`、FTS 与 halfvec；投影可删除并从事实层重建。
+- `retrieval_entries` 同行保存 `search_content`、返回 `content`、FTS 与 halfvec；当前只为 child/flat 建立投影，父块正文在检索时作为完整上下文返回；投影可删除并从事实层重建。
 - 实现固定维度向量查询、PostgreSQL FTS 与确定性 RRF；File 返回当前树节点名，FAQ/Web 返回当前 Document 标题。
 - 实现 Chunk Revision 编辑/启停、Document 软删除、投影退役和有限批量保留清理。
 
@@ -296,7 +306,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - 将知识库详情重构为聚焦的工作台，至少包含：
   - 概览：当前模型、内容版本、active Generation、stale/构建状态和最近任务。
   - 内容：统一浏览 File 与 FAQ，文件使用真实 File Tree；Web 只展示已有数据合同，不在本版本实现 crawler。
-  - 检索测试：输入查询并展示融合分数、来源、metadata、chunk 内容和 document anchors，可继续定位到原文或 Chunk。
+  - 检索测试：输入查询并展示融合分数、来源、完整上下文、实际命中的 child/flat、metadata 和 document anchors，可继续定位到原文或 Chunk。
   - 索引：查看 Generation 历史、构建进度、失败原因、stale 状态，并为有权限的用户提供创建和激活操作。
   - 设置：管理知识库名称与描述；Embedding 模型、分块和检索配置通过新 Generation 构建并在激活后生效。
 - 补齐已有后端能力的管理界面：File Tree 文件夹/节点操作、FAQ 创建与编辑、Chunk 详情/修订/启停、Document/Job 进度和错误诊断。
@@ -370,12 +380,12 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
   - 处理 zip 内相对路径图片。
   - 通过统一的 SSRF-safe HTTP client 下载远程图片并上传到自有对象存储。
 - 保存服务端 MinerU Provider credential（支持过期、启停、轮换），不作为长期 YAML 配置。
-- 将 normalized Markdown、parse manifest 和 `document_assets` 归属到当前 Document Revision，继续进入统一 ChunkSet/Generation 流程。
+- 将 normalized Markdown、重新解析得到的结构化 parse manifest 和 `document_assets` 归属到当前 Document Revision，继续进入统一 ChunkSet/Generation 分块流程。
 - Web Console 补充 PDF 上传、解析阶段进度、warning、失败诊断和资产预览。
 
 验收标准：
 
-- PDF 经 MinerU Cloud 转成 Markdown，并通过统一事实层到达 active Generation、可被 REST/Web/MCP 检索。
+- PDF 经 MinerU Cloud 转成 Markdown，重新解析为结构化 manifest 后通过统一事实层到达 active Generation、可被 REST/Web/MCP 检索。
 - Markdown 中图片地址替换为自有对象存储地址；资产有 hash、mime、size、storage key 和访问合同记录。
 - 远程资源下载通过 DNS/IP/redirect 全链路 SSRF 防护，异常资源受大小、数量和超时限制。
 - 解析失败保存可诊断错误，重复 poll/index 不产生重复 Revision、Chunk 或 Asset。

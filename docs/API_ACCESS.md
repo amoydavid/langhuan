@@ -64,7 +64,49 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 
 越界（跨 Workspace、未绑定知识库或其下资源）统一返回 `404`，不泄漏存在性。成员、邀请、模型、设置、API Key 管理等路由仍为 Session-only，API Key 不可访问。
 
-## 5. MCP
+## 5. 分块与检索结果合同
+
+创建知识库或创建 Index Generation 时，`chunking_config` 使用以下六个字段：
+
+```json
+{
+  "strategy": "auto",
+  "enable_parent_child": true,
+  "parent_chunk_size": 4096,
+  "child_chunk_size": 384,
+  "chunk_size": 512,
+  "chunk_overlap": 80
+}
+```
+
+`strategy` 可为 `auto`、`heading`、`heuristic` 或 `recursive`。默认启用父子模式：`parent_chunk_size` 是返回完整上下文的父块上限，`child_chunk_size` 是检索子块上限，`chunk_overlap` 用于相邻父块上下文。关闭 `enable_parent_child` 后，仅产生扁平块，使用 `chunk_size` 和 `chunk_overlap`；不能产生没有父块的 child。
+
+`GET .../chunks/:chunk_id` 的响应包含 `role` 与可选的 `parent_chunk_id`。角色语义如下：
+
+- `parent`：完整上下文，只读，不进入向量或全文检索。
+- `child`：必须带 `parent_chunk_id`，是父子模式的检索单元。
+- `flat`：没有父块，关闭父子模式后的检索与返回单元。
+
+搜索先召回 child/flat，再按父块聚合。父子模式结果的 `chunk_id`、`content` 和 `source_anchor` 指向父块，`matched_children` 列出实际参与召回的子块；flat 结果以自身作为主结果，并在 `matched_children` 中以 `role: "flat"` 表示。单知识库搜索直接返回结果数组；多知识库搜索在 `results` 数组中返回同一结构：
+
+```json
+{
+  "chunk_id": "<parent-or-flat-chunk-id>",
+  "content": "完整父块正文或 flat 正文",
+  "score": 0.031,
+  "matched_children": [
+    {
+      "chunk_id": "<matched-child-or-flat-id>",
+      "role": "child",
+      "content": "实际命中的子块正文",
+      "score": 0.031,
+      "source_anchor": { "source_type": "markdown" }
+    }
+  ]
+}
+```
+
+## 6. MCP
 
 `/mcp` 只接受 `Authorization: Bearer <api-key>`，不接受浏览器 Cookie。MCP 客户端配置：
 
@@ -95,14 +137,14 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 
 `tools/list` 只返回当前 key scope 允许的工具；scope 不足直接 call 仍被拒绝。
 
-## 6. 到期、吊销与轮换
+## 7. 到期、吊销与轮换
 
 - 到期：默认 90 天，可选自定义天数或不限期（`expires_at=null`）。到期后下一次请求返回 `401`。
 - 吊销：在 Web Console 吊销，**下一次请求**起失效；已进入服务的请求不会被强制中断。
 - 重复吊销返回 `204`（幂等）。
 - 轮换顺序：创建新 key → 更新并验证客户端 → 吊销旧 key。
 
-## 7. 稳定错误码
+## 8. 稳定错误码
 
 | HTTP | Code | 场景 |
 |---:|---|---|
@@ -117,7 +159,7 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 
 MCP 业务错误以 `isError=true` 的结构化结果返回同一份 `{"error":{"code","message","retryable"}}`，不泄漏底层驱动或 Provider 细节。
 
-## 8. 安全须知
+## 9. 安全须知
 
 - 生产环境必须使用 HTTPS。
 - API Key 明文只在创建/Reveal 响应中短暂出现；数据库只存 SHA-256 hash（鉴权）与 AES-256-GCM 密文（reveal）。普通请求绝不解密密文。

@@ -78,14 +78,18 @@ documents
   └─ document_revisions
        ├─ faq_revision_contents + faq_revision_questions
        └─ document_chunk_sets
-            └─ chunks
+            └─ chunks (role=parent|child|flat)
+                 ├─ chunks (child.parent_chunk_id -> parent)
                  └─ chunk_revisions
 ```
 
 - Document 保存稳定身份、不可变 kind、当前 title/source/status 和 active Revision 指针。
 - `file_type`、原始文件名、raw storage key、hash、解析产物属于 DocumentRevision；重新分块不创建新 Revision。
 - FAQ 的问题集合与一个回答作为完整 Revision 原子保存；FAQ 固定生成一个 `strategy=faq` Chunk。
-- Chunk 保存来源事实；人工编辑追加 ChunkRevision，不覆盖 `source_content`。
+- Chunk 保存来源事实；人工编辑追加 ChunkRevision，不覆盖 `source_content`。标准分块的 `role` 固定为 `parent|child|flat`：`parent` 与 `flat` 的 `parent_chunk_id` 必须为 NULL，`child` 必须非 NULL。
+- `chunks_parent_fk` 通过 `(workspace_id, knowledge_base_id, document_id, document_revision_id, chunk_set_id, parent_chunk_id)` 复合外键约束 child 只能引用同一完整 lineage 内的父块；该约束为延迟约束，允许一个事务内先后写入父、子块。
+- 父子模式下，parent 保存完整返回上下文且只读，child 是唯一可检索、可编辑的最小单元；短文本同样必须生成 parent + child。关闭父子模式时仅写入可检索、可编辑的 flat，父块不是该模式的产物。
+- `chunks_role_sequence_key` 保证 `(workspace_id, chunk_set_id, role, sequence)` 唯一：父块、子块和 flat 分别排序，不以同一全局 sequence 混合表示层级。
 - `file_tree_nodes` 是独立组织投影，只组织 File Document，不承载对象存储路径、内容版本或权限继承。
 
 检索层由以下表构成：
@@ -95,12 +99,12 @@ knowledge_base_index_generations
   └─ retrieval_entries
 ```
 
-Generation 保存不可变的模型、分块和检索配置快照。KnowledgeBase 只有一个 active Generation；inactive Generation 构建完成后通过 compare-and-swap 激活。
+Generation 保存不可变的模型、分块和检索配置快照。标准分块的 v3 快照必须完整包含 `strategy`、`enable_parent_child`、`parent_chunk_size`、`child_chunk_size`、`chunk_size`、`chunk_overlap` 六个字段，且 ChunkSet 使用相同快照才能成为该 Generation 的有效分块产物。KnowledgeBase 只有一个 active Generation；inactive Generation 构建完成后通过 compare-and-swap 激活。
 
 RetrievalEntry 是可重建投影，不是 Chunk 权威内容：
 
 - `search_content` 用于 Embedding 与 FTS；`content` 是召回后返回正文。
-- 普通 File/Web 通常两者来自 ChunkRevision 的 embedding content / content。
+- 普通 File/Web 只为 enabled `child` 或 `flat` 创建 RetrievalEntry；`parent` 没有检索投影、Embedding、FTS 或 staging 记录。child 的 `search_content`/`content` 来自其 ChunkRevision，检索加载时再关联父块的完整正文、锚点和 metadata。
 - FAQ 的 `search_content` 只含所有问题，`content` 只含回答，因此问题可召回、答案独有词不会被索引。
 - RetrievalEntry 不保存权威 Document title；检索结果在同一 Workspace 上下文读取当前 Document，并对 File 读取当前 file node 名称。
 
@@ -148,7 +152,7 @@ WHERE dimension = 1024 AND state = 'published'
 
 不得把维度作为任意字符串插入 SQL；代码只在四条固定 SQL 中选择。集成测试使用 `EXPLAIN` 与 `enable_seqscan=off` 证明命中对应 HNSW 索引。
 
-FTS 在 staging 时由 `to_tsvector(config, search_content)` 生成并保存。查询只匹配保存的 `fts_document`，不能从返回用 `content` 临时重建，否则会破坏 FAQ 的“索引问题、返回回答”语义。
+FTS 在 staging 时由 `to_tsvector(config, search_content)` 生成并保存。查询只匹配保存的 `fts_document`，不能从返回用 `content` 临时重建，否则会破坏 FAQ 的“索引问题、返回回答”语义。父块没有 staging Entry，因此不会写入 FTS 或向量列。
 
 ### 7.1 中文全文检索（zhparser）
 
@@ -274,7 +278,7 @@ SELECT to_tsvector('public.zhparser'::regconfig, '人工智能驱动的知识管
 - KB 创建：KnowledgeBase + root node + 空 ready Generation；
 - File 导入：Document + 唯一 file node + DocumentRevision + Job；
 - FAQ 更新：完整 Revision + answer + 全量 questions + Job；
-- 发布：校验 staging 完整性，退役旧投影，发布新投影，切换 Document/Chunk 指针并推进 content version；
+- 发布：只要求 enabled 且可检索的 child/flat 各有一个完整 staging Entry；parent 不计入期望数。随后退役旧投影，发布新投影，切换 Document/Chunk 指针并推进 content version；
 - Generation 激活：锁定 KB/candidate/base，校验 base pointer 和 content version，退役旧代并切换唯一 active 指针；
 - Document 删除：先退役投影，软删除 Document；File 同事务移除唯一 file node，FAQ/Web 不触碰树。
 
@@ -299,7 +303,7 @@ Cleanup 仍然必须进入 `WithinWorkspace`，不允许用无租户的全表后
 - 迁移位于 `internal/infrastructure/migrate/migrations/`，版本严格递增，每个 up 有对应 down。
 - 迁移不访问对象存储，不修改授权、Workspace、用户、session、邀请、API token 或 Model/Provider 合同，除非任务明确要求。
 - Repository 约束与原生 SQL 优先使用真实 PostgreSQL 集成测试，不 mock GORM。
-- 租户表测试至少覆盖同 Workspace 成功、跨 Workspace/KB 拒绝、空/错误 lineage、并发冲突与 transaction-local `app.workspace_id`。
+- 租户表测试至少覆盖同 Workspace 成功、跨 Workspace/KB 拒绝、空/错误 lineage、并发冲突与 transaction-local `app.workspace_id`。父子分块还必须覆盖：child 缺父块被拒绝、跨 Document/Revision/ChunkSet 父引用被拒绝、parent 不产生 RetrievalEntry、enabled child/flat 的 staging 完整性，以及关闭父子模式仅产生 flat。
 
 常用门禁：
 

@@ -76,6 +76,7 @@ erDiagram
     DOCUMENT_REVISION ||--o{ FAQ_REVISION_QUESTION : questions
     DOCUMENT_REVISION ||--o{ DOCUMENT_CHUNK_SET : chunked_as
     DOCUMENT_CHUNK_SET ||--o{ CHUNK : contains
+    CHUNK ||--o{ CHUNK : parents
     CHUNK ||--o{ CHUNK_REVISION : edited_as
 ```
 
@@ -107,9 +108,18 @@ content: 回答
 
 ### 4.3 ChunkSet、Chunk 与 ChunkRevision
 
-DocumentChunkSet 表示一次分块产物，配置 hash 使构建可幂等复用。普通 File/Web 使用 Generation 的 `strategy=standard` 分块配置；FAQ 永远使用独立、版本化的 `strategy=faq`，不受普通分块配置改变影响。
+DocumentChunkSet 表示一次分块产物，配置 hash 使构建可幂等复用。普通 File/Web 使用 Generation 的 `strategy=standard` 分块配置；其中的 `chunking_config.strategy` 选择边界策略（`auto|heading|heuristic|recursive`）。FAQ 永远使用独立、版本化的 `strategy=faq`，不受普通分块配置改变影响。
 
-Chunk 保存稳定来源、sequence、source content 和 SourceAnchor。系统或用户内容保存在 ChunkRevision；人工编辑追加 Revision，并通过 `base_revision_id` 做乐观并发控制。启停也是新 Revision，不覆盖来源事实。
+Chunk 保存稳定来源、sequence、source content 和 SourceAnchor。标准分块使用以下角色合同：
+
+- 父子模式（默认启用）同时生成 `parent` 和 `child`。`parent` 保存完整上下文，只用于结果返回，`parent_chunk_id` 必须为空，不能直接编辑或启停；每个 `child` 必须通过同一 Workspace/KB/Document/Revision/ChunkSet 内的 `parent_chunk_id` 关联一个父块。
+- `child` 是向量与全文召回的最小单元；短文本也必须生成一个父块和一个子块，不能退化为无父块的 child。
+- 关闭父子模式时，只生成 `flat`，其 `parent_chunk_id` 为空，且自身既是召回单元也是返回正文。父块不是 flat 模式的必需产物。
+- `parent` 与 `flat` 的 sequence 各自独立；child sequence 在同一角色内稳定排序。相邻父块可按 `chunk_overlap` 保留上下文，但 child 只归属一个 parent，父块正文不会因子块 overlap 重复拼接。
+
+系统或用户内容保存在 ChunkRevision；`child` 与 `flat` 的人工编辑追加 Revision，并通过 `base_revision_id` 做乐观并发控制。启停也是新 Revision，不覆盖来源事实；父块由分块配置派生，始终只读。
+
+Generation 的标准分块快照在 `chunker_version=3` 时固定保存六个字段：`strategy`、`enable_parent_child`、`parent_chunk_size`、`child_chunk_size`、`chunk_size`、`chunk_overlap`。默认值为 `auto`、`true`、`4096`、`384`、`512`、`80`。父子模式使用前两个尺寸分别控制返回上下文和召回粒度，`chunk_overlap` 用于相邻父块；flat 模式使用 `chunk_size/chunk_overlap`。`auto` 优先利用标题结构，纯文本使用启发式章节边界，不能识别时回退 recursive。
 
 ## 5. 独立 File Tree
 
@@ -160,7 +170,7 @@ KnowledgeBase 的当前 Embedding model、chunking config 和 retrieval config �
 
 ## 7. RetrievalEntry 与混合检索
 
-`retrieval_entries` 同行保存 lineage、`search_content`、返回用 `content`、`fts_document`、`halfvec embedding` 和状态。只有 active Generation 的 `published` 行可查询。
+`retrieval_entries` 同行保存 lineage、`search_content`、返回用 `content`、`fts_document`、`halfvec embedding` 和状态。父块永不产生 RetrievalEntry；只有启用的 `child` 或 `flat` 会进入 staging，并且只有 active Generation 的 `published` 行可查询。
 
 ```mermaid
 flowchart TD
@@ -169,20 +179,22 @@ flowchart TD
     Vector["pgvector topK"]
     FTS["PostgreSQL FTS topK"]
     RRF["deterministic RRF"]
-    Evidence["current Document / file-node name + content + anchor"]
+    Group["按有效父块聚合"]
+    Evidence["当前标题 + 完整父块正文 + matched_children"]
 
     Query --> Resolve
     Resolve --> Vector
     Query --> FTS
     Vector --> RRF
     FTS --> RRF
-    RRF --> Evidence
+    RRF --> Group --> Evidence
 ```
 
 - 向量维度只允许 798、1024、2048、3584；代码选择四条固定 halfvec SQL。
 - 查询 cast、distance expression 和 dimension predicate 必须与对应 HNSW 部分索引完全一致。
 - FTS 只查询保存的 `fts_document`，不从返回 `content` 重建。
 - RRF 在 application 层确定性融合；同分按 UUID 升序。
+- 子块命中会按其有效父块聚合，避免同一父块的多个子块占用多个结果名额。结果的 `chunk_id`、`content`、`source_anchor` 指向父块；`matched_children` 保留参与召回的 child 及其分数和锚点。flat 命中保持自身为结果，并在 `matched_children` 中以 `role=flat` 表示。
 - evidence 不信任 RetrievalEntry 中的标题快照。File 返回当前 node name；FAQ/Web 返回当前 `documents.title`。
 - Search 只返回 evidence，不生成 LLM 答案。
 
@@ -198,6 +210,8 @@ raw validation/storage
   -> embed search_content + stage RetrievalEntry
   -> atomic publish and pointer switch
 ```
+
+PDF 先由 MinerU Cloud 解析为 Markdown，再由 Markdown parser 重建结构化 `parse_manifest`，随后进入与其它 File 相同的标准分块与索引流程；不会直接按 MinerU 原始文本片段写入 Chunk。
 
 FAQ：
 
@@ -241,8 +255,10 @@ POST   /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents
 POST   /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/faq
 GET    /api/v1/workspaces/:workspace_slug/documents/:document_id
 DELETE /api/v1/workspaces/:workspace_slug/documents/:document_id
+GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/chunks/:chunk_id
 GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/file-tree
 POST   /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/search
+POST   /api/v1/workspaces/:workspace_slug/search
 GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/index-generations
 ```
 
@@ -261,6 +277,6 @@ duration 必须大于 0；batch 必须为 1–10000。Cleanup service 已在 run
 
 ## 12. 验证与后续边界
 
-数据库验收覆盖复合外键、FAQ 完整性、文件树 cycle/name/delete、Revision 冲突、Generation 原子切换、FAQ 答案不入索引、HNSW 表达式兼容、跨租户负向矩阵和 Auth/Model 数据保留。
+数据库验收覆盖复合外键、FAQ 完整性、父子分块 lineage 与 flat 回退、父块不入索引、完整父块检索上下文、文件树 cycle/name/delete、Revision 冲突、Generation 原子切换、FAQ 答案不入索引、HNSW 表达式兼容、跨租户负向矩阵和 Auth/Model 数据保留。
 
-当前非目标：正式 RLS policy、crawler、Chunk/FAQ 完整 Web 编辑器、完整 File Tree Web UI、MCP 业务 tools、Workspace API token、PDF/MinerU、Rerank、LLM 回答生成与图查询。
+当前非目标：正式 RLS policy、crawler、Rerank、LLM 回答生成与图查询。
