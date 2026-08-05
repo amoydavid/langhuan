@@ -144,6 +144,17 @@ func TestRerankResolverBuildsVisibleActiveClient(t *testing.T) {
 	if got.Client == nil || got.ModelID != rerankModel.ID || got.MaxDocuments != 100 || got.MaxQueryChars != 4096 || got.MaxDocumentChars != 8192 {
 		t.Fatalf("resolved client = %#v", got)
 	}
+	if got.ModelConfigHash == "" {
+		t.Fatalf("resolved client missing ModelConfigHash = %#v", got)
+	}
+	// 重复 resolve 应得到相同 hash（确定性，credential rotation 不影响）。
+	got2, err := resolver.Resolve(context.Background(), workspaceID, rerankModel.ID)
+	if err != nil {
+		t.Fatalf("second resolve error = %v", err)
+	}
+	if got2.ModelConfigHash != got.ModelConfigHash {
+		t.Fatalf("hash not deterministic: %q vs %q", got.ModelConfigHash, got2.ModelConfigHash)
+	}
 }
 
 func TestModelServiceListSelectableFiltersByType(t *testing.T) {

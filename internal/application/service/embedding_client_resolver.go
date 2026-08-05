@@ -14,10 +14,12 @@ import (
 )
 
 // ResolvedEmbeddingClient is a validated runtime client plus its immutable model facts.
+// ModelConfigHash 用于在检索时与 Generation 快照对比，检测配置漂移。
 type ResolvedEmbeddingClient struct {
 	Client                embeddingport.EmbeddingClient
 	ModelID, ProviderID   uuid.UUID
 	ModelName             string
+	ModelConfigHash       string
 	Dimensions, BatchSize int
 }
 
@@ -105,10 +107,27 @@ func buildResolvedEmbeddingClient(
 	if client == nil || client.Dimension() != dimensions {
 		return nil, fmt.Errorf("%w: configured=%d client=%d", domainerrors.ErrDimensionMismatch, dimensions, clientDimension(client))
 	}
+	configHash, err := embeddingModelConfigHash(resolved)
+	if err != nil {
+		return nil, err
+	}
 	return &ResolvedEmbeddingClient{
 		Client: client, ModelID: resolved.Model.ID, ProviderID: resolved.Provider.ID,
-		ModelName: resolved.Model.ModelName, Dimensions: dimensions, BatchSize: batchSize,
+		ModelName: resolved.Model.ModelName, ModelConfigHash: configHash,
+		Dimensions: dimensions, BatchSize: batchSize,
 	}, nil
+}
+
+// embeddingModelConfigHash 计算 Embedding 模型的 config hash，包含 dimensions。
+func embeddingModelConfigHash(resolved *model.ResolvedModel) (string, error) {
+	if resolved == nil || resolved.Model == nil || resolved.Provider == nil || resolved.Model.Dimensions == nil {
+		return "", fmt.Errorf("%w: Embedding 模型快照无效", domainerrors.ErrValidation)
+	}
+	return CanonicalConfigHash(map[string]any{
+		"provider": resolved.Provider.Provider, "provider_config": resolved.Provider.Config,
+		"model_name": resolved.Model.ModelName, "dimensions": *resolved.Model.Dimensions,
+		"parameters": resolved.Model.Parameters,
+	})
 }
 
 func embeddingBatchSize(parameters map[string]any) (int, error) {

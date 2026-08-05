@@ -15,12 +15,13 @@ import (
 )
 
 // ResolvedRerankClient 是校验通过后的运行时 Rerank 客户端及其不可变模型事实。
-// ModelConfigHash 将在 Task 7 引入 config hash 校验时补充。
+// ModelConfigHash 用于在检索时与 Generation 快照对比，检测配置漂移。
 type ResolvedRerankClient struct {
 	Client              rerankport.Client
 	ModelID, ProviderID uuid.UUID
 	ProviderKey         string
 	ModelName           string
+	ModelConfigHash     string
 	MaxDocuments        int
 	MaxQueryChars       int
 	MaxDocumentChars    int
@@ -116,12 +117,17 @@ func buildResolvedRerankClient(
 	if client == nil {
 		return nil, fmt.Errorf("%w: Rerank 客户端为空", domainerrors.ErrInvalidRerankResponse)
 	}
+	configHash, err := rerankModelConfigHash(resolved)
+	if err != nil {
+		return nil, err
+	}
 	return &ResolvedRerankClient{
 		Client:           client,
 		ModelID:          resolved.Model.ID,
 		ProviderID:       resolved.Provider.ID,
 		ProviderKey:      resolved.Provider.Provider,
 		ModelName:        resolved.Model.ModelName,
+		ModelConfigHash:  configHash,
 		MaxDocuments:     maxDocuments,
 		MaxQueryChars:    maxQueryChars,
 		MaxDocumentChars: maxDocumentChars,

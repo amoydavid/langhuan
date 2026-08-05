@@ -28,6 +28,17 @@ func TestEmbeddingClientResolverResolvesWorkspaceAndPlatformModels(t *testing.T)
 				resolved.Dimensions != 1024 || resolved.BatchSize != 32 {
 				t.Fatalf("resolved = %#v", resolved)
 			}
+			if resolved.ModelConfigHash == "" {
+				t.Fatalf("resolved missing ModelConfigHash = %#v", resolved)
+			}
+			// 重复 resolve 应得到相同 hash（确定性）。
+			resolved2, err := resolver.Resolve(context.Background(), workspaceID, item.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved2.ModelConfigHash != resolved.ModelConfigHash {
+				t.Fatalf("hash not deterministic: %q vs %q", resolved.ModelConfigHash, resolved2.ModelConfigHash)
+			}
 		})
 	}
 }
