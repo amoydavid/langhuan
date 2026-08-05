@@ -16,6 +16,7 @@ export function providerLabels(t: TFunction): Record<ProviderKey, string> {
     ollama: t('models.common.providerOllama'),
     dashscope: t('models.common.providerDashscope'),
     tencentcloud: t('models.common.providerTencentcloud'),
+    rerank_compatible: t('models.common.providerRerankCompatible'),
     mineru: t('models.common.providerMinerU'),
   }
 }
@@ -106,6 +107,17 @@ export function providerFormDefaults(
           : 'vlm') as 'vlm' | 'pipeline',
         token: '',
       }
+    case 'rerank_compatible':
+      return {
+        ...common,
+        provider: 'rerank_compatible',
+        base_url: configString(provider, 'base_url'),
+        endpoint_path: configString(provider, 'endpoint_path') || '/v1/rerank',
+        timeout_seconds: configNumber(provider, 'timeout_seconds', 30),
+        retry_times: configNumber(provider, 'retry_times', 2),
+        api_key: '',
+        custom_headers: '',
+      }
   }
 }
 
@@ -193,6 +205,25 @@ export function toCreateProviderRequest(
         },
         credentials: { token: values.token },
       }
+    case 'rerank_compatible': {
+      const customHeaders = parseCustomHeadersText(values.custom_headers)
+      return {
+        ...common,
+        provider: 'rerank_compatible',
+        config: {
+          base_url: values.base_url || undefined,
+          endpoint_path: values.endpoint_path,
+          timeout_seconds: values.timeout_seconds,
+          retry_times: values.retry_times,
+        },
+        credentials: {
+          api_key: values.api_key,
+          ...(Object.keys(customHeaders).length > 0
+            ? { custom_headers: customHeaders }
+            : {}),
+        },
+      }
+    }
   }
 }
 

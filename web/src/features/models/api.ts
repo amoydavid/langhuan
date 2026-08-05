@@ -6,6 +6,8 @@ import type {
   Model,
   ModelProvider,
   ModelScope,
+  ModelType,
+  ProviderOption,
   UpdateModelInput,
   UpdateModelProviderInput,
 } from './types'
@@ -61,10 +63,10 @@ export async function getModelProviderOptions(
   scope: ModelScope,
   workspaceSlug?: string
 ) {
-  const response = await apiClient.get<{ supported_providers: string[] }>(
+  const response = await apiClient.get<{ providers: ProviderOption[] }>(
     `${modelProviderCollectionPath(scope, workspaceSlug)}/options`
   )
-  return response.data.supported_providers
+  return response.data.providers
 }
 
 export async function getModelProvider(
@@ -167,6 +169,19 @@ export async function deleteModel(
   workspaceSlug?: string
 ) {
   await apiClient.delete(modelResourcePath(scope, modelId, workspaceSlug))
+}
+
+export async function listSelectableModels(
+  scope: ModelScope,
+  workspaceSlug: string | undefined,
+  type: ModelType,
+  active = false
+) {
+  const base = scopeBasePath(scope, workspaceSlug)
+  const response = await apiClient.get<Model[]>(
+    `${base}/models?type=${type}&active=${active}`
+  )
+  return response.data
 }
 
 export async function testModel(

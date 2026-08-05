@@ -19,6 +19,7 @@ import {
   type ModelScope,
   modelFormDefaults,
 } from '../types'
+import { RerankModelForm } from './rerank-model-form'
 
 type ModelFormProps = {
   provider: ModelProvider
@@ -26,6 +27,13 @@ type ModelFormProps = {
   workspaceSlug?: string
   model?: Model
   onSaved?: (model: Model) => void
+}
+
+export function ModelForm(props: ModelFormProps) {
+  if (props.provider.provider === 'rerank_compatible') {
+    return <RerankModelForm {...props} />
+  }
+  return <EmbeddingModelForm {...props} />
 }
 
 function numberParameter(
@@ -37,7 +45,7 @@ function numberParameter(
   return typeof value === 'number' ? value : fallback
 }
 
-export function ModelForm({
+export function EmbeddingModelForm({
   provider,
   scope,
   workspaceSlug,

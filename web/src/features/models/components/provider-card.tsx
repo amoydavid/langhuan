@@ -23,6 +23,7 @@ export function ProviderCard({
     ollama: t('models.common.providerOllama'),
     dashscope: t('models.common.providerDashscope'),
     tencentcloud: t('models.common.providerTencentcloud'),
+    rerank_compatible: t('models.common.providerRerankCompatible'),
     mineru: t('models.common.providerMinerU'),
   }
   const href =

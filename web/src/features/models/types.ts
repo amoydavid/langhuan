@@ -1,12 +1,14 @@
 export type ModelScope = 'workspace' | 'platform'
 export type ModelStatus = 'active' | 'disabled'
-export type ModelType = 'embedding'
+export type ModelType = 'embedding' | 'rerank'
+export type ProviderCapability = 'embedding' | 'rerank' | 'parser'
 export type ProviderKey =
   | 'openai'
   | 'ark'
   | 'ollama'
   | 'dashscope'
   | 'tencentcloud'
+  | 'rerank_compatible'
   | 'mineru'
 
 export const embeddingDimensions = [798, 1024, 2048, 3584] as const
@@ -21,6 +23,21 @@ export const modelFormDefaults = {
   batch_size: 32,
   truncate: false,
   keep_alive_seconds: undefined as number | undefined,
+}
+
+export const rerankModelFormDefaults = {
+  name: '',
+  display_name: '',
+  description: '',
+  model_name: '',
+  max_documents: 100,
+  max_query_chars: 4096,
+  max_document_chars: 8192,
+}
+
+export type ProviderOption = {
+  key: ProviderKey
+  capabilities: ProviderCapability[]
 }
 
 export type ModelProvider = {
@@ -58,7 +75,7 @@ export type Model = {
   description: string
   type: ModelType
   model_name: string
-  dimensions: EmbeddingDimension
+  dimensions?: EmbeddingDimension | null
   parameters: Record<string, unknown>
   status: ModelStatus
   reference_count: number
@@ -117,6 +134,19 @@ export type CreateModelProviderInput = ModelProviderInputBase &
         credentials: { secret_id: string; secret_key: string }
       }
     | {
+        provider: 'rerank_compatible'
+        config: {
+          base_url?: string
+          endpoint_path: string
+          timeout_seconds: number
+          retry_times: number
+        }
+        credentials: {
+          api_key: string
+          custom_headers?: Record<string, string>
+        }
+      }
+    | {
         provider: 'mineru'
         config: { base_url?: string; model_version: string }
         credentials: { token: string }
@@ -137,7 +167,7 @@ export type CreateModelInput = {
   description: string
   type: ModelType
   model_name: string
-  dimensions: EmbeddingDimension
+  dimensions?: EmbeddingDimension
   parameters: Record<string, unknown>
 }
 
@@ -152,6 +182,8 @@ export type UpdateModelInput = {
 
 export type ConnectionTestResult = {
   ok: boolean
-  dimensions?: number
+  type?: ModelType
+  dimensions?: number | null
+  result_count?: number | null
   duration_ms: number
 }

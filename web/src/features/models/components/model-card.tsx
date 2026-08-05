@@ -52,12 +52,18 @@ export function ModelCard({
             </p>
           </div>
           <div className='flex flex-wrap items-center gap-2 text-muted-foreground text-xs'>
-            <span className='inline-flex items-center gap-1.5 rounded-md border px-2 py-1'>
-              <Braces className='size-3.5' />
-              {t('models.modelCard.dimensions', {
-                count: model.dimensions,
-              })}
-            </span>
+            {model.type === 'embedding' && model.dimensions ? (
+              <span className='inline-flex items-center gap-1.5 rounded-md border px-2 py-1'>
+                <Braces className='size-3.5' />
+                {t('models.modelCard.dimensions', {
+                  count: model.dimensions,
+                })}
+              </span>
+            ) : (
+              <span className='inline-flex items-center gap-1.5 rounded-md border px-2 py-1'>
+                {t('models.common.modelTypeRerank')}
+              </span>
+            )}
             <span className='inline-flex items-center gap-1.5 rounded-md border px-2 py-1'>
               <Activity className='size-3.5' />
               {t('models.modelCard.referenceCount', {

@@ -5,9 +5,15 @@ import { dashScopeProviderSchema } from './dashscope'
 import { minerUProviderSchema } from './mineru'
 import { ollamaProviderSchema } from './ollama'
 import { openAIProviderSchema } from './openai'
+import { rerankCompatibleProviderSchema } from './rerank-compatible'
 import { tencentCloudProviderSchema } from './tencentcloud'
 
-export { type ModelFormValues, modelFormSchema } from './common'
+export {
+  type ModelFormValues,
+  modelFormSchema,
+  type RerankModelFormValues,
+  rerankModelFormSchema,
+} from './common'
 
 export const providerFormSchema = z
   .discriminatedUnion('provider', [
@@ -16,6 +22,7 @@ export const providerFormSchema = z
     ollamaProviderSchema,
     dashScopeProviderSchema,
     tencentCloudProviderSchema,
+    rerankCompatibleProviderSchema,
     minerUProviderSchema,
   ])
   .superRefine((values, context) => {

@@ -130,20 +130,20 @@ export function ProviderForm({
   })
 
   const labels = providerLabels(t)
-  // 从后端获取当前可用的 provider 键（mineru 仅在 mineru.enabled=true 时返回），
+  // 从后端获取当前可用的 provider 选项（含 capability；mineru 仅在 mineru.enabled=true 时返回），
   // 据此过滤下拉选项，避免展示后端拒绝创建的 Provider。
-  const { data: supportedProviders = [] } = useQuery({
+  const { data: providerOptionsData = [] } = useQuery({
     queryKey: ['model-provider-options', scope, workspaceSlug ?? null],
     queryFn: () => getModelProviderOptions(scope, workspaceSlug),
     enabled: !provider,
     staleTime: 60_000,
   })
-  const availableKeys = new Set(supportedProviders)
+  const availableKeys = new Set(providerOptionsData.map((option) => option.key))
   const providerOptions = (Object.keys(labels) as ProviderKey[]).filter(
     (key) =>
       (scope === 'platform' || key !== 'ollama') &&
       (provider !== undefined ||
-        supportedProviders.length === 0 ||
+        providerOptionsData.length === 0 ||
         availableKeys.has(key))
   )
 

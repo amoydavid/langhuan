@@ -60,3 +60,44 @@ export const modelFormSchema = z
   .strict()
 
 export type ModelFormValues = z.infer<typeof modelFormSchema>
+
+export const rerankModelFormSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .regex(/^[a-z][a-z0-9_-]{0,63}$/, {
+        error: () => i18n.t('models.schemas.modelNameLowercase'),
+      }),
+    display_name: z
+      .string()
+      .trim()
+      .min(1, { error: () => i18n.t('models.schemas.displayNameRequired') })
+      .max(255),
+    description: z.string().trim().max(2000),
+    model_name: z
+      .string()
+      .trim()
+      .min(1, { error: () => i18n.t('models.schemas.modelNameRequired') })
+      .max(255),
+    max_documents: z
+      .number()
+      .int()
+      .min(50, { error: () => i18n.t('models.schemas.maxDocumentsRange') })
+      .max(200, { error: () => i18n.t('models.schemas.maxDocumentsRange') }),
+    max_query_chars: z
+      .number()
+      .int()
+      .min(256, { error: () => i18n.t('models.schemas.maxQueryCharsRange') })
+      .max(4096, { error: () => i18n.t('models.schemas.maxQueryCharsRange') }),
+    max_document_chars: z
+      .number()
+      .int()
+      .min(512, { error: () => i18n.t('models.schemas.maxDocumentCharsRange') })
+      .max(32768, {
+        error: () => i18n.t('models.schemas.maxDocumentCharsRange'),
+      }),
+  })
+  .strict()
+
+export type RerankModelFormValues = z.infer<typeof rerankModelFormSchema>
