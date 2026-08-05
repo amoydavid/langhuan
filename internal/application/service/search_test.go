@@ -123,6 +123,25 @@ func TestSearchUsesActiveGenerationDefaultsAndReturnsFusedEvidence(t *testing.T)
 	}
 }
 
+func TestSearchGroupsChildrenUnderReturnedParent(t *testing.T) {
+	workspaceID, knowledgeBaseID, generationID := uuid.New(), uuid.New(), uuid.New()
+	modelID, providerID, parentID := uuid.New(), uuid.New(), uuid.New()
+	entryA, entryB := uuid.New(), uuid.New()
+	generation := &model.IndexGeneration{ID: generationID, WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID, EmbeddingModelID: modelID, ProviderID: providerID, ModelName: "embed", EmbeddingDimension: 1024, Status: value.IndexGenerationReady, RetrievalConfig: map[string]any{"fts_config": "simple", "vector_top_k": 2, "keyword_top_k": 2, "final_top_k": 2, "rrf_k": 60}}
+	repo := &searchRepositoryFake{generation: generation, vector: []indexport.SearchCandidate{{EntryID: entryA, Score: 0.9}, {EntryID: entryB, Score: 0.8}}, evidence: map[uuid.UUID]indexport.SearchEvidence{
+		entryA: {EntryID: entryA, ChunkID: parentID, ChunkRevisionID: uuid.New(), DocumentID: uuid.New(), DocumentKind: value.DocumentKindFile, Content: "完整父块", DocumentName: "guide.md", SourceAnchor: value.SourceAnchor{SourceType: "markdown"}, MatchedChunkID: uuid.New(), MatchedChunkRevisionID: uuid.New(), MatchedContent: "命中片段一", MatchedRole: value.ChunkRoleChild},
+		entryB: {EntryID: entryB, ChunkID: parentID, ChunkRevisionID: uuid.New(), DocumentID: uuid.New(), DocumentKind: value.DocumentKindFile, Content: "完整父块", DocumentName: "guide.md", SourceAnchor: value.SourceAnchor{SourceType: "markdown"}, MatchedChunkID: uuid.New(), MatchedChunkRevisionID: uuid.New(), MatchedContent: "命中片段二", MatchedRole: value.ChunkRoleChild},
+	}}
+	service := NewSearchService(SearchServiceDeps{Repository: repo, Resolver: &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{Client: &chunkRevisionEmbeddingSpy{dimension: 1024}, ModelID: modelID, ProviderID: providerID, ModelName: "embed", Dimensions: 1024}}})
+	got, err := service.Search(context.Background(), SearchInput{WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID, Query: "配置"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ChunkID != parentID || got[0].Content != "完整父块" || len(got[0].MatchedChildren) != 2 {
+		t.Fatalf("results=%#v", got)
+	}
+}
+
 func TestSearchRejectsOversizedCandidateTopKOverride(t *testing.T) {
 	oversized := 1001
 	generation := &model.IndexGeneration{RetrievalConfig: map[string]any{
