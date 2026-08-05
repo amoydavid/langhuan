@@ -13,7 +13,7 @@
 - Domain 与 application 不导入或持有 `*gorm.DB`；所有数据库查询显式带 `workspace_id`。
 - parent-child 外键必须包含 workspace、KB、document、revision 与 ChunkSet lineage；数据库测试仅用临时 pgvector + zhparser Docker 容器。
 - File/Web 使用 standard chunker v3；FAQ 保持 `strategy=faq` 单块，不能进入父子路径。
-- parent 只读且不创建 RetrievalEntry；child 是唯一可编辑、Embedding、FTS 的层。
+- parent 只读且不创建 RetrievalEntry；v3 的 File/Web 文档始终同时持久化 parent 与 child，child 是唯一可编辑、Embedding、FTS 的层；仅 v2 扁平 ChunkSet 可存在无 parent 的 child。
 - `content` 保持最终返回正文；Search 新增 `matched_children`。普通 UI 不显示 UUID、hash、原始 metadata 或 payload。
 - 管理台复用现有 AppShell、shadcn/Radix、TanStack Query、共享 axios client 和工程绿语义 token；禁止 `any` 与组件内 `fetch`。
 - 每个任务遵循测试先行，使用中文 Conventional Commit；迁移和结构重组不得夹带无关行为改变。
@@ -263,13 +263,13 @@ type chunkDraft struct {
 }
 ```
 
-`heading` 依据 manifest heading path 切分并写 breadcrumb；`heuristic` 仅在普通 text block 识别分页符、编号章节、中英文标题、全大写与分隔线；`recursive` 使用段落、换行、句末优先边界。每种策略先保护 code block、表格完整行与重复表头，再校验大小/碎片率，失败按 heading → heuristic → recursive 回退。parent 使用 `ParentChunkSize/ChunkOverlap`，child 使用 `ChildChunkSize/ChildChunkSize/5`；关闭父子只生成 child。单一且完全相同的 child 删除冗余 parent。先为 parent 分配 UUID，再赋给 child；parent system revision 为 `ready`，child 为 `pending`。v3 全字段进入 config hash，Generation version 差异也必须触发 rechunk。
+`heading` 依据 manifest heading path 切分并写 breadcrumb；`heuristic` 仅在普通 text block 识别分页符、编号章节、中英文标题、全大写与分隔线；`recursive` 使用段落、换行、句末优先边界。每种策略先保护 code block、表格完整行与重复表头，再校验大小/碎片率，失败按 heading → heuristic → recursive 回退。parent 使用 `ParentChunkSize/ChunkOverlap`，child 使用 `ChildChunkSize/ChildChunkSize/5`；关闭父子只生成 child。开启父子时，即使只有一个且正文完全相同的 child，也必须持久化 parent。先为 parent 分配 UUID，再赋给 child；parent system revision 为 `ready`，child 为 `pending`。v3 全字段进入 config hash，Generation version 差异也必须触发 rechunk。
 
 - [ ] **Step 4: 运行 pipeline 回归。**
 
 Run: `go test ./internal/application/pipeline -count=1`
 
-Expected: PASS；覆盖中文 rune、短文本 parent 消除、标题 breadcrumb、表格行/表头、代码保护与确定性。
+Expected: PASS；覆盖中文 rune、短文本 parent/child 同时持久化、标题 breadcrumb、表格行/表头、代码保护与确定性。
 
 - [ ] **Step 5: 提交。**
 
@@ -517,7 +517,7 @@ Expected: FAIL，平铺卡片未提供 parent group。
 
 - [ ] **Step 3: Write minimal implementation.**
 
-Zod schema 加 `role: z.enum(['parent','child'])` 和 `parent_chunk_id: z.uuid().nullable()`。Inspector 以 `Map<parentId, Chunk[]>` 按 parent sequence 渲染 `Collapsible` group、StatusBadge child 行和可访问按钮；没有 parent 的 child 归入独立分块。parent Dialog 仅显示全文、来源和 child 数；child Dialog 显示只读完整上下文并可编辑。文件路由只传 RoleChild 给 `ChunkRevisionForm`；关闭 Dialog 删除 `chunk` search 并恢复焦点。
+Zod schema 加 `role: z.enum(['parent','child'])` 和 `parent_chunk_id: z.uuid().nullable()`。Inspector 以 `Map<parentId, Chunk[]>` 按 parent sequence 渲染 `Collapsible` group、StatusBadge child 行和可访问按钮；只有 v2 兼容读取中的无 parent child 才归入独立分块。parent Dialog 仅显示全文、来源和 child 数；child Dialog 显示只读完整上下文并可编辑。文件路由只传 RoleChild 给 `ChunkRevisionForm`；关闭 Dialog 删除 `chunk` search 并恢复焦点。
 
 - [ ] **Step 4: Run test to verify it passes.**
 
@@ -645,5 +645,5 @@ git commit -m "test: 覆盖父子分块全链路"
 ## 实施前复核
 
 - 配置、角色、迁移、ChunkSet、PDF 结构化、child-only index、父级聚合、REST/MCP、表单、检查器、检索卡与响应式测试均有任务覆盖。
-- 后续类型在 Task 1、Task 5 或 Task 6 定义；所有查询 workspace-scoped；FAQ、短文本和 v2 flat ChunkSet 有明确回退。
+- 后续类型在 Task 1、Task 5 或 Task 6 定义；所有查询 workspace-scoped；FAQ、v3 短文本的严格 parent-child 关系和 v2 flat ChunkSet 兼容读取均有明确规则。
 - 每个任务先失败、后实现、再回归并单独提交；计划不连接本机长期数据库。

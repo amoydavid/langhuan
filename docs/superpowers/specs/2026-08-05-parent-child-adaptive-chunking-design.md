@@ -36,7 +36,7 @@ FAQ 保持现有的单一 `strategy=faq` 语义，不使用父子分块。
 
 父、子均拥有完整 lineage、`source_content`、SourceAnchor、metadata 与首个 system ChunkRevision。parent 是由当前分块配置派生的上下文容器，在管理台只读；child 继续沿用现有人工 revision 编辑能力。检索始终匹配 child 的有效 revision，并返回其派生 parent 的完整正文；父块不会被人工编辑为与召回文本无关的独立内容。
 
-对一个 parent 只产生一个、且正文完全相同的 child 时，不持久化冗余 parent；该 child 以自身作为最终上下文，行为等价于返回 parent 全文。
+v3 的 File/Web 文档即使只产生一个、且正文与唯一 child 完全相同的 parent，也必须同时持久化 parent 与 child。这样 child 一律可检索、parent 一律可返回；仅已存在的 v2 扁平 ChunkSet 保持 child 无 parent 的兼容读取语义。
 
 迁移使用 workspace/KB/document/revision/chunk-set 复合外键与约束，确保 parent-child 关联不能跨租户或跨分块集，并为 parent 查询建立索引。
 
@@ -54,7 +54,7 @@ chunker v3 与新的完整配置共同参与 ChunkSet config hash。已激活的
 
 查询先对 child 执行既有 vector、FTS、RRF。融合结果再按 parent 聚合：同一 parent 只返回一次，采用其命中 child 的最高融合分数。结果：
 
-- `content` 是 parent 全文（短文本无持久化 parent 时为 child 全文）。
+- `content` 是 parent 全文；已存在的 v2 扁平 ChunkSet 因没有 parent 而返回 child 全文。
 - source anchor 和 metadata 指向最终返回正文。
 - 新增 `matched_children`，记录命中 child 的 ID、锚点、片段与分数，便于高亮与溯源。
 
@@ -87,7 +87,7 @@ chunker v3 与新的完整配置共同参与 ChunkSet config hash。已激活的
 
 ### 文档分块检查器
 
-文件详情的既有「分块」Tab 改为层级检查器。桌面端以 parent 作为可展开组，child 为组内可选择卡片；无冗余 parent 的短文本显示为单独 child 卡片。查询参数继续使用现有 `?chunk=<child-id>` 选择和深链，打开检索来源时始终定位到命中的 child。
+文件详情的既有「分块」Tab 改为层级检查器。桌面端以 parent 作为可展开组，child 为组内可选择卡片；v3 短文本也显示为仅含一个 child 的 parent 组。历史 v2 扁平 ChunkSet 显示为独立 child 卡片。查询参数继续使用现有 `?chunk=<child-id>` 选择和深链，打开检索来源时始终定位到命中的 child。
 
 ```text
 分块  [仅看可检索内容 □]                     共 12 个子块
@@ -135,7 +135,7 @@ Generation 构建中时，索引页保留候选代次的真实状态；不虚构
 实施遵循测试先行，覆盖：
 
 - auto 的选择、输出校验与降级；标题 breadcrumb、代码完整性、表格行和表头规则；
-- 父子关联、短文本冗余 parent 消除、锚点与 sequence 的确定性；
+- 父子关联、短文本 parent/child 同时持久化、锚点与 sequence 的确定性；
 - child-only 索引、按 parent 去重、父块正文和 matched child 返回；
 - v2 到 v3 的重新分块与 Generation 原子发布；
 - REST/MCP 配置输入、响应兼容性和参数校验；
