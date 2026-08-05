@@ -80,6 +80,19 @@ func TestChunkEditCreatesPendingUserRevisionAndQueuesIndex(t *testing.T) {
 	}
 }
 
+func TestChunkEditRejectsParent(t *testing.T) {
+	store := newFakeChunkRevisionStore(value.DocumentKindFile)
+	store.chunk.Role = value.ChunkRoleParent
+	service := NewChunkRevisionService(store, &fakeChunkRevisionQueue{})
+	_, err := service.Create(context.Background(), CreateChunkRevisionInput{WorkspaceID: store.chunk.WorkspaceID, KnowledgeBaseID: store.chunk.KnowledgeBaseID, ChunkID: store.chunk.ID, BaseRevisionID: *store.chunk.ActiveRevisionID, Content: "不能编辑", Enabled: true, EditorUserID: uuid.New(), ActorRole: value.RoleAdmin})
+	if !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("error=%v", err)
+	}
+	if store.createdRevision != nil {
+		t.Fatalf("created=%#v", store.createdRevision)
+	}
+}
+
 func TestChunkRevisionGetAndListExposeEditorDisplayName(t *testing.T) {
 	store := newFakeChunkRevisionStore(value.DocumentKindWeb)
 	nickname := "林墨"

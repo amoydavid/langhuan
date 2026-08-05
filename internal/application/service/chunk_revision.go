@@ -124,6 +124,9 @@ func (s *ChunkRevisionService) Create(ctx context.Context, input CreateChunkRevi
 		if chunk.WorkspaceID != input.WorkspaceID || chunk.KnowledgeBaseID != input.KnowledgeBaseID {
 			return domainerrors.ErrNotFound
 		}
+		if chunk.Role == value.ChunkRoleParent {
+			return fmt.Errorf("%w: 父块由分块配置派生，不能直接编辑", domainerrors.ErrValidation)
+		}
 		document, err := tx.GetDocumentForUpdate(txCtx, chunk.DocumentID)
 		if err != nil {
 			return err
