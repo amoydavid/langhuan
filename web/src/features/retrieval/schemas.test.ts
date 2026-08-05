@@ -26,6 +26,22 @@ describe('retrievalResultsSchema', () => {
         vector_score: 0.84,
         keyword_score: 12.31,
         metadata: {},
+        matched_children: [
+          {
+            chunk_id: chunkId,
+            chunk_revision_id: revisionId,
+            role: 'child',
+            content: '通过 DATABASE_DSN 指定 PostgreSQL。',
+            source_anchor: {
+              source_type: 'markdown',
+              line_start: 24,
+              line_end: 31,
+            },
+            score: 0.0325,
+            vector_score: 0.84,
+            keyword_score: 12.31,
+          },
+        ],
       },
     ])
 

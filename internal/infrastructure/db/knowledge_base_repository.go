@@ -263,6 +263,18 @@ func knowledgeBaseResolvedFromRow(row *knowledgeBaseResolvedRow) (*model.Resolve
 	if overlap, ok := intFromJSON(row.GenerationChunkingConfig["chunk_overlap"]); ok {
 		chunking.ChunkOverlap = overlap
 	}
+	if strategy, ok := row.GenerationChunkingConfig["strategy"].(string); ok {
+		chunking.Strategy = value.ChunkingStrategy(strategy)
+	}
+	if enabled, ok := row.GenerationChunkingConfig["enable_parent_child"].(bool); ok {
+		chunking.EnableParentChild = enabled
+	}
+	if parentSize, ok := intFromJSON(row.GenerationChunkingConfig["parent_chunk_size"]); ok {
+		chunking.ParentChunkSize = parentSize
+	}
+	if childSize, ok := intFromJSON(row.GenerationChunkingConfig["child_chunk_size"]); ok {
+		chunking.ChildChunkSize = childSize
+	}
 	kb.ChunkingConfig = chunking.Normalize()
 	return &model.ResolvedKnowledgeBase{
 		KnowledgeBase: kb, EmbeddingModel: resolved,

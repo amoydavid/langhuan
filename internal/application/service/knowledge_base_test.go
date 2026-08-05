@@ -165,6 +165,10 @@ func TestCreateKnowledgeBaseCreatesActiveEmptyGeneration(t *testing.T) {
 	if generation == nil || generation.ID != *kb.ActiveIndexGenerationID || generation.Status != value.IndexGenerationReady || generation.ChunkerVersion != value.StandardChunkerVersion {
 		t.Fatalf("generation = %#v", generation)
 	}
+	if generation.ChunkingConfig["strategy"] != "auto" || generation.ChunkingConfig["enable_parent_child"] != true ||
+		generation.ChunkingConfig["parent_chunk_size"] != 4096 || generation.ChunkingConfig["child_chunk_size"] != 384 {
+		t.Fatalf("generation chunking config = %#v", generation.ChunkingConfig)
+	}
 	if created.ActiveIndexGenerationID == nil || *created.ActiveIndexGenerationID != generation.ID || created.FileTreeRootID != root.ID {
 		t.Fatalf("created DTO pointers = %#v", created)
 	}

@@ -108,7 +108,7 @@ describe('RetrievalTest', () => {
         )
       )
       .toBeVisible()
-    await expect.element(screen.getByText('RRF 0.0325')).toBeVisible()
+    await expect.element(screen.getByText('RRF 0.0325').first()).toBeVisible()
     await expect.element(screen.getByText('返回完整上下文')).toBeVisible()
     await expect.element(screen.getByText('命中片段 1')).toBeVisible()
     expect(document.body.textContent).not.toContain('3.25%')
@@ -125,7 +125,7 @@ describe('RetrievalTest', () => {
       />
     )
 
-    await expect.element(screen.getByText('第 24–31 行')).toBeVisible()
+    await expect.element(screen.getByText('第 24–31 行').first()).toBeVisible()
     await expect.element(screen.getByText('Docker 部署')).toBeVisible()
     await expect
       .element(screen.getByRole('link', { name: '查看来源' }))

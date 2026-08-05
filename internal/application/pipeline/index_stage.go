@@ -87,6 +87,13 @@ func (s IndexStage) Run(
 	texts := make([]string, 0, len(source.Chunks))
 	for index, chunk := range source.Chunks {
 		revision := source.Revisions[index]
+		role := chunk.Role
+		if role == "" {
+			role = value.ChunkRoleFlat
+		}
+		if !role.IsRetrievable() {
+			continue
+		}
 		if !revision.Enabled {
 			continue
 		}
@@ -165,7 +172,7 @@ func validateIndexSource(workspaceID uuid.UUID, generation *model.IndexGeneratio
 	}
 	for index, chunk := range source.Chunks {
 		revision := source.Revisions[index]
-		if chunk == nil || revision == nil || chunk.Sequence != index ||
+		if chunk == nil || revision == nil ||
 			chunk.WorkspaceID != workspaceID || chunk.KnowledgeBaseID != generation.KnowledgeBaseID ||
 			chunk.ChunkSetID != source.ChunkSet.ID || chunk.DocumentID != source.ChunkSet.DocumentID ||
 			chunk.DocumentRevisionID != source.ChunkSet.DocumentRevisionID ||
@@ -173,6 +180,16 @@ func validateIndexSource(workspaceID uuid.UUID, generation *model.IndexGeneratio
 			revision.ChunkSetID != chunk.ChunkSetID || chunk.ActiveRevisionID == nil ||
 			*chunk.ActiveRevisionID != revision.ID {
 			return fmt.Errorf("%w: IndexSource chunk %d lineage 无效", domainerrors.ErrValidation, index)
+		}
+		role := chunk.Role
+		if role == "" {
+			role = value.ChunkRoleFlat
+		}
+		if err := role.Validate(); err != nil {
+			return fmt.Errorf("%w: IndexSource chunk %d role 无效", domainerrors.ErrValidation, index)
+		}
+		if role == value.ChunkRoleChild && chunk.ParentChunkID == nil {
+			return fmt.Errorf("%w: IndexSource child chunk %d 缺少 parent", domainerrors.ErrValidation, index)
 		}
 	}
 	return nil

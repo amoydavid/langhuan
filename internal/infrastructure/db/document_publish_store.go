@@ -138,7 +138,7 @@ func (tx *documentPublishTx) PublishDocument(
 	if generationRow.IndexedContentVersion != knowledgeBaseRow.ContentVersion {
 		return domainerrors.ErrGenerationStale
 	}
-	if err := tx.requireCompleteStaging(ctx, generationID, revisions, entries); err != nil {
+	if err := tx.requireCompleteStaging(ctx, generationID, chunks, revisions, entries); err != nil {
 		return err
 	}
 
@@ -243,12 +243,17 @@ func (tx *documentPublishTx) PublishDocument(
 func (tx *documentPublishTx) requireCompleteStaging(
 	ctx context.Context,
 	generationID uuid.UUID,
+	chunks []*model.Chunk,
 	revisions []*model.ChunkRevision,
 	entries []*model.RetrievalEntry,
 ) error {
 	expected := make(map[uuid.UUID]uuid.UUID)
-	for _, revision := range revisions {
-		if revision.Enabled {
+	for index, revision := range revisions {
+		role := chunks[index].Role
+		if role == "" {
+			role = value.ChunkRoleFlat
+		}
+		if revision.Enabled && role.IsRetrievable() {
 			expected[revision.ChunkID] = revision.ID
 		}
 	}
@@ -303,12 +308,23 @@ func validateDocumentPublication(
 	}
 	for index, chunk := range chunks {
 		revision := revisions[index]
-		if chunk == nil || revision == nil || chunk.Sequence != index ||
+		if chunk == nil || revision == nil ||
 			chunk.WorkspaceID != workspaceID || chunk.ChunkSetID != chunkSet.ID ||
 			revision.WorkspaceID != workspaceID || revision.ChunkID != chunk.ID ||
 			revision.ChunkSetID != chunkSet.ID {
 			return uuid.Nil, fmt.Errorf("%w: Document publication chunk %d 无效", domainerrors.ErrValidation, index)
 		}
+		role := chunk.Role
+		if role == "" {
+			role = value.ChunkRoleFlat
+		}
+		if err := role.Validate(); err != nil || (role == value.ChunkRoleChild && chunk.ParentChunkID == nil) {
+			return uuid.Nil, fmt.Errorf("%w: Document publication chunk %d role 无效", domainerrors.ErrValidation, index)
+		}
+	}
+	chunksByID := make(map[uuid.UUID]*model.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		chunksByID[chunk.ID] = chunk
 	}
 	generationID := uuid.Nil
 	for _, entry := range entries {
@@ -316,6 +332,17 @@ func validateDocumentPublication(
 			entry.DocumentID != document.ID || entry.DocumentRevisionID != chunkSet.DocumentRevisionID ||
 			entry.ChunkSetID != chunkSet.ID || entry.State != value.RetrievalEntryStaging {
 			return uuid.Nil, fmt.Errorf("%w: Document publication entry lineage 无效", domainerrors.ErrValidation)
+		}
+		chunk, ok := chunksByID[entry.ChunkID]
+		if !ok {
+			return uuid.Nil, fmt.Errorf("%w: Document publication entry 指向未知 Chunk", domainerrors.ErrValidation)
+		}
+		role := chunk.Role
+		if role == "" {
+			role = value.ChunkRoleFlat
+		}
+		if !role.IsRetrievable() {
+			return uuid.Nil, fmt.Errorf("%w: Document publication entry 不能指向 parent Chunk", domainerrors.ErrValidation)
 		}
 		if generationID == uuid.Nil {
 			generationID = entry.IndexGenerationID

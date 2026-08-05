@@ -42,6 +42,8 @@ func buildInitialKnowledgeBaseState(kb *model.KnowledgeBase, resolved *model.Res
 		return nil, nil, err
 	}
 	chunkingConfig := map[string]any{
+		"strategy": string(kb.ChunkingConfig.Strategy), "enable_parent_child": kb.ChunkingConfig.EnableParentChild,
+		"parent_chunk_size": kb.ChunkingConfig.ParentChunkSize, "child_chunk_size": kb.ChunkingConfig.ChildChunkSize,
 		"chunk_size": kb.ChunkingConfig.ChunkSize, "chunk_overlap": kb.ChunkingConfig.ChunkOverlap,
 	}
 	retrieval := DefaultRetrievalConfig()

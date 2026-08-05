@@ -18,7 +18,14 @@ describe('knowledgeBaseResponseSchema', () => {
         dimensions: 1024,
         available: true,
       },
-      chunking_config: { chunk_size: 512, chunk_overlap: 80 },
+      chunking_config: {
+        strategy: 'auto',
+        enable_parent_child: true,
+        parent_chunk_size: 4096,
+        child_chunk_size: 384,
+        chunk_size: 512,
+        chunk_overlap: 80,
+      },
       retrieval_config: {
         fts_config: 'simple',
         vector_top_k: 30,
