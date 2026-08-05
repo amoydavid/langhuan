@@ -8,7 +8,7 @@ import (
 	einotencentcloud "github.com/cloudwego/eino-ext/components/embedding/tencentcloud"
 
 	embeddingadapter "github.com/dajee/langhuan/internal/adapters/embedding"
-	"github.com/dajee/langhuan/internal/adapters/embedding/internal/factoryutil"
+	"github.com/dajee/langhuan/internal/adapters/providerutil"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
 )
@@ -37,11 +37,11 @@ func (f *Factory) CredentialFields() []string { return []string{"secret_id", "se
 
 func (f *Factory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[string]any, []byte, error) {
 	config := ProviderConfig{}
-	if err := factoryutil.DecodeStrict(input.Config, &config, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(input.Config, &config, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, nil, err
 	}
 	credentials := Credentials{}
-	if err := factoryutil.DecodeStrict(input.Credentials, &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(input.Credentials, &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, nil, err
 	}
 	config.Region = strings.TrimSpace(config.Region)
@@ -53,17 +53,17 @@ func (f *Factory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[s
 	if credentials.SecretID == "" || credentials.SecretKey == "" {
 		return nil, nil, domainerrors.ErrCredentialsRequired
 	}
-	configMap, err := factoryutil.ToMap(config)
+	configMap, err := providerutil.ToMap(config)
 	if err != nil {
 		return nil, nil, err
 	}
-	credentialsJSON, err := factoryutil.ToJSON(credentials)
+	credentialsJSON, err := providerutil.ToJSON(credentials)
 	return configMap, credentialsJSON, err
 }
 
 func (f *Factory) DecodeModel(input embeddingport.ModelDecodeInput) (map[string]any, error) {
 	parameters := ModelParameters{}
-	if err := factoryutil.DecodeStrict(input.Parameters, &parameters, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(input.Parameters, &parameters, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(input.ModelName) != "hunyuan-embedding" {
@@ -72,20 +72,20 @@ func (f *Factory) DecodeModel(input embeddingport.ModelDecodeInput) (map[string]
 	if input.Dimensions != 1024 {
 		return nil, domainerrors.ErrUnsupportedEmbeddingDimension
 	}
-	return factoryutil.ToMap(parameters)
+	return providerutil.ToMap(parameters)
 }
 
 func (f *Factory) NewClient(ctx context.Context, input embeddingport.ClientInput) (embeddingport.EmbeddingClient, error) {
 	var config ProviderConfig
 	var credentials Credentials
 	var parameters ModelParameters
-	if err := factoryutil.DecodeMap(input.Config, &config); err != nil {
+	if err := providerutil.DecodeMap(input.Config, &config); err != nil {
 		return nil, err
 	}
-	if err := factoryutil.DecodeStrict(json.RawMessage(input.CredentialsJSON), &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(json.RawMessage(input.CredentialsJSON), &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, err
 	}
-	if err := factoryutil.DecodeMap(input.Parameters, &parameters); err != nil {
+	if err := providerutil.DecodeMap(input.Parameters, &parameters); err != nil {
 		return nil, err
 	}
 	embedder, err := einotencentcloud.NewEmbedder(ctx, &einotencentcloud.EmbeddingConfig{SecretID: credentials.SecretID, SecretKey: credentials.SecretKey, Region: config.Region})

@@ -1,6 +1,10 @@
-// Package factoryutil contains the shared serialization and HTTP boundary used
-// by the concrete Embedding Provider factories.
-package factoryutil
+// Package providerutil contains the shared serialization and HTTP boundary
+// used by both the Embedding and Rerank Provider factories.
+//
+// 它把跨能力复用的 strict JSON、typed map、Provider 超时/批量/维度校验
+// 和 SSRF-safe HTTP client 构造集中在一处，避免每个 adapter 重新实现或
+// 继续耦合在 embedding 内部包里。
+package providerutil
 
 import (
 	"bytes"

@@ -10,7 +10,7 @@ import (
 	einoark "github.com/cloudwego/eino-ext/components/embedding/ark"
 
 	embeddingadapter "github.com/dajee/langhuan/internal/adapters/embedding"
-	"github.com/dajee/langhuan/internal/adapters/embedding/internal/factoryutil"
+	"github.com/dajee/langhuan/internal/adapters/providerutil"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
 )
@@ -46,11 +46,11 @@ func (f *Factory) CredentialFields() []string { return []string{"api_key", "acce
 
 func (f *Factory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[string]any, []byte, error) {
 	config := ProviderConfig{Region: "cn-beijing", TimeoutSeconds: 60, RetryTimes: 2}
-	if err := factoryutil.DecodeStrict(input.Config, &config, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(input.Config, &config, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, nil, err
 	}
 	credentials := Credentials{}
-	if err := factoryutil.DecodeStrict(input.Credentials, &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(input.Credentials, &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, nil, err
 	}
 	config.BaseURL = strings.TrimSpace(config.BaseURL)
@@ -59,7 +59,7 @@ func (f *Factory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[s
 	if config.Region == "" {
 		config.Region = "cn-beijing"
 	}
-	if err := factoryutil.ValidateTimeout(config.TimeoutSeconds); err != nil {
+	if err := providerutil.ValidateTimeout(config.TimeoutSeconds); err != nil {
 		return nil, nil, err
 	}
 	if config.RetryTimes < 0 || config.RetryTimes > 5 {
@@ -79,45 +79,45 @@ func (f *Factory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[s
 	default:
 		return nil, nil, fmt.Errorf("%w: auth_mode 必须是 api_key 或 ak_sk", domainerrors.ErrInvalidProviderConfig)
 	}
-	if _, err := factoryutil.NewHTTPClient(input.Scope, config.BaseURL, time.Duration(config.TimeoutSeconds)*time.Second, nil); err != nil {
+	if _, err := providerutil.NewHTTPClient(input.Scope, config.BaseURL, time.Duration(config.TimeoutSeconds)*time.Second, nil); err != nil {
 		return nil, nil, err
 	}
-	configMap, err := factoryutil.ToMap(config)
+	configMap, err := providerutil.ToMap(config)
 	if err != nil {
 		return nil, nil, err
 	}
-	credentialsJSON, err := factoryutil.ToJSON(credentials)
+	credentialsJSON, err := providerutil.ToJSON(credentials)
 	return configMap, credentialsJSON, err
 }
 
 func (f *Factory) DecodeModel(input embeddingport.ModelDecodeInput) (map[string]any, error) {
 	parameters := ModelParameters{BatchSize: 32}
-	if err := factoryutil.DecodeStrict(input.Parameters, &parameters, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(input.Parameters, &parameters, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, err
 	}
-	if err := factoryutil.ValidateEmbeddingModel(input.ModelName, input.Dimensions); err != nil {
+	if err := providerutil.ValidateEmbeddingModel(input.ModelName, input.Dimensions); err != nil {
 		return nil, err
 	}
-	if err := factoryutil.ValidateBatchSize(parameters.BatchSize); err != nil {
+	if err := providerutil.ValidateBatchSize(parameters.BatchSize); err != nil {
 		return nil, err
 	}
-	return factoryutil.ToMap(parameters)
+	return providerutil.ToMap(parameters)
 }
 
 func (f *Factory) NewClient(ctx context.Context, input embeddingport.ClientInput) (embeddingport.EmbeddingClient, error) {
 	var config ProviderConfig
 	var credentials Credentials
 	var parameters ModelParameters
-	if err := factoryutil.DecodeMap(input.Config, &config); err != nil {
+	if err := providerutil.DecodeMap(input.Config, &config); err != nil {
 		return nil, err
 	}
-	if err := factoryutil.DecodeStrict(json.RawMessage(input.CredentialsJSON), &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
+	if err := providerutil.DecodeStrict(json.RawMessage(input.CredentialsJSON), &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return nil, err
 	}
-	if err := factoryutil.DecodeMap(input.Parameters, &parameters); err != nil {
+	if err := providerutil.DecodeMap(input.Parameters, &parameters); err != nil {
 		return nil, err
 	}
-	httpClient, err := factoryutil.NewHTTPClient(input.Scope, config.BaseURL, time.Duration(config.TimeoutSeconds)*time.Second, nil)
+	httpClient, err := providerutil.NewHTTPClient(input.Scope, config.BaseURL, time.Duration(config.TimeoutSeconds)*time.Second, nil)
 	if err != nil {
 		return nil, err
 	}
