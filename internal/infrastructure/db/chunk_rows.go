@@ -36,6 +36,8 @@ type ChunkRow struct {
 	DocumentID         uuid.UUID `gorm:"type:uuid;not null;index"`
 	DocumentRevisionID uuid.UUID `gorm:"type:uuid;not null;index"`
 	ChunkSetID         uuid.UUID `gorm:"type:uuid;not null;index"`
+	Role               string
+	ParentChunkID      *uuid.UUID `gorm:"type:uuid"`
 	Sequence           int
 	SourceContent      string
 	SourceAnchor       JSONMap `gorm:"type:jsonb"`

@@ -145,7 +145,7 @@ func TestChunkAndRevisionV2RowRoundTripPreservesSourceAndEditor(t *testing.T) {
 	one, two := 1, 2
 	chunk := &model.Chunk{
 		ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), DocumentID: uuid.New(),
-		DocumentRevisionID: uuid.New(), ChunkSetID: uuid.New(), Sequence: 4,
+		DocumentRevisionID: uuid.New(), ChunkSetID: uuid.New(), Role: value.ChunkRoleFlat, Sequence: 4,
 		SourceContent: "source", ActiveRevisionID: &activeRevisionID,
 		SourceAnchor: value.SourceAnchor{SourceType: "pdf", ParagraphStart: &one, ParagraphEnd: &two},
 		Metadata:     nil, CreatedAt: now,

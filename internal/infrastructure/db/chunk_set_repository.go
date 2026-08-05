@@ -236,13 +236,18 @@ func encodeChunkSetBuild(
 		if chunk == nil || revision == nil || chunk.WorkspaceID != workspaceID ||
 			chunk.KnowledgeBaseID != set.KnowledgeBaseID || chunk.DocumentID != set.DocumentID ||
 			chunk.DocumentRevisionID != set.DocumentRevisionID || chunk.ChunkSetID != set.ID ||
-			chunk.Sequence != index || revision.WorkspaceID != workspaceID ||
+			chunk.Sequence < 0 || revision.WorkspaceID != workspaceID ||
 			revision.KnowledgeBaseID != set.KnowledgeBaseID || revision.DocumentID != set.DocumentID ||
 			revision.DocumentRevisionID != set.DocumentRevisionID || revision.ChunkSetID != set.ID ||
 			revision.ChunkID != chunk.ID || revision.RevisionNo != 1 ||
 			revision.EditSource != value.ChunkEditSourceSystem || chunk.ActiveRevisionID == nil ||
 			*chunk.ActiveRevisionID != revision.ID {
 			return nil, nil, fmt.Errorf("%w: ChunkSet 第 %d 个 Chunk/system revision lineage 无效", domainerrors.ErrValidation, index)
+		}
+		if chunk.Role != "" {
+			if err := chunk.ValidateLineage(); err != nil {
+				return nil, nil, err
+			}
 		}
 		row, err := chunkV2ToRow(chunk)
 		if err != nil {

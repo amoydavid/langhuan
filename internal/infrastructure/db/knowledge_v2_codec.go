@@ -90,7 +90,7 @@ func documentRevisionFromRow(row *DocumentRevisionRow) (*model.DocumentRevision,
 		SizeBytes: row.SizeBytes, NormalizedMarkdown: dereferenceString(row.NormalizedMarkdown),
 		ParseManifest: manifest, ParserRawMarkdownKey: dereferenceString(row.ParserRawMarkdownKey),
 		ProcessingVersion: row.ProcessingVersion,
-		Status: value.DocumentRevisionStatus(row.Status), ErrorClass: row.ErrorClass, ErrorMessage: row.ErrorMessage,
+		Status:            value.DocumentRevisionStatus(row.Status), ErrorClass: row.ErrorClass, ErrorMessage: row.ErrorMessage,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, CompletedAt: row.CompletedAt,
 	}, nil
 }
@@ -188,10 +188,20 @@ func chunkV2ToRow(chunk *model.Chunk) (*ChunkRow, error) {
 	if err := chunk.SourceAnchor.Validate(); err != nil {
 		return nil, fmt.Errorf("编码 Chunk source anchor 失败: %w", err)
 	}
+	role := chunk.Role
+	if role == "" {
+		role = value.ChunkRoleFlat
+	}
+	copy := *chunk
+	copy.Role = role
+	if err := copy.ValidateLineage(); err != nil {
+		return nil, err
+	}
 	return &ChunkRow{
 		ID: chunk.ID, WorkspaceID: chunk.WorkspaceID, KnowledgeBaseID: chunk.KnowledgeBaseID,
 		DocumentID: chunk.DocumentID, DocumentRevisionID: chunk.DocumentRevisionID,
-		ChunkSetID: chunk.ChunkSetID, Sequence: chunk.Sequence, SourceContent: chunk.SourceContent,
+		ChunkSetID: chunk.ChunkSetID, Role: string(role), ParentChunkID: chunk.ParentChunkID,
+		Sequence: chunk.Sequence, SourceContent: chunk.SourceContent,
 		SourceAnchor: sourceAnchorToJSONMap(chunk.SourceAnchor), Metadata: normalizedJSONMap(chunk.Metadata),
 		ActiveRevisionID: chunk.ActiveRevisionID, CreatedAt: chunk.CreatedAt,
 	}, nil
@@ -205,7 +215,8 @@ func chunkV2FromRow(row *ChunkRow) (*model.Chunk, error) {
 	return &model.Chunk{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		DocumentID: row.DocumentID, DocumentRevisionID: row.DocumentRevisionID,
-		ChunkSetID: row.ChunkSetID, Sequence: row.Sequence, SourceContent: row.SourceContent,
+		ChunkSetID: row.ChunkSetID, Role: value.ChunkRole(row.Role), ParentChunkID: row.ParentChunkID,
+		Sequence: row.Sequence, SourceContent: row.SourceContent,
 		SourceAnchor: anchor, Metadata: normalizedDomainMap(row.Metadata),
 		ActiveRevisionID: row.ActiveRevisionID, CreatedAt: row.CreatedAt,
 	}, nil
