@@ -108,9 +108,16 @@ func (r *retrievalSearchReader) LoadEvidence(
 	}
 	var rows []searchEvidenceRow
 	if err := r.db.WithContext(ctx).Table("retrieval_entries AS re").Select(
-		"re.id AS entry_id, re.chunk_id, re.chunk_revision_id, re.document_id, "+
-			"d.kind AS document_kind, re.content, d.title AS document_title, "+
-			"ftn.name AS file_node_name, re.source_anchor, re.metadata",
+		"re.id AS entry_id, COALESCE(parent.id, child.id) AS chunk_id, COALESCE(parent_revision.id, re.chunk_revision_id) AS chunk_revision_id, re.document_id, "+
+			"d.kind AS document_kind, COALESCE(parent_revision.content, re.content) AS content, d.title AS document_title, "+
+			"ftn.name AS file_node_name, COALESCE(parent.source_anchor, re.source_anchor) AS source_anchor, COALESCE(parent.metadata, re.metadata) AS metadata, "+
+			"re.chunk_id AS matched_chunk_id, re.chunk_revision_id AS matched_chunk_revision_id, re.content AS matched_content, re.source_anchor AS matched_source_anchor, child.role AS matched_role",
+	).Joins(
+		"JOIN chunks AS child ON child.workspace_id = re.workspace_id AND child.id = re.chunk_id",
+	).Joins(
+		"LEFT JOIN chunks AS parent ON parent.workspace_id = child.workspace_id AND parent.id = child.parent_chunk_id",
+	).Joins(
+		"LEFT JOIN chunk_revisions AS parent_revision ON parent_revision.workspace_id = parent.workspace_id AND parent_revision.id = parent.active_revision_id",
 	).Joins(
 		"JOIN documents AS d ON d.workspace_id = re.workspace_id "+
 			"AND d.knowledge_base_id = re.knowledge_base_id AND d.id = re.document_id",
@@ -142,11 +149,21 @@ func (r *retrievalSearchReader) LoadEvidence(
 		if err != nil {
 			return nil, err
 		}
+		matchedAnchor, err := sourceAnchorFromJSONMap(row.MatchedSourceAnchor)
+		if err != nil {
+			return nil, err
+		}
+		matchedRole := value.ChunkRole(row.MatchedRole)
+		if err := matchedRole.Validate(); err != nil {
+			return nil, fmt.Errorf("Retrieval evidence matched role 无效: %w", err)
+		}
 		result[index] = indexport.SearchEvidence{
 			EntryID: row.EntryID, ChunkID: row.ChunkID, ChunkRevisionID: row.ChunkRevisionID,
 			DocumentID: row.DocumentID, DocumentKind: kind, Content: row.Content,
 			DocumentName: documentName, SourceAnchor: anchor,
-			Metadata: normalizedDomainMap(row.Metadata),
+			Metadata:       normalizedDomainMap(row.Metadata),
+			MatchedChunkID: row.MatchedChunkID, MatchedChunkRevisionID: row.MatchedChunkRevisionID,
+			MatchedContent: row.MatchedContent, MatchedSourceAnchor: matchedAnchor, MatchedRole: matchedRole,
 		}
 	}
 	return result, nil
@@ -159,9 +176,11 @@ type searchCandidateRow struct {
 
 type searchEvidenceRow struct {
 	EntryID, ChunkID, ChunkRevisionID, DocumentID uuid.UUID
+	MatchedChunkID, MatchedChunkRevisionID        uuid.UUID
 	DocumentKind, Content, DocumentTitle          string
+	MatchedContent, MatchedRole                   string
 	FileNodeName                                  *string
-	SourceAnchor, Metadata                        JSONMap
+	SourceAnchor, Metadata, MatchedSourceAnchor   JSONMap
 }
 
 func searchCandidatesFromRows(rows []searchCandidateRow) []indexport.SearchCandidate {

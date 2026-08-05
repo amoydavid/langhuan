@@ -100,9 +100,6 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 			return err
 		}
 		fused := ReciprocalRankFusion(vectorCandidates, keywordCandidates, options.rrfK)
-		if len(fused) > options.finalTopK {
-			fused = fused[:options.finalTopK]
-		}
 		entryIDs := make([]uuid.UUID, len(fused))
 		for index := range fused {
 			entryIDs[index] = fused[index].EntryID
@@ -118,15 +115,42 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 		if len(byID) != len(entryIDs) {
 			return fmt.Errorf("%w: Search evidence 不完整", domainerrors.ErrConflict)
 		}
-		results = make([]*dto.SearchResult, len(fused))
-		for index, candidate := range fused {
+		grouped := make(map[uuid.UUID]*dto.SearchResult, len(fused))
+		for _, candidate := range fused {
 			item, ok := byID[candidate.EntryID]
 			if !ok {
 				return fmt.Errorf("%w: Search evidence 缺少 entry", domainerrors.ErrConflict)
 			}
-			results[index] = dto.SearchResultFromEvidence(
-				item, candidate.Score, candidate.VectorScore, candidate.KeywordScore,
-			)
+			current := dto.SearchResultFromEvidence(item, candidate.Score, candidate.VectorScore, candidate.KeywordScore)
+			if prior := grouped[current.ChunkID]; prior != nil {
+				prior.MatchedChildren = append(prior.MatchedChildren, current.MatchedChildren[0])
+				if current.Score > prior.Score {
+					prior.Score, prior.VectorScore, prior.KeywordScore = current.Score, current.VectorScore, current.KeywordScore
+				}
+			} else {
+				grouped[current.ChunkID] = current
+			}
+		}
+		results = make([]*dto.SearchResult, 0, len(grouped))
+		for _, result := range grouped {
+			results = append(results, result)
+		}
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score > results[j].Score
+			}
+			return results[i].ChunkID.String() < results[j].ChunkID.String()
+		})
+		for _, result := range results {
+			sort.Slice(result.MatchedChildren, func(i, j int) bool {
+				if result.MatchedChildren[i].Score != result.MatchedChildren[j].Score {
+					return result.MatchedChildren[i].Score > result.MatchedChildren[j].Score
+				}
+				return result.MatchedChildren[i].ChunkID.String() < result.MatchedChildren[j].ChunkID.String()
+			})
+		}
+		if len(results) > options.finalTopK {
+			results = results[:options.finalTopK]
 		}
 		return nil
 	})

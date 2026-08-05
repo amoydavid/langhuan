@@ -20,9 +20,22 @@ type SearchResult struct {
 	VectorScore     *float64           `json:"vector_score,omitempty"`
 	KeywordScore    *float64           `json:"keyword_score,omitempty"`
 	Metadata        map[string]any     `json:"metadata"`
+	MatchedChildren []MatchedChild     `json:"matched_children"`
 	// KnowledgeBaseID/Name 为多知识库检索的来源归属；单库检索可为零值。
 	KnowledgeBaseID   uuid.UUID `json:"knowledge_base_id,omitempty"`
 	KnowledgeBaseName string    `json:"knowledge_base_name,omitempty"`
+}
+
+// MatchedChild is one retrievable child or flat chunk that contributed to a result.
+type MatchedChild struct {
+	ChunkID         uuid.UUID       `json:"chunk_id"`
+	ChunkRevisionID uuid.UUID       `json:"chunk_revision_id"`
+	Role            value.ChunkRole `json:"role"`
+	Content         string          `json:"content"`
+	SourceAnchor    map[string]any  `json:"source_anchor"`
+	Score           float64         `json:"score"`
+	VectorScore     *float64        `json:"vector_score,omitempty"`
+	KeywordScore    *float64        `json:"keyword_score,omitempty"`
 }
 
 // SearchResultFromEvidence combines current evidence with RRF and branch scores.
@@ -37,8 +50,17 @@ func SearchResultFromEvidence(
 		Content: evidence.Content, DocumentName: evidence.DocumentName,
 		SourceAnchor: searchSourceAnchorMap(evidence.SourceAnchor), Score: score,
 		VectorScore: vectorScore, KeywordScore: keywordScore,
-		Metadata: cloneDTOMap(evidence.Metadata),
+		Metadata:        cloneDTOMap(evidence.Metadata),
+		MatchedChildren: []MatchedChild{matchedChildFromEvidence(evidence, score, vectorScore, keywordScore)},
 	}
+}
+
+func matchedChildFromEvidence(evidence indexport.SearchEvidence, score float64, vectorScore, keywordScore *float64) MatchedChild {
+	chunkID, revisionID, content, anchor, role := evidence.MatchedChunkID, evidence.MatchedChunkRevisionID, evidence.MatchedContent, evidence.MatchedSourceAnchor, evidence.MatchedRole
+	if chunkID == uuid.Nil {
+		chunkID, revisionID, content, anchor, role = evidence.ChunkID, evidence.ChunkRevisionID, evidence.Content, evidence.SourceAnchor, value.ChunkRoleFlat
+	}
+	return MatchedChild{ChunkID: chunkID, ChunkRevisionID: revisionID, Role: role, Content: content, SourceAnchor: searchSourceAnchorMap(anchor), Score: score, VectorScore: vectorScore, KeywordScore: keywordScore}
 }
 
 func searchSourceAnchorMap(anchor value.SourceAnchor) map[string]any {

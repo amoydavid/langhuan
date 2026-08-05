@@ -38,6 +38,10 @@ type SearchEvidence struct {
 	Content, DocumentName                         string
 	SourceAnchor                                  value.SourceAnchor
 	Metadata                                      map[string]any
+	MatchedChunkID, MatchedChunkRevisionID        uuid.UUID
+	MatchedContent                                string
+	MatchedSourceAnchor                           value.SourceAnchor
+	MatchedRole                                   value.ChunkRole
 }
 
 // SearchReader performs candidate and evidence reads on one Workspace-bound transaction.
