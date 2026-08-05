@@ -41,6 +41,18 @@ type IndexGeneration struct {
 	ReadyAt               *time.Time                  `json:"ready_at,omitempty"`
 	ActivatedAt           *time.Time                  `json:"activated_at,omitempty"`
 	RetiredAt             *time.Time                  `json:"retired_at,omitempty"`
+	Rerank                *IndexGenerationRerank      `json:"rerank,omitempty"`
+}
+
+// IndexGenerationRerank 暴露 Generation 已固化的重排快照摘要。
+// 名称固定使用 Generation 已保存的 ModelName，不查询可变的 display_name；
+// 也不返回 config hash。
+type IndexGenerationRerank struct {
+	ModelID       uuid.UUID               `json:"model_id"`
+	ProviderID    uuid.UUID               `json:"provider_id"`
+	ModelName     string                  `json:"model_name"`
+	CandidateTopK int                     `json:"candidate_top_k"`
+	FailureMode   value.RerankFailureMode `json:"failure_mode"`
 }
 
 // IndexGenerationFromModel builds one API DTO.
@@ -48,7 +60,7 @@ func IndexGenerationFromModel(generation *model.IndexGeneration) *IndexGeneratio
 	if generation == nil {
 		return nil
 	}
-	return &IndexGeneration{
+	dto := &IndexGeneration{
 		ID: generation.ID, WorkspaceID: generation.WorkspaceID, KnowledgeBaseID: generation.KnowledgeBaseID,
 		BaseGenerationID: generation.BaseGenerationID, EmbeddingModelID: generation.EmbeddingModelID,
 		ProviderID: generation.ProviderID, ModelName: generation.ModelName,
@@ -65,6 +77,14 @@ func IndexGenerationFromModel(generation *model.IndexGeneration) *IndexGeneratio
 		CreatedAt: generation.CreatedAt, ReadyAt: generation.ReadyAt,
 		ActivatedAt: generation.ActivatedAt, RetiredAt: generation.RetiredAt,
 	}
+	if generation.Rerank != nil {
+		dto.Rerank = &IndexGenerationRerank{
+			ModelID: generation.Rerank.ModelID, ProviderID: generation.Rerank.ProviderID,
+			ModelName: generation.Rerank.ModelName, CandidateTopK: generation.Rerank.CandidateTopK,
+			FailureMode: generation.Rerank.FailureMode,
+		}
+	}
+	return dto
 }
 
 func indexGenerationDisplayLabel(generation *model.IndexGeneration) string {

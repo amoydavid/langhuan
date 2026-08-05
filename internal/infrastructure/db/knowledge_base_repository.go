@@ -30,7 +30,7 @@ func NewKnowledgeBaseRepository(db *gorm.DB) *KnowledgeBaseRepository {
 func (r *KnowledgeBaseRepository) Create(ctx context.Context, kb *model.KnowledgeBase) (*model.ResolvedModel, error) {
 	var resolved *model.ResolvedModel
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		item, provider, err := r.lockSelectableModel(ctx, tx, kb.WorkspaceID, kb.EmbeddingModelID)
+		item, provider, err := r.lockSelectableModel(ctx, tx, kb.WorkspaceID, kb.EmbeddingModelID, value.ModelTypeEmbedding)
 		if err != nil {
 			return err
 		}
@@ -52,7 +52,17 @@ func (r *KnowledgeBaseRepository) Create(ctx context.Context, kb *model.Knowledg
 
 // ResolveSelectable resolves an active visible Embedding model for a Workspace.
 func (r *KnowledgeBaseRepository) ResolveSelectable(ctx context.Context, workspaceID, modelID uuid.UUID) (*model.ResolvedModel, error) {
-	item, provider, err := r.lockSelectableModel(ctx, r.db, workspaceID, modelID)
+	item, provider, err := r.lockSelectableModel(ctx, r.db, workspaceID, modelID, value.ModelTypeEmbedding)
+	if err != nil {
+		return nil, err
+	}
+	return resolvedModelFromRows(item, provider)
+}
+
+// ResolveSelectableModel 解析当前 Workspace 可见、Provider/Model active、
+// 指定类型的可选模型快照，使用 FOR SHARE 锁。
+func (r *KnowledgeBaseRepository) ResolveSelectableModel(ctx context.Context, workspaceID, modelID uuid.UUID, modelType value.ModelType) (*model.ResolvedModel, error) {
+	item, provider, err := r.lockSelectableModel(ctx, r.db, workspaceID, modelID, modelType)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +152,7 @@ func (r *KnowledgeBaseRepository) UpdateBasics(ctx context.Context, input appser
 	})
 }
 
-func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *gorm.DB, workspaceID, modelID uuid.UUID) (*ModelRow, *ModelProviderRow, error) {
+func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *gorm.DB, workspaceID, modelID uuid.UUID, modelType value.ModelType) (*ModelRow, *ModelProviderRow, error) {
 	var item ModelRow
 	err := tx.WithContext(ctx).Table("models").Select("models.*").
 		Joins("JOIN model_providers ON model_providers.id = models.provider_id").
@@ -152,13 +162,13 @@ func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *g
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, domainerrors.ErrModelNotVisible
 		}
-		return nil, nil, fmt.Errorf("锁定 Embedding 模型失败: %w", err)
+		return nil, nil, fmt.Errorf("锁定可选模型失败: %w", err)
 	}
 	var provider ModelProviderRow
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "SHARE"}).First(&provider, "id = ?", item.ProviderID).Error; err != nil {
 		return nil, nil, fmt.Errorf("锁定模型 Provider 失败: %w", err)
 	}
-	if value.ModelType(item.Type) != value.ModelTypeEmbedding {
+	if value.ModelType(item.Type) != modelType {
 		return nil, nil, domainerrors.ErrUnsupportedModelType
 	}
 	if value.ModelStatus(provider.Status) != value.ModelStatusActive {
@@ -167,8 +177,10 @@ func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *g
 	if value.ModelStatus(item.Status) != value.ModelStatusActive {
 		return nil, nil, domainerrors.ErrModelDisabled
 	}
-	if item.Dimensions == nil || !value.IsSupportedEmbeddingDimension(*item.Dimensions) {
-		return nil, nil, domainerrors.ErrUnsupportedEmbeddingDimension
+	if modelType == value.ModelTypeEmbedding {
+		if item.Dimensions == nil || !value.IsSupportedEmbeddingDimension(*item.Dimensions) {
+			return nil, nil, domainerrors.ErrUnsupportedEmbeddingDimension
+		}
 	}
 	return &item, &provider, nil
 }

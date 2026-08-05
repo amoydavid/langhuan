@@ -236,6 +236,10 @@ func (b *generationModelBinder) ResolveSelectable(context.Context, uuid.UUID, uu
 	return b.resolved, nil
 }
 
+func (b *generationModelBinder) ResolveSelectableModel(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ value.ModelType) (*model.ResolvedModel, error) {
+	return b.resolved, nil
+}
+
 func testGenerationResolvedModel() *model.ResolvedModel {
 	dimension := 1024
 	return &model.ResolvedModel{

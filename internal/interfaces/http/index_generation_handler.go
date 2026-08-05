@@ -25,6 +25,28 @@ type createIndexGenerationRequest struct {
 	EmbeddingModelID uuid.UUID                `json:"embedding_model_id"`
 	ChunkingConfig   *chunkingConfigRequest   `json:"chunking_config"`
 	RetrievalConfig  *service.RetrievalConfig `json:"retrieval_config"`
+	Rerank           *rerankSelectionRequest  `json:"rerank"`
+}
+
+// rerankSelectionRequest 解析三态重排输入：enabled=true 要求 model_id/candidate_top_k/failure_mode。
+type rerankSelectionRequest struct {
+	Enabled       *bool                   `json:"enabled"`
+	ModelID       uuid.UUID               `json:"model_id"`
+	CandidateTopK int                     `json:"candidate_top_k"`
+	FailureMode   value.RerankFailureMode `json:"failure_mode"`
+}
+
+// toSelection 把请求转换为 service.RerankSelection；nil 表示省略（继承 base）。
+func (r *rerankSelectionRequest) toSelection() *service.RerankSelection {
+	if r == nil {
+		return nil
+	}
+	return &service.RerankSelection{
+		Enabled:       r.Enabled != nil && *r.Enabled,
+		ModelID:       r.ModelID,
+		CandidateTopK: r.CandidateTopK,
+		FailureMode:   r.FailureMode,
+	}
 }
 
 type activateIndexGenerationRequest struct {
@@ -73,6 +95,7 @@ func (h indexGenerationHandler) create(c *gin.Context) {
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID,
 		EmbeddingModelID: request.EmbeddingModelID, ChunkingConfig: chunkingConfig,
 		RetrievalConfig: request.RetrievalConfig, ActorRole: authCtx.Role,
+		Rerank: request.Rerank.toSelection(),
 	})
 	if err != nil {
 		writeServiceError(c, err)

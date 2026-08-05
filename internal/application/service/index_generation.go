@@ -21,6 +21,16 @@ const indexGenerationBuildJobType = "index_generation_build"
 // IndexGenerationModelResolver resolves a selectable immutable model snapshot.
 type IndexGenerationModelResolver interface {
 	ResolveSelectable(context.Context, uuid.UUID, uuid.UUID) (*model.ResolvedModel, error)
+	// ResolveSelectableModel 解析指定类型的可选模型快照（embedding 或 rerank）。
+	ResolveSelectableModel(context.Context, uuid.UUID, uuid.UUID, value.ModelType) (*model.ResolvedModel, error)
+}
+
+// RerankSelection 描述创建 Generation 时的重排显式三态输入。
+type RerankSelection struct {
+	Enabled       bool                    `json:"enabled"`
+	ModelID       uuid.UUID               `json:"model_id"`
+	CandidateTopK int                     `json:"candidate_top_k"`
+	FailureMode   value.RerankFailureMode `json:"failure_mode"`
 }
 
 // IndexGenerationServiceDeps contains generation lifecycle dependencies.
@@ -44,6 +54,9 @@ type CreateIndexGenerationInput struct {
 	ChunkingConfig               *value.ChunkingConfig
 	RetrievalConfig              *RetrievalConfig
 	ActorRole                    value.WorkspaceRole
+	// Rerank 为 nil 表示继承 base Generation 的重排选择；显式 enabled=false 关闭；
+	// enabled=true 时 model_id/candidate_top_k/failure_mode 全部必填。
+	Rerank *RerankSelection
 }
 
 // ActivateIndexGenerationInput carries the explicit activation confirmation.
@@ -115,7 +128,11 @@ func (s *IndexGenerationService) Create(ctx context.Context, input CreateIndexGe
 		if err != nil {
 			return err
 		}
-		modelHash, configHash, err := generationConfigHashes(resolved, chunkingConfig, retrievalConfig)
+		rerankSnapshot, err := s.resolveRerankSelection(txCtx, input.WorkspaceID, input.Rerank, base.Rerank)
+		if err != nil {
+			return err
+		}
+		modelHash, configHash, err := generationConfigHashes(resolved, chunkingConfig, retrievalConfig, rerankSnapshot)
 		if err != nil {
 			return err
 		}
@@ -137,6 +154,7 @@ func (s *IndexGenerationService) Create(ctx context.Context, input CreateIndexGe
 			RetrievalConfig: retrievalConfig, ConfigHash: configHash,
 			SourceContentVersion: kb.ContentVersion, IndexedContentVersion: kb.ContentVersion,
 			Status: value.IndexGenerationBuilding, ManualEditDisposition: disposition,
+			Rerank: rerankSnapshot,
 		})
 		if err != nil {
 			return err
@@ -271,9 +289,63 @@ func cloneGenerationConfig(input map[string]any) map[string]any {
 	return result
 }
 
+// resolveRerankSelection 根据 CreateIndexGenerationInput.Rerank 三态解析最终快照：
+// - nil：继承 base Generation 的 Rerank（若 base 启用，则用 base 的 model id 重新解析当前模型并重算 hash）。
+// - enabled=false：新 Generation 关闭 Rerank。
+// - enabled=true：校验 model_id/candidate_top_k/failure_mode，解析当前模型，candidate_top_k 不得超过模型 max_documents。
+func (s *IndexGenerationService) resolveRerankSelection(ctx context.Context, workspaceID uuid.UUID, selection *RerankSelection, baseRerank *model.RerankSnapshot) (*model.RerankSnapshot, error) {
+	if selection == nil {
+		if baseRerank == nil {
+			return nil, nil
+		}
+		// 继承：用 base 的 model id 重新解析当前模型并重算 hash，避免 base 模型已变更后漂移。
+		return s.buildRerankSnapshot(ctx, workspaceID, baseRerank.ModelID, baseRerank.CandidateTopK, baseRerank.FailureMode)
+	}
+	if !selection.Enabled {
+		return nil, nil
+	}
+	if selection.ModelID == uuid.Nil {
+		return nil, fmt.Errorf("%w: enabled Rerank 必须提供 model_id", domainerrors.ErrValidation)
+	}
+	if err := value.ValidateRerankCandidateTopK(selection.CandidateTopK); err != nil {
+		return nil, err
+	}
+	if !selection.FailureMode.IsValid() {
+		return nil, fmt.Errorf("%w: Rerank failure_mode 无效", domainerrors.ErrValidation)
+	}
+	return s.buildRerankSnapshot(ctx, workspaceID, selection.ModelID, selection.CandidateTopK, selection.FailureMode)
+}
+
+func (s *IndexGenerationService) buildRerankSnapshot(ctx context.Context, workspaceID, modelID uuid.UUID, candidateTopK int, failureMode value.RerankFailureMode) (*model.RerankSnapshot, error) {
+	resolved, err := s.models.ResolveSelectableModel(ctx, workspaceID, modelID, value.ModelTypeRerank)
+	if err != nil {
+		return nil, err
+	}
+	maxDocuments, err := rerankIntParameter(resolved.Model.Parameters, "max_documents")
+	if err != nil {
+		return nil, err
+	}
+	if candidateTopK > maxDocuments {
+		return nil, fmt.Errorf("%w: candidate_top_k %d 超过模型 max_documents %d", domainerrors.ErrValidation, candidateTopK, maxDocuments)
+	}
+	configHash, err := rerankModelConfigHash(resolved)
+	if err != nil {
+		return nil, err
+	}
+	return &model.RerankSnapshot{
+		ModelID:         resolved.Model.ID,
+		ProviderID:      resolved.Provider.ID,
+		ModelName:       resolved.Model.ModelName,
+		ModelConfigHash: configHash,
+		CandidateTopK:   candidateTopK,
+		FailureMode:     failureMode,
+	}, nil
+}
+
 func generationConfigHashes(
 	resolved *model.ResolvedModel,
 	chunkingConfig, retrievalConfig map[string]any,
+	rerankSnapshot *model.RerankSnapshot,
 ) (string, string, error) {
 	if resolved == nil || resolved.Model == nil || resolved.Provider == nil || resolved.Model.Dimensions == nil {
 		return "", "", fmt.Errorf("%w: Generation model snapshot 无效", domainerrors.ErrValidation)
@@ -286,9 +358,29 @@ func generationConfigHashes(
 	if err != nil {
 		return "", "", err
 	}
-	configHash, err := CanonicalConfigHash(map[string]any{
+	configInput := map[string]any{
 		"model_config_hash": modelHash, "chunker_version": value.StandardChunkerVersion,
 		"chunking_config": chunkingConfig, "retrieval_config": retrievalConfig,
-	})
+	}
+	if rerankSnapshot != nil {
+		configInput["rerank"] = map[string]any{
+			"model_id": rerankSnapshot.ModelID.String(), "provider_id": rerankSnapshot.ProviderID.String(),
+			"model_name": rerankSnapshot.ModelName, "model_config_hash": rerankSnapshot.ModelConfigHash,
+			"candidate_top_k": rerankSnapshot.CandidateTopK, "failure_mode": string(rerankSnapshot.FailureMode),
+		}
+	}
+	configHash, err := CanonicalConfigHash(configInput)
 	return modelHash, configHash, err
+}
+
+// rerankModelConfigHash 计算不含 dimensions 的 Rerank 模型 config hash，
+// 与 Embedding 路径保持字段一致性（provider/provider_config/model_name/parameters）。
+func rerankModelConfigHash(resolved *model.ResolvedModel) (string, error) {
+	if resolved == nil || resolved.Model == nil || resolved.Provider == nil {
+		return "", fmt.Errorf("%w: Rerank 模型快照无效", domainerrors.ErrValidation)
+	}
+	return CanonicalConfigHash(map[string]any{
+		"provider": resolved.Provider.Provider, "provider_config": resolved.Provider.Config,
+		"model_name": resolved.Model.ModelName, "parameters": resolved.Model.Parameters,
+	})
 }
