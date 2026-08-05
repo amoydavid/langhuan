@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,67 @@ func TestV030MultiFormatHTTPWorkerE2E(t *testing.T) {
 			env.assertPersistedParseAndChunks(document.ID)
 		})
 	}
+}
+
+func TestV030ParentChildChunkingHTTPWorkerSearchE2E(t *testing.T) {
+	env := startV030E2E(t)
+	env.registerAndLogin()
+	env.createWorkspaceAndKnowledgeBase()
+
+	content := "# 部署指南\n\n" + strings.Repeat("这是用于验证父块完整上下文与子块召回的一段部署说明。", 36) + "目标短语父子检索。"
+	created := env.upload("parent-child.md", "text/markdown", []byte(content), http.StatusCreated)
+	env.waitReady(created.Document.ID)
+	parentIDs, childIDs := env.assertParentChildProjection(created.Document.ID)
+
+	var results []*dto.SearchResult
+	kbID := env.workspace.Metadata["kb_id"].(string)
+	env.jsonRequest(http.MethodPost,
+		"/api/v1/workspaces/"+env.workspace.Slug+"/knowledge-bases/"+kbID+"/search",
+		map[string]any{"query": "目标短语父子检索", "final_top_k": 10}, http.StatusOK, &results)
+	for _, result := range results {
+		if result.DocumentID != created.Document.ID {
+			continue
+		}
+		if _, ok := parentIDs[result.ChunkID]; !ok {
+			t.Fatalf("search chunk %s is not a parent chunk", result.ChunkID)
+		}
+		if result.Content != content || len(result.MatchedChildren) == 0 {
+			t.Fatalf("search result = %#v, want complete parent content and matched children", result)
+		}
+		for _, matched := range result.MatchedChildren {
+			if matched.Role != value.ChunkRoleChild {
+				t.Fatalf("matched role = %q, want child", matched.Role)
+			}
+			if _, ok := childIDs[matched.ChunkID]; !ok {
+				t.Fatalf("matched chunk %s is not a persisted child", matched.ChunkID)
+			}
+		}
+		return
+	}
+	t.Fatalf("parent-child search result not found: %#v", results)
+}
+
+func TestV030FlatChunkingHTTPWorkerE2E(t *testing.T) {
+	env := startV030E2E(t)
+	env.registerAndLogin()
+	slug := fmt.Sprintf("v030-flat-%d", time.Now().UnixNano())
+	env.workspace = &dto.Workspace{}
+	env.jsonRequest(http.MethodPost, "/api/v1/workspaces", map[string]any{"name": "v030 flat e2e", "slug": slug}, http.StatusCreated, env.workspace)
+	env.createPlatformEmbeddingModel()
+	flat := false
+	kb := &dto.KnowledgeBase{}
+	env.jsonRequest(http.MethodPost, "/api/v1/workspaces/"+slug+"/knowledge-bases", map[string]any{
+		"name": "flat fixtures", "embedding_model_id": env.modelID,
+		"chunking_config": map[string]any{
+			"strategy": "recursive", "enable_parent_child": flat,
+			"parent_chunk_size": 4096, "child_chunk_size": 384,
+			"chunk_size": 40, "chunk_overlap": 5,
+		},
+	}, http.StatusCreated, kb)
+
+	created := env.uploadToKnowledgeBase(env.client, kb.ID.String(), "flat.md", "text/markdown", []byte("# 扁平分块\n\n这是扁平索引正文。"), http.StatusCreated)
+	env.waitReady(created.Document.ID)
+	env.assertFlatProjection(created.Document.ID)
 }
 
 func TestV030PDFRejectedWithoutPersistenceE2E(t *testing.T) {
@@ -247,8 +309,12 @@ func (e *v030E2E) upload(name, mime string, content []byte, wantStatus int) *ser
 }
 
 func (e *v030E2E) uploadWithClient(client *http.Client, name, mime string, content []byte, wantStatus int) *service.IngestDocumentResult {
-	e.t.Helper()
 	kbID := e.workspace.Metadata["kb_id"].(string)
+	return e.uploadToKnowledgeBase(client, kbID, name, mime, content, wantStatus)
+}
+
+func (e *v030E2E) uploadToKnowledgeBase(client *http.Client, kbID, name, mime string, content []byte, wantStatus int) *service.IngestDocumentResult {
+	e.t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	partHeader := make(map[string][]string)
@@ -332,6 +398,85 @@ func (e *v030E2E) assertPersistedParseAndChunks(id uuid.UUID) {
 		Count(&count).Error
 	if err != nil || count == 0 {
 		e.t.Fatalf("chunk count=%d err=%v", count, err)
+	}
+}
+
+func (e *v030E2E) assertParentChildProjection(id uuid.UUID) (map[uuid.UUID]struct{}, map[uuid.UUID]struct{}) {
+	e.t.Helper()
+	var chunks []db.ChunkRow
+	if err := e.db.WithContext(e.ctx).Where("workspace_id = ? AND document_id = ?", e.workspace.ID, id).Find(&chunks).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	parentIDs := make(map[uuid.UUID]struct{})
+	childIDs := make(map[uuid.UUID]struct{})
+	for _, chunk := range chunks {
+		switch value.ChunkRole(chunk.Role) {
+		case value.ChunkRoleParent:
+			if chunk.ParentChunkID != nil {
+				e.t.Fatalf("parent %s references parent %s", chunk.ID, *chunk.ParentChunkID)
+			}
+			parentIDs[chunk.ID] = struct{}{}
+		case value.ChunkRoleChild:
+			if chunk.ParentChunkID == nil {
+				e.t.Fatalf("child %s is missing parent", chunk.ID)
+			}
+			childIDs[chunk.ID] = struct{}{}
+		default:
+			e.t.Fatalf("chunk %s role=%q, want parent or child", chunk.ID, chunk.Role)
+		}
+	}
+	if len(parentIDs) == 0 || len(childIDs) == 0 {
+		e.t.Fatalf("parent=%d child=%d chunks=%#v", len(parentIDs), len(childIDs), chunks)
+	}
+	for _, chunk := range chunks {
+		if value.ChunkRole(chunk.Role) == value.ChunkRoleChild {
+			if _, ok := parentIDs[*chunk.ParentChunkID]; !ok {
+				e.t.Fatalf("child %s references absent parent %s", chunk.ID, *chunk.ParentChunkID)
+			}
+		}
+	}
+	var entries []db.RetrievalEntryRow
+	if err := e.db.WithContext(e.ctx).Where("workspace_id = ? AND document_id = ? AND state = ?", e.workspace.ID, id, value.RetrievalEntryPublished).Find(&entries).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	if len(entries) != len(childIDs) {
+		e.t.Fatalf("published entries=%d, want one per child=%d", len(entries), len(childIDs))
+	}
+	for _, entry := range entries {
+		if _, ok := childIDs[entry.ChunkID]; !ok {
+			e.t.Fatalf("retrieval entry %s indexes non-child chunk %s", entry.ID, entry.ChunkID)
+		}
+	}
+	return parentIDs, childIDs
+}
+
+func (e *v030E2E) assertFlatProjection(id uuid.UUID) {
+	e.t.Helper()
+	var chunks []db.ChunkRow
+	if err := e.db.WithContext(e.ctx).Where("workspace_id = ? AND document_id = ?", e.workspace.ID, id).Find(&chunks).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	if len(chunks) == 0 {
+		e.t.Fatal("flat document has no chunks")
+	}
+	chunkIDs := make(map[uuid.UUID]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if value.ChunkRole(chunk.Role) != value.ChunkRoleFlat || chunk.ParentChunkID != nil {
+			e.t.Fatalf("flat chunk = %#v", chunk)
+		}
+		chunkIDs[chunk.ID] = struct{}{}
+	}
+	var entries []db.RetrievalEntryRow
+	if err := e.db.WithContext(e.ctx).Where("workspace_id = ? AND document_id = ? AND state = ?", e.workspace.ID, id, value.RetrievalEntryPublished).Find(&entries).Error; err != nil {
+		e.t.Fatal(err)
+	}
+	if len(entries) != len(chunkIDs) {
+		e.t.Fatalf("published entries=%d, want one per flat chunk=%d", len(entries), len(chunkIDs))
+	}
+	for _, entry := range entries {
+		if _, ok := chunkIDs[entry.ChunkID]; !ok {
+			e.t.Fatalf("retrieval entry %s indexes unknown flat chunk %s", entry.ID, entry.ChunkID)
+		}
 	}
 }
 

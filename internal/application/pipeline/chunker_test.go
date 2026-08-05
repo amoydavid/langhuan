@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -84,6 +85,64 @@ func TestChunkerBuildsParentAndRetrievableChildren(t *testing.T) {
 	}
 	if parents == 0 || children < 2 {
 		t.Fatalf("parents=%d children=%d chunks=%#v", parents, children, chunks)
+	}
+}
+
+func TestMergeChildDraftContentsRemovesOnlyConfiguredOverlap(t *testing.T) {
+	drafts := []chunkDraft{
+		{content: "第一段内容。第二段内容。"},
+		{content: "第二段内容。第三段内容。"},
+	}
+	if got, want := mergeChildDraftContents(drafts, len([]rune("第二段内容。"))), "第一段内容。第二段内容。第三段内容。"; got != want {
+		t.Fatalf("parent content = %q, want %q", got, want)
+	}
+	if got, want := mergeChildDraftContents(drafts, 2), "第一段内容。第二段内容。\n\n第二段内容。第三段内容。"; got != want {
+		t.Fatalf("limited parent content = %q, want %q", got, want)
+	}
+}
+
+func TestChunkerAppliesConfiguredParentOverlapWithoutDuplicatingChildren(t *testing.T) {
+	var body strings.Builder
+	for index := 0; index < 220; index++ {
+		fmt.Fprintf(&body, "[%03d] 父块重叠验证文本。", index)
+	}
+	markdown := "# 部署\n\n" + body.String()
+	input := chunkerInput("部署", markdown, []model.ParsedBlock{
+		{Sequence: 0, Kind: model.BlockKindHeading, NormalizedStart: 0, NormalizedEnd: len("# 部署"), HeadingPath: []string{"部署"}, SourceAnchor: textAnchor(0, 4)},
+		{Sequence: 1, Kind: model.BlockKindParagraph, NormalizedStart: len("# 部署\n\n"), NormalizedEnd: len(markdown), HeadingPath: []string{"部署"}, SourceAnchor: textAnchor(6, len([]rune(markdown)))},
+	})
+	config := value.DefaultChunkingConfig()
+	config.ParentChunkSize, config.ChildChunkSize, config.ChunkOverlap = 512, 128, 64
+	chunks, _, err := NewChunker().Chunk(input, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parents, children := make([]*model.Chunk, 0), make([]*model.Chunk, 0)
+	for _, chunk := range chunks {
+		switch chunk.Role {
+		case value.ChunkRoleParent:
+			parents = append(parents, chunk)
+		case value.ChunkRoleChild:
+			children = append(children, chunk)
+		}
+	}
+	if len(parents) < 2 || len(children) < 2 {
+		t.Fatalf("parents=%d children=%d", len(parents), len(children))
+	}
+	for index := 1; index < len(parents); index++ {
+		if overlap := sharedBoundaryRunes(parents[index-1].Content, parents[index].Content, config.ChunkOverlap); overlap < config.ChunkOverlap {
+			t.Fatalf("parents %d/%d preserve %d runes, want %d", index-1, index, overlap, config.ChunkOverlap)
+		}
+	}
+	childIDs := make(map[uuid.UUID]struct{}, len(children))
+	for _, child := range children {
+		if child.ParentChunkID == nil {
+			t.Fatalf("child %s is missing parent", child.ID)
+		}
+		if _, exists := childIDs[child.ID]; exists {
+			t.Fatalf("child %s was duplicated across parents", child.ID)
+		}
+		childIDs[child.ID] = struct{}{}
 	}
 }
 

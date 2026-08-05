@@ -8,9 +8,9 @@ import (
 	parserport "github.com/dajee/langhuan/internal/ports/parser"
 )
 
-// buildParsedDocument 把 MinerU 产出的 Markdown 组装成 ParsedDocument。
-// MinerU Markdown 通常已是结构化文本，这里生成一个简单的 manifest：
-// 把整篇 Markdown 作为一个 paragraph block，anchor 指向文档级别。
+// buildParsedDocument 把 MinerU 产出的 Markdown 重建为结构化 ParsedDocument。
+// 复用 Markdown parser 识别标题、表格与代码块，确保 PDF 与其它文档进入
+// 同一分块器时拥有一致的结构边界；随后将来源锚点标记为 PDF。
 func buildParsedDocument(ctx context.Context, markdown, modelVersion string) (*parserport.ParsedDocument, error) {
 	markdown = trimWhitespace(markdown)
 	if markdown == "" {

@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"fmt"
-	id "github.com/dajee/langhuan/internal/domain/id"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -10,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
@@ -133,7 +133,7 @@ func splitChunkDrafts(markdown string, blocks []model.ParsedBlock, config value.
 			index = cursor
 			continue
 		}
-		if len(ordinary) > 0 && isStrategyBoundary(strategy, ordinary[0], block) {
+		if len(ordinary) > 0 && isStrategyBoundary(strategy, markdown, ordinary[0], block) {
 			if err := flushOrdinary(); err != nil {
 				return nil, err
 			}
@@ -147,15 +147,74 @@ func splitChunkDrafts(markdown string, blocks []model.ParsedBlock, config value.
 	return drafts, nil
 }
 
-func isStrategyBoundary(strategy value.ChunkingStrategy, first, current model.ParsedBlock) bool {
+func isStrategyBoundary(strategy value.ChunkingStrategy, markdown string, first, current model.ParsedBlock) bool {
 	switch strategy {
 	case value.ChunkingStrategyHeading:
 		return current.Kind == model.BlockKindHeading || !sameStrings(first.HeadingPath, current.HeadingPath)
 	case value.ChunkingStrategyHeuristic:
-		return current.Kind == model.BlockKindHeading || current.Kind == model.BlockKindThematicBreak
+		return current.Kind == model.BlockKindHeading || current.Kind == model.BlockKindThematicBreak ||
+			isHeuristicSectionBoundary(markdown[current.NormalizedStart:current.NormalizedEnd])
 	default:
 		return false
 	}
+}
+
+func isHeuristicSectionBoundary(content string) bool {
+	firstLine, _, _ := strings.Cut(strings.Trim(content, " \t\r\n"), "\n")
+	firstLine = strings.Trim(firstLine, " \t\r")
+	if firstLine == "" {
+		return false
+	}
+	if strings.HasPrefix(firstLine, "\f") || strings.HasPrefix(firstLine, "#") {
+		return true
+	}
+	if strings.HasPrefix(firstLine, "第") && (strings.Contains(firstLine, "章") || strings.Contains(firstLine, "节") || strings.Contains(firstLine, "部分")) {
+		return true
+	}
+	if isNumberedSection(firstLine) || isSeparatorLine(firstLine) || isUppercaseSection(firstLine) {
+		return true
+	}
+	return false
+}
+
+func isNumberedSection(content string) bool {
+	index := 0
+	for index < len(content) && content[index] >= '0' && content[index] <= '9' {
+		index++
+	}
+	if index == 0 || index == len(content) {
+		return false
+	}
+	tail := content[index:]
+	return strings.HasPrefix(tail, ".") || strings.HasPrefix(tail, "、") || strings.HasPrefix(tail, ")")
+}
+
+func isSeparatorLine(content string) bool {
+	if len(content) < 3 {
+		return false
+	}
+	for _, character := range content {
+		if !strings.ContainsRune("-_=*", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func isUppercaseSection(content string) bool {
+	letters := 0
+	for _, character := range content {
+		switch {
+		case character >= 'A' && character <= 'Z':
+			letters++
+		case character >= 'a' && character <= 'z':
+			return false
+		case character == ' ' || character == '-' || character == '_' || character == ':':
+		default:
+			return false
+		}
+	}
+	return letters >= 3
 }
 
 func materializeChunkDrafts(input ChunkInput, drafts []chunkDraft, role value.ChunkRole, parentID *uuid.UUID) ([]*model.Chunk, []*model.ChunkRevision, error) {
@@ -202,23 +261,24 @@ func materializeParentChildDrafts(input ChunkInput, drafts []chunkDraft, config 
 	}
 	chunks := make([]*model.Chunk, 0, len(drafts)*2)
 	revisions := make([]*model.ChunkRevision, 0, len(drafts)*2)
-	for start := 0; start < len(drafts); {
-		end := start + 1
-		size := utf8.RuneCountInString(drafts[start].content)
-		for end < len(drafts) && sameStrings(drafts[start].headingPath, drafts[end].headingPath) {
-			next := utf8.RuneCountInString(drafts[end].content)
-			if size+2+next > config.ParentChunkSize && end > start {
+	previousParentContent := ""
+	var previousHeadingPath []string
+	for childStart := 0; childStart < len(drafts); {
+		end := childStart + 1
+		for end < len(drafts) && sameStrings(drafts[childStart].headingPath, drafts[end].headingPath) {
+			candidate := mergeChildDraftContents(drafts[childStart:end+1], config.ChildChunkSize/5)
+			if utf8.RuneCountInString(candidate) > config.ParentChunkSize && end > childStart {
 				break
 			}
-			size += 2 + next
 			end++
 		}
-		parentDraft := drafts[start]
-		parts := make([]string, 0, end-start)
-		for _, draft := range drafts[start:end] {
-			parts = append(parts, draft.content)
+		parentDraft := drafts[childStart]
+		parentDraft.content = mergeChildDraftContents(drafts[childStart:end], config.ChildChunkSize/5)
+		if previousParentContent != "" && sameStrings(previousHeadingPath, parentDraft.headingPath) {
+			prefix := suffixRunes(previousParentContent, config.ChunkOverlap)
+			overlap := sharedBoundaryRunes(prefix, parentDraft.content, config.ChildChunkSize/5)
+			parentDraft.content = prefix + string([]rune(parentDraft.content)[overlap:])
 		}
-		parentDraft.content = strings.Join(parts, "\n\n")
 		parentID := id.New()
 		parentChunks, parentRevisions, err := materializeChunkDrafts(input, []chunkDraft{parentDraft}, value.ChunkRoleParent, nil)
 		if err != nil {
@@ -228,21 +288,63 @@ func materializeParentChildDrafts(input ChunkInput, drafts []chunkDraft, config 
 		parentRevisions[0].ChunkID = parentID
 		parentChunks[0].ActiveRevisionID = &parentRevisions[0].ID
 		parentRevisions[0].Status = value.ChunkRevisionReady
-		children, childRevisions, err := materializeChunkDrafts(input, drafts[start:end], value.ChunkRoleChild, &parentID)
+		children, childRevisions, err := materializeChunkDrafts(input, drafts[childStart:end], value.ChunkRoleChild, &parentID)
 		if err != nil {
 			return nil, nil, err
 		}
 		for index := range children {
-			children[index].Sequence = start + index
+			children[index].Sequence = childStart + index
 		}
-		parentChunks[0].Sequence = start
+		parentChunks[0].Sequence = childStart
 		chunks = append(chunks, parentChunks[0])
 		chunks = append(chunks, children...)
 		revisions = append(revisions, parentRevisions[0])
 		revisions = append(revisions, childRevisions...)
-		start = end
+		previousParentContent = parentDraft.content
+		previousHeadingPath = append(previousHeadingPath[:0], parentDraft.headingPath...)
+		childStart = end
 	}
 	return chunks, revisions, nil
+}
+
+func suffixRunes(content string, limit int) string {
+	runes := []rune(content)
+	if limit >= len(runes) {
+		return content
+	}
+	return string(runes[len(runes)-limit:])
+}
+
+// mergeChildDraftContents rebuilds a parent context from adjacent child drafts.
+// Child windows intentionally overlap for recall; that overlap must not be
+// repeated in the parent text returned to callers. Limiting removal to the
+// configured overlap avoids accidentally collapsing naturally repeated prose.
+func mergeChildDraftContents(drafts []chunkDraft, overlapLimit int) string {
+	if len(drafts) == 0 {
+		return ""
+	}
+	content := drafts[0].content
+	for _, draft := range drafts[1:] {
+		next := draft.content
+		overlap := sharedBoundaryRunes(content, next, overlapLimit)
+		if overlap > 0 {
+			content += string([]rune(next)[overlap:])
+			continue
+		}
+		content += "\n\n" + next
+	}
+	return content
+}
+
+func sharedBoundaryRunes(left, right string, limit int) int {
+	leftRunes, rightRunes := []rune(left), []rune(right)
+	maximum := minInt(minInt(len(leftRunes), len(rightRunes)), limit)
+	for count := maximum; count > 0; count-- {
+		if string(leftRunes[len(leftRunes)-count:]) == string(rightRunes[:count]) {
+			return count
+		}
+	}
+	return 0
 }
 
 func splitOrdinary(markdown string, blocks []model.ParsedBlock, config value.ChunkingConfig) ([]chunkDraft, error) {
