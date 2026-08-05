@@ -46,4 +46,12 @@ var (
 	ErrAPIKeyLimitReached      = stderrors.New("活跃 API Key 数量已达上限")
 	ErrInsufficientScope       = stderrors.New("API Key 权限不足")
 	ErrAPIKeyImmutable         = stderrors.New("API Key 已吊销，不可修改")
+
+	// Rerank 相关领域错误。HTTP 层据此映射稳定错误码。
+	ErrInvalidRerankResponse       = stderrors.New("供应商返回了无效重排结果")
+	ErrRerankUnavailable           = stderrors.New("重排服务暂时不可用")
+	ErrRerankRateLimited           = stderrors.New("重排服务请求过于频繁")
+	ErrRerankInputTooLarge         = stderrors.New("重排输入超过模型限制")
+	ErrRerankConfigurationConflict = stderrors.New("所选知识库的重排配置不一致")
+	ErrRerankSnapshotMismatch      = stderrors.New("重排模型配置与索引快照不一致")
 )
