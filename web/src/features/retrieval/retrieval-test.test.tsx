@@ -11,6 +11,7 @@ import type { RetrievalRequest, RetrievalResult } from './types'
 const kbId = '20000000-0000-4000-8000-000000000002'
 const documentId = '30000000-0000-4000-8000-000000000003'
 const chunkId = '40000000-0000-4000-8000-000000000004'
+const matchedChildId = '60000000-0000-4000-8000-000000000006'
 
 const defaults = {
   fts_config: 'simple',
@@ -33,6 +34,18 @@ const results: RetrievalResult[] = [
     vector_score: 0.84,
     keyword_score: 12.31,
     metadata: { heading: 'Docker 部署', internal_hash: 'do-not-render' },
+    matched_children: [
+      {
+        chunk_id: matchedChildId,
+        chunk_revision_id: '70000000-0000-4000-8000-000000000007',
+        role: 'child',
+        content: '通过 DATABASE_DSN 指定 PostgreSQL。',
+        source_anchor: { line_start: 24, line_end: 31 },
+        score: 0.0325,
+        vector_score: 0.84,
+        keyword_score: 12.31,
+      },
+    ],
   },
 ]
 
@@ -96,6 +109,8 @@ describe('RetrievalTest', () => {
       )
       .toBeVisible()
     await expect.element(screen.getByText('RRF 0.0325')).toBeVisible()
+    await expect.element(screen.getByText('返回完整上下文')).toBeVisible()
+    await expect.element(screen.getByText('命中片段 1')).toBeVisible()
     expect(document.body.textContent).not.toContain('3.25%')
   })
 
@@ -122,11 +137,12 @@ describe('RetrievalTest', () => {
       .element(screen.getByRole('link', { name: '打开分块' }))
       .toHaveAttribute(
         'href',
-        `/workspaces/acme/kb/${kbId}/content/files/${documentId}?chunk=${chunkId}&anchor=1`
+        `/workspaces/acme/kb/${kbId}/content/files/${documentId}?chunk=${matchedChildId}&anchor=1`
       )
     expect(document.body.textContent).not.toContain(kbId)
     expect(document.body.textContent).not.toContain(documentId)
     expect(document.body.textContent).not.toContain(chunkId)
+    expect(document.body.textContent).not.toContain(matchedChildId)
     expect(document.body.textContent).not.toContain('do-not-render')
   })
 })

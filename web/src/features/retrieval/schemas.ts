@@ -20,6 +20,18 @@ export const retrievalResultSchema = z.object({
   vector_score: z.number().optional(),
   keyword_score: z.number().optional(),
   metadata: z.record(z.string(), z.unknown()),
+  matched_children: z.array(
+    z.object({
+      chunk_id: z.uuid(),
+      chunk_revision_id: z.uuid(),
+      role: z.enum(['child', 'flat']),
+      content: z.string(),
+      source_anchor: z.record(z.string(), z.unknown()),
+      score: z.number(),
+      vector_score: z.number().optional(),
+      keyword_score: z.number().optional(),
+    })
+  ),
 })
 
 export const retrievalResultsSchema = z.array(retrievalResultSchema)

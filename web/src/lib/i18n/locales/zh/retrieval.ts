@@ -14,6 +14,8 @@ export const retrieval = {
     indexSuffix: ' · 当前索引「{{label}}」',
     durationSuffix: ' · 耗时 {{duration}}',
     scoreHint: '分数仅用于本次结果排序，不是相关度百分比或答案可信度。',
+    fullContext: '返回完整上下文',
+    matchedChildren: '命中片段 {{count}}',
     vectorScore: '向量 {{value}}',
     keywordScore: '关键词 {{value}}',
     viewSourceLink: '查看来源',

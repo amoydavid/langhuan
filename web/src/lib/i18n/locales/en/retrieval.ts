@@ -21,6 +21,8 @@ export const retrieval = {
     durationSuffix: ' · took {{duration}}',
     scoreHint:
       'Scores only rank this result set; they are not relevance percentages or answer confidence.',
+    fullContext: 'Full context returned',
+    matchedChildren: 'Matched excerpts {{count}}',
     vectorScore: 'Vector {{value}}',
     keywordScore: 'Keyword {{value}}',
     viewSourceLink: 'View source',

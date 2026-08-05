@@ -3,6 +3,7 @@ import { Search } from 'lucide-react'
 import { type FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
+import { SafeMarkdown } from '@/components/safe-markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -395,9 +396,33 @@ export function RetrievalTest({
                   </div>
                 </CardHeader>
                 <CardContent className='space-y-3'>
-                  <p className='whitespace-pre-wrap text-sm leading-6'>
-                    {result.content}
-                  </p>
+                  <div className='space-y-2'>
+                    <p className='font-medium text-sm'>
+                      {t('retrieval.test.fullContext')}
+                    </p>
+                    <SafeMarkdown content={result.content} />
+                  </div>
+                  <div className='space-y-2 rounded-lg bg-muted/40 p-3'>
+                    <p className='font-medium text-sm'>
+                      {t('retrieval.test.matchedChildren', {
+                        count: result.matched_children.length,
+                      })}
+                    </p>
+                    <ul className='space-y-2'>
+                      {result.matched_children.map((child) => (
+                        <li
+                          key={child.chunk_id}
+                          className='flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-xs'
+                        >
+                          <span className='min-w-0 flex-1 truncate text-foreground'>
+                            {child.content.replace(/\s+/g, ' ').trim()}
+                          </span>
+                          <span>{sourceAnchorLabel(child.source_anchor)}</span>
+                          <span>RRF {score(child.score)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                   <div className='flex flex-wrap items-center gap-x-4 gap-y-2 text-muted-foreground text-xs'>
                     <span>
                       {t('retrieval.test.vectorScore', {
@@ -417,7 +442,7 @@ export function RetrievalTest({
                       </Button>
                       <Button asChild variant='outline' size='sm'>
                         <a
-                          href={`${basePath}?chunk=${encodeURIComponent(result.chunk_id)}&anchor=1`}
+                          href={`${basePath}?chunk=${encodeURIComponent(result.matched_children[0]?.chunk_id ?? result.chunk_id)}&anchor=1`}
                         >
                           {t('retrieval.test.openChunkLink')}
                         </a>
