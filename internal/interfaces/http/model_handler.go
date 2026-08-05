@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	stdhttp "net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ type ModelHTTPService interface {
 	CreatePlatform(context.Context, service.CreateModelInput) (*dto.Model, error)
 	ListWorkspace(context.Context, uuid.UUID, uuid.UUID) ([]*dto.Model, error)
 	ListPlatform(context.Context, uuid.UUID) ([]*dto.Model, error)
+	ListSelectableWorkspace(context.Context, uuid.UUID, value.ModelType, bool) ([]*dto.Model, error)
 	GetWorkspace(context.Context, uuid.UUID, uuid.UUID) (*dto.Model, error)
 	GetPlatform(context.Context, uuid.UUID) (*dto.Model, error)
 	UpdateWorkspace(context.Context, uuid.UUID, uuid.UUID, service.UpdateModelInput) (*dto.Model, error)
@@ -39,7 +41,7 @@ type createModelRequest struct {
 	Description string          `json:"description"`
 	Type        value.ModelType `json:"type"`
 	ModelName   string          `json:"model_name"`
-	Dimensions  int             `json:"dimensions"`
+	Dimensions  optionalInt     `json:"dimensions"`
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
@@ -47,7 +49,7 @@ type updateModelRequest struct {
 	DisplayName *string            `json:"display_name"`
 	Description *string            `json:"description"`
 	ModelName   *string            `json:"model_name"`
-	Dimensions  *int               `json:"dimensions"`
+	Dimensions  optionalInt        `json:"dimensions"`
 	Parameters  optionalRawMessage `json:"parameters"`
 	Status      *value.ModelStatus `json:"status"`
 }
@@ -100,7 +102,7 @@ func decodeModelCreate(c *gin.Context, providerID, actorID uuid.UUID) (service.C
 	return service.CreateModelInput{
 		ProviderID: providerID, ActorID: actorID, Name: req.Name,
 		DisplayName: req.DisplayName, Description: req.Description, Type: req.Type,
-		ModelName: req.ModelName, Dimensions: req.Dimensions, Parameters: req.Parameters,
+		ModelName: req.ModelName, Dimensions: req.Dimensions.pointer(), Parameters: req.Parameters,
 	}, true
 }
 
@@ -123,6 +125,28 @@ func (h modelHandler) listPlatform(c *gin.Context) {
 		return
 	}
 	items, err := h.models.ListPlatform(c.Request.Context(), providerID)
+	writeModelList(c, items, err)
+}
+
+// listSelectable 返回当前 Workspace 可见的、指定类型的模型，供 Generation 选择。
+// type 必须是 embedding 或 rerank；active 默认 false。
+func (h modelHandler) listSelectable(c *gin.Context) {
+	authCtx, ok := requireHandlerAuthContext(c)
+	if !ok {
+		return
+	}
+	rawType := strings.TrimSpace(c.Query("type"))
+	modelType := value.ModelType(rawType)
+	if modelType != value.ModelTypeEmbedding && modelType != value.ModelTypeRerank {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "type 必须是 embedding 或 rerank")
+		return
+	}
+	active, err := parseOptionalBool(c.DefaultQuery("active", "false"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "active 必须是布尔值")
+		return
+	}
+	items, err := h.models.ListSelectableWorkspace(c.Request.Context(), authCtx.WorkspaceID, modelType, active)
 	writeModelList(c, items, err)
 }
 
@@ -197,7 +221,7 @@ func decodeModelUpdate(c *gin.Context) (service.UpdateModelInput, bool) {
 	}
 	return service.UpdateModelInput{
 		DisplayName: req.DisplayName, Description: req.Description,
-		ModelName: req.ModelName, Dimensions: req.Dimensions,
+		ModelName: req.ModelName, Dimensions: req.Dimensions.pointer(),
 		Parameters: req.Parameters.pointer(), Status: req.Status,
 	}, true
 }

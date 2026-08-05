@@ -10,16 +10,16 @@ import (
 
 // DocumentAsset 是 document_assets 记录的安全表示，不含对象存储密钥等敏感信息。
 type DocumentAsset struct {
-	ID              uuid.UUID         `json:"id"`
-	DocumentID      uuid.UUID         `json:"document_id"`
-	RevisionID      uuid.UUID         `json:"revision_id"`
-	OriginalRef     string            `json:"original_ref"`
-	PublicURL       string            `json:"public_url"`
-	MimeType        string            `json:"mime_type"`
-	SHA256          string            `json:"sha256"`
-	SizeBytes       int64             `json:"size_bytes"`
-	Metadata        map[string]any    `json:"metadata"`
-	CreatedAt       time.Time         `json:"created_at"`
+	ID          uuid.UUID      `json:"id"`
+	DocumentID  uuid.UUID      `json:"document_id"`
+	RevisionID  uuid.UUID      `json:"revision_id"`
+	OriginalRef string         `json:"original_ref"`
+	PublicURL   string         `json:"public_url"`
+	MimeType    string         `json:"mime_type"`
+	SHA256      string         `json:"sha256"`
+	SizeBytes   int64          `json:"size_bytes"`
+	Metadata    map[string]any `json:"metadata"`
+	CreatedAt   time.Time      `json:"created_at"`
 }
 
 // DocumentAssetFromModel 把领域 Asset 转为对外 DTO。

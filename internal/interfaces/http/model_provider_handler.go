@@ -27,11 +27,19 @@ type ModelProviderHTTPService interface {
 	DeletePlatform(context.Context, uuid.UUID) error
 	// SupportedProviders 返回当前可用的 provider 键列表，供前端渲染 Provider 选项。
 	SupportedProviders() []string
+	// ProviderOptions 返回带 capability 的 provider 选项。
+	ProviderOptions() []service.ProviderOption
+}
+
+// providerOptionView 是 GET .../model-providers/options 返回的单个 provider 选项。
+type providerOptionView struct {
+	Key          string   `json:"key"`
+	Capabilities []string `json:"capabilities"`
 }
 
 // providerOptionsResponse 是 GET .../model-providers/options 的响应。
 type providerOptionsResponse struct {
-	SupportedProviders []string `json:"supported_providers"`
+	Providers []providerOptionView `json:"providers"`
 }
 
 type createModelProviderRequest struct {
@@ -70,6 +78,26 @@ func (m optionalRawMessage) pointer() *json.RawMessage {
 		return nil
 	}
 	value := append(json.RawMessage(nil), m.value...)
+	return &value
+}
+
+// optionalInt 保留 PATCH/create 请求中 dimensions 字段“缺失”与“显式提供值（含 0/null）”的差异。
+// Rerank 模型必须省略 dimensions，Embedding 必须提供合法维度。
+type optionalInt struct {
+	value int
+	set   bool
+}
+
+func (m *optionalInt) UnmarshalJSON(data []byte) error {
+	m.set = true
+	return json.Unmarshal(data, &m.value)
+}
+
+func (m optionalInt) pointer() *int {
+	if !m.set {
+		return nil
+	}
+	value := m.value
 	return &value
 }
 
@@ -134,13 +162,18 @@ func (h modelProviderHandler) listPlatform(c *gin.Context) {
 	writeModelProviderList(c, items, err)
 }
 
-// options 返回当前可用的 provider 键列表，供前端渲染 Provider 下拉选项。
+// options 返回当前可用的 provider 选项（含 capability），供前端渲染 Provider 下拉选项。
 func (h modelProviderHandler) options(c *gin.Context) {
-	supported := h.service.SupportedProviders()
-	if supported == nil {
-		supported = []string{}
+	serviceOptions := h.service.ProviderOptions()
+	views := make([]providerOptionView, 0, len(serviceOptions))
+	for _, option := range serviceOptions {
+		capabilities := make([]string, 0, len(option.Capabilities))
+		for _, capability := range option.Capabilities {
+			capabilities = append(capabilities, string(capability))
+		}
+		views = append(views, providerOptionView{Key: option.Key, Capabilities: capabilities})
 	}
-	c.JSON(stdhttp.StatusOK, providerOptionsResponse{SupportedProviders: supported})
+	c.JSON(stdhttp.StatusOK, providerOptionsResponse{Providers: views})
 }
 
 func writeModelProviderList(c *gin.Context, items []*dto.ModelProvider, err error) {

@@ -30,7 +30,7 @@ type Model struct {
 	Description    string               `json:"description"`
 	Type           value.ModelType      `json:"type"`
 	ModelName      string               `json:"model_name"`
-	Dimensions     int                  `json:"dimensions"`
+	Dimensions     *int                 `json:"dimensions"`
 	Parameters     map[string]any       `json:"parameters"`
 	Status         value.ModelStatus    `json:"status"`
 	ReferenceCount int64                `json:"reference_count"`
@@ -39,11 +39,14 @@ type Model struct {
 	UpdatedAt      time.Time            `json:"updated_at"`
 }
 
-// ConnectionTestResult is the non-persistent result of one live Embedding call.
+// ConnectionTestResult is the non-persistent result of one live model call.
+// Embedding 测试返回 Dimensions；Rerank 测试返回 ResultCount，二者互斥。
 type ConnectionTestResult struct {
-	OK         bool  `json:"ok"`
-	Dimensions int   `json:"dimensions"`
-	DurationMS int64 `json:"duration_ms"`
+	OK          bool            `json:"ok"`
+	Type        value.ModelType `json:"type"`
+	Dimensions  *int            `json:"dimensions"`
+	ResultCount *int            `json:"result_count"`
+	DurationMS  int64           `json:"duration_ms"`
 }
 
 // ModelFromResolved builds a model DTO with its Provider and reference state.
@@ -52,9 +55,10 @@ func ModelFromResolved(resolved *model.ResolvedModel, referenceCount int64) *Mod
 		return nil
 	}
 	item, provider := resolved.Model, resolved.Provider
-	dimensions := 0
+	var dimensions *int
 	if item.Dimensions != nil {
-		dimensions = *item.Dimensions
+		value := *item.Dimensions
+		dimensions = &value
 	}
 	parameters := make(map[string]any, len(item.Parameters))
 	for key, value := range item.Parameters {

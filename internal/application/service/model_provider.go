@@ -61,6 +61,15 @@ func (s *ModelProviderService) SupportedProviders() []string {
 	return s.resolver.SupportedProviders()
 }
 
+// ProviderOptions 返回带 capability 的 provider 选项，供 Web Console 渲染
+// “每个 Provider 支持哪些模型类型”。
+func (s *ModelProviderService) ProviderOptions() []ProviderOption {
+	if s.resolver == nil {
+		return nil
+	}
+	return s.resolver.ProviderOptions()
+}
+
 // CreateWorkspace creates a Provider owned by one Workspace.
 func (s *ModelProviderService) CreateWorkspace(ctx context.Context, workspaceID uuid.UUID, input CreateModelProviderInput) (*dto.ModelProvider, error) {
 	input.Scope, input.WorkspaceID = value.ModelScopeWorkspace, &workspaceID

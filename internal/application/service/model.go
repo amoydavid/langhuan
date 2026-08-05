@@ -13,6 +13,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	rerankport "github.com/dajee/langhuan/internal/ports/rerank"
 )
 
 // CreateModelInput contains user-editable model fields.
@@ -24,7 +25,7 @@ type CreateModelInput struct {
 	Description string
 	Type        value.ModelType
 	ModelName   string
-	Dimensions  int
+	Dimensions  *int
 	Parameters  json.RawMessage
 }
 
@@ -38,23 +39,31 @@ type UpdateModelInput struct {
 	Status      *value.ModelStatus
 }
 
-// ModelService manages concrete Embedding models.
+// ModelService manages Embedding 与 Rerank 模型，按 ModelType 路由 capability factory。
 type ModelService struct {
-	providers ModelProviderRepository
-	models    ModelRepository
-	registry  embeddingport.FactoryRegistry
+	providers        ModelProviderRepository
+	models           ModelRepository
+	embeddingFactory embeddingport.FactoryRegistry
+	rerankFactory    rerankport.FactoryRegistry
 }
 
 // NewModelService creates a model application service.
-func NewModelService(providers ModelProviderRepository, models ModelRepository, registry embeddingport.FactoryRegistry) *ModelService {
-	return &ModelService{providers: providers, models: models, registry: registry}
+func NewModelService(
+	providers ModelProviderRepository,
+	models ModelRepository,
+	embeddingFactory embeddingport.FactoryRegistry,
+	rerankFactory rerankport.FactoryRegistry,
+) *ModelService {
+	return &ModelService{
+		providers:        providers,
+		models:           models,
+		embeddingFactory: embeddingFactory,
+		rerankFactory:    rerankFactory,
+	}
 }
 
 // CreateWorkspace creates a model under a Workspace-owned Provider.
 func (s *ModelService) CreateWorkspace(ctx context.Context, workspaceID uuid.UUID, input CreateModelInput) (*dto.Model, error) {
-	if input.Type != value.ModelTypeEmbedding {
-		return nil, domainerrors.ErrUnsupportedModelType
-	}
 	provider, err := s.providers.GetWorkspaceOwned(ctx, workspaceID, input.ProviderID)
 	if err != nil {
 		return nil, err
@@ -64,9 +73,6 @@ func (s *ModelService) CreateWorkspace(ctx context.Context, workspaceID uuid.UUI
 
 // CreatePlatform creates a model under a platform Provider.
 func (s *ModelService) CreatePlatform(ctx context.Context, input CreateModelInput) (*dto.Model, error) {
-	if input.Type != value.ModelTypeEmbedding {
-		return nil, domainerrors.ErrUnsupportedModelType
-	}
 	provider, err := s.providers.GetPlatform(ctx, input.ProviderID)
 	if err != nil {
 		return nil, err
@@ -75,16 +81,11 @@ func (s *ModelService) CreatePlatform(ctx context.Context, input CreateModelInpu
 }
 
 func (s *ModelService) create(ctx context.Context, provider *model.ModelProvider, input CreateModelInput) (*dto.Model, error) {
-	factory, err := s.registry.Factory(input.Type, provider.Provider)
+	parameters, dimensions, err := s.decodeModelParameters(provider.Provider, input.Type, input.ModelName, input.Dimensions, input.Parameters)
 	if err != nil {
 		return nil, err
 	}
-	parameters, err := factory.DecodeModel(embeddingport.ModelDecodeInput{ModelName: input.ModelName, Dimensions: input.Dimensions, Parameters: input.Parameters})
-	if err != nil {
-		return nil, err
-	}
-	dimensions := input.Dimensions
-	item, err := model.NewModel(provider.ID, input.Name, input.DisplayName, input.Description, input.Type, input.ModelName, &dimensions, parameters, input.ActorID)
+	item, err := model.NewModel(provider.ID, input.Name, input.DisplayName, input.Description, input.Type, input.ModelName, dimensions, parameters, input.ActorID)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +93,47 @@ func (s *ModelService) create(ctx context.Context, provider *model.ModelProvider
 		return nil, err
 	}
 	return dto.ModelFromResolved(&model.ResolvedModel{Model: item, Provider: provider}, 0), nil
+}
+
+// decodeModelParameters 按 ModelType 路由到对应能力域的 Factory。
+// Embedding 要求 dimensions 必填且合法；Rerank 要求 dimensions 为空；LLM 拒绝。
+func (s *ModelService) decodeModelParameters(
+	providerKey string,
+	modelType value.ModelType,
+	modelName string,
+	dimensions *int,
+	parameters json.RawMessage,
+) (map[string]any, *int, error) {
+	switch modelType {
+	case value.ModelTypeEmbedding:
+		if dimensions == nil {
+			return nil, nil, domainerrors.ErrUnsupportedEmbeddingDimension
+		}
+		factory, err := s.embeddingFactory.Factory(modelType, providerKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		decoded, err := factory.DecodeModel(embeddingport.ModelDecodeInput{ModelName: modelName, Dimensions: *dimensions, Parameters: parameters})
+		if err != nil {
+			return nil, nil, err
+		}
+		return decoded, dimensions, nil
+	case value.ModelTypeRerank:
+		if dimensions != nil {
+			return nil, nil, fmt.Errorf("%w: Rerank 模型不得设置 dimensions", domainerrors.ErrValidation)
+		}
+		factory, err := s.rerankFactory.Factory(providerKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		decoded, err := factory.DecodeModel(rerankport.ModelDecodeInput{ModelName: modelName, Parameters: parameters})
+		if err != nil {
+			return nil, nil, err
+		}
+		return decoded, nil, nil
+	default:
+		return nil, nil, domainerrors.ErrUnsupportedModelType
+	}
 }
 
 // ListWorkspace lists models for a visible Provider.
@@ -112,6 +154,33 @@ func (s *ModelService) ListPlatform(ctx context.Context, providerID uuid.UUID) (
 	}
 	items, err := s.models.ListByProviderPlatform(ctx, providerID)
 	return s.modelList(ctx, provider, items, err)
+}
+
+// ListSelectableWorkspace 返回当前 Workspace 可见的、指定类型的模型，供 Generation 选择。
+func (s *ModelService) ListSelectableWorkspace(ctx context.Context, workspaceID uuid.UUID, modelType value.ModelType, activeOnly bool) ([]*dto.Model, error) {
+	if modelType != value.ModelTypeEmbedding && modelType != value.ModelTypeRerank {
+		return nil, domainerrors.ErrUnsupportedModelType
+	}
+	items, err := s.models.ListVisible(ctx, workspaceID, modelType, activeOnly)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*dto.Model, 0, len(items))
+	for _, resolved := range items {
+		count, countErr := s.models.CountKnowledgeBaseReferences(ctx, resolved.Model.ID)
+		if countErr != nil {
+			return nil, countErr
+		}
+		result = append(result, dto.ModelFromResolved(resolved, count))
+	}
+	return result, nil
+}
+
+// ListSelectablePlatform 返回平台共享的、指定类型的模型。
+func (s *ModelService) ListSelectablePlatform(ctx context.Context, modelType value.ModelType, activeOnly bool) ([]*dto.Model, error) {
+	// 平台可选项复用 workspace 视图（平台 Provider 对所有 workspace 可见），
+	// 使用零值 workspace 不合适；这里直接读取 platform-resolved models。
+	return s.ListSelectableWorkspace(ctx, uuid.Nil, modelType, activeOnly)
 }
 
 func (s *ModelService) modelList(ctx context.Context, provider *model.ModelProvider, items []*model.Model, err error) ([]*dto.Model, error) {
@@ -172,25 +241,19 @@ func (s *ModelService) UpdatePlatform(ctx context.Context, modelID uuid.UUID, in
 
 func (s *ModelService) update(ctx context.Context, resolved *model.ResolvedModel, input UpdateModelInput) (*dto.Model, error) {
 	item, provider := resolved.Model, resolved.Provider
-	if item.Type != value.ModelTypeEmbedding || item.Dimensions == nil {
-		return nil, domainerrors.ErrUnsupportedModelType
-	}
-	modelName, dimensions := item.ModelName, *item.Dimensions
+	modelName := item.ModelName
 	if input.ModelName != nil {
 		modelName = *input.ModelName
 	}
+	dimensions := item.Dimensions
 	if input.Dimensions != nil {
-		dimensions = *input.Dimensions
+		dimensions = input.Dimensions
 	}
 	parametersRaw, err := chooseJSON(input.Parameters, item.Parameters)
 	if err != nil {
 		return nil, err
 	}
-	factory, err := s.registry.Factory(item.Type, provider.Provider)
-	if err != nil {
-		return nil, err
-	}
-	parameters, err := factory.DecodeModel(embeddingport.ModelDecodeInput{ModelName: modelName, Dimensions: dimensions, Parameters: parametersRaw})
+	decodedParameters, decodedDimensions, err := s.decodeModelParameters(provider.Provider, item.Type, modelName, dimensions, parametersRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +264,7 @@ func (s *ModelService) update(ctx context.Context, resolved *model.ResolvedModel
 	if input.Description != nil {
 		description = *input.Description
 	}
-	candidate, err := model.NewModel(item.ProviderID, item.Name, displayName, description, item.Type, modelName, &dimensions, parameters, actorIDOrNew(item.CreatedBy))
+	candidate, err := model.NewModel(item.ProviderID, item.Name, displayName, description, item.Type, modelName, decodedDimensions, decodedParameters, actorIDOrNew(item.CreatedBy))
 	if err != nil {
 		return nil, err
 	}

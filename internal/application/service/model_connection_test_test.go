@@ -25,12 +25,12 @@ func TestConnectionTestUsesFixedTextAndAcceptsDisabledRecords(t *testing.T) {
 	item.Status = value.ModelStatusDisabled
 	models.items[item.ID] = item
 	client := &recordingEmbeddingClient{dimension: 1024}
-	service := NewModelConnectionTestService(models, cipher, fakeFactoryRegistry{factory: &fakeEmbeddingFactory{client: client}})
+	service := NewModelConnectionTestService(models, cipher, fakeFactoryRegistry{factory: &fakeEmbeddingFactory{client: client}}, fakeRerankFactoryRegistry{})
 	got, err := service.TestWorkspace(context.Background(), workspaceID, item.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.OK || got.Dimensions != 1024 || len(client.input.Texts) != 1 || client.input.Texts[0] != ConnectionTestText {
+	if !got.OK || got.Dimensions == nil || *got.Dimensions != 1024 || len(client.input.Texts) != 1 || client.input.Texts[0] != ConnectionTestText {
 		t.Fatalf("result = %#v, input = %#v", got, client.input)
 	}
 }

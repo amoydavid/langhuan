@@ -7,6 +7,7 @@ import (
 	"fmt"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +110,13 @@ func (s *fakeModelProviderHTTPService) SupportedProviders() []string {
 	return []string{"openai", "ark", "ollama", "dashscope", "tencentcloud", "mineru"}
 }
 
+func (s *fakeModelProviderHTTPService) ProviderOptions() []service.ProviderOption {
+	return []service.ProviderOption{
+		{Key: "openai", Capabilities: []value.ProviderCapability{value.CapabilityEmbedding}},
+		{Key: "rerank_compatible", Capabilities: []value.ProviderCapability{value.CapabilityRerank}},
+	}
+}
+
 type fakeModelHTTPService struct {
 	createWorkspaceID uuid.UUID
 	createInput       service.CreateModelInput
@@ -117,6 +125,8 @@ type fakeModelHTTPService struct {
 	updateInput       service.UpdateModelInput
 	deleteWorkspaceID uuid.UUID
 	deleteModelID     uuid.UUID
+	listSelectType    value.ModelType
+	listSelectActive  bool
 	result            *dto.Model
 	err               error
 }
@@ -128,7 +138,7 @@ func (s *fakeModelHTTPService) item() *dto.Model {
 	return &dto.Model{
 		ID: uuid.New(), ProviderID: uuid.New(), Name: "text-embedding-3-large",
 		DisplayName: "Text Embedding 3 Large", Type: value.ModelTypeEmbedding,
-		ModelName: "text-embedding-3-large", Dimensions: 1024,
+		ModelName: "text-embedding-3-large", Dimensions: modelRoutesIntPtr(1024),
 		Parameters: map[string]any{"batch_size": float64(32)}, Status: value.ModelStatusActive,
 		Available: true, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
@@ -149,6 +159,11 @@ func (s *fakeModelHTTPService) ListWorkspace(context.Context, uuid.UUID, uuid.UU
 }
 
 func (s *fakeModelHTTPService) ListPlatform(context.Context, uuid.UUID) ([]*dto.Model, error) {
+	return []*dto.Model{s.item()}, s.err
+}
+
+func (s *fakeModelHTTPService) ListSelectableWorkspace(_ context.Context, _ uuid.UUID, modelType value.ModelType, active bool) ([]*dto.Model, error) {
+	s.listSelectType, s.listSelectActive = modelType, active
 	return []*dto.Model{s.item()}, s.err
 }
 
@@ -190,7 +205,7 @@ type fakeModelConnectionTestHTTPService struct {
 func (s *fakeModelConnectionTestHTTPService) TestWorkspace(_ context.Context, workspaceID, modelID uuid.UUID) (*dto.ConnectionTestResult, error) {
 	s.workspaceID, s.modelID = workspaceID, modelID
 	if s.result == nil {
-		s.result = &dto.ConnectionTestResult{OK: true, Dimensions: 1024, DurationMS: 12}
+		s.result = &dto.ConnectionTestResult{OK: true, Type: value.ModelTypeEmbedding, Dimensions: modelRoutesIntPtr(1024), DurationMS: 12}
 	}
 	return s.result, s.err
 }
@@ -198,7 +213,7 @@ func (s *fakeModelConnectionTestHTTPService) TestWorkspace(_ context.Context, wo
 func (s *fakeModelConnectionTestHTTPService) TestPlatform(_ context.Context, modelID uuid.UUID) (*dto.ConnectionTestResult, error) {
 	s.modelID = modelID
 	if s.result == nil {
-		s.result = &dto.ConnectionTestResult{OK: true, Dimensions: 1024, DurationMS: 12}
+		s.result = &dto.ConnectionTestResult{OK: true, Type: value.ModelTypeEmbedding, Dimensions: modelRoutesIntPtr(1024), DurationMS: 12}
 	}
 	return s.result, s.err
 }
@@ -398,6 +413,35 @@ func TestKnowledgeBaseEmbeddingModelUpdateRouteIsRemoved(t *testing.T) {
 	}
 }
 
+func TestProviderOptionsExposeCapabilities(t *testing.T) {
+	admin := newModelRouteFixture(t, value.RoleAdmin, false)
+	rec := admin.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/model-providers/options", "")
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	want := `{"providers":[{"key":"openai","capabilities":["embedding"]},{"key":"rerank_compatible","capabilities":["rerank"]}]}`
+	if !jsonEqual(rec.Body.Bytes(), []byte(want)) {
+		t.Fatalf("body = %s, want %s", rec.Body.String(), want)
+	}
+}
+
+func TestListSelectableModelsFiltersByType(t *testing.T) {
+	admin := newModelRouteFixture(t, value.RoleAdmin, false)
+	rec := admin.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/models?type=rerank&active=true", "")
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if admin.models.listSelectType != value.ModelTypeRerank || !admin.models.listSelectActive {
+		t.Fatalf("selectable call = type %s active %v", admin.models.listSelectType, admin.models.listSelectActive)
+	}
+
+	// 非 embedding/rerank 的 type 被拒绝。
+	bad := admin.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/models?type=llm", "")
+	if bad.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("bad type status = %d, body = %s", bad.Code, bad.Body.String())
+	}
+}
+
 func TestModelErrorMappingUsesStableSafeCodes(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -425,6 +469,12 @@ func TestModelErrorMappingUsesStableSafeCodes(t *testing.T) {
 		{"immutable_model_field", domainerrors.ErrImmutableModelField, 409, "immutable_model_field"},
 		{"model_in_use", domainerrors.ErrModelInUse, 409, "model_in_use"},
 		{"provider_in_use", domainerrors.ErrProviderInUse, 409, "provider_in_use"},
+		{"rerank_configuration_conflict", domainerrors.ErrRerankConfigurationConflict, 409, "rerank_configuration_conflict"},
+		{"rerank_snapshot_mismatch", domainerrors.ErrRerankSnapshotMismatch, 409, "rerank_snapshot_mismatch"},
+		{"rerank_unavailable", domainerrors.ErrRerankUnavailable, 503, "rerank_unavailable"},
+		{"rerank_rate_limited", domainerrors.ErrRerankRateLimited, 503, "rerank_rate_limited"},
+		{"invalid_rerank_response", domainerrors.ErrInvalidRerankResponse, 502, "invalid_rerank_response"},
+		{"rerank_input_too_large", domainerrors.ErrRerankInputTooLarge, 400, "rerank_input_too_large"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -446,4 +496,19 @@ func TestModelErrorMappingUsesStableSafeCodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// modelRoutesIntPtr 返回 int 值的指针，便于构造 *int 类型的测试 DTO。
+func modelRoutesIntPtr(value int) *int { return &value }
+
+// jsonEqual 比较两段 JSON 字节是否语义相等（忽略键顺序）。
+func jsonEqual(a, b []byte) bool {
+	var va, vb any
+	if err := json.Unmarshal(a, &va); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &vb); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(va, vb)
 }

@@ -110,7 +110,11 @@ func TestRuntimeServicesWireModelConfigurationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil)
+	rerankRegistry, err := buildRuntimeRerankRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, rerankRegistry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +147,7 @@ func TestRuntimeServicesWireFAQDocumentDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +181,7 @@ func TestRuntimeServicesWireChunkRevisionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +212,7 @@ func TestRuntimeServicesWireIndexGenerationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +249,7 @@ func TestBuildRuntimeServicesRejectsInvalidCredentialKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil); err == nil {
+	if _, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil); err == nil {
 		t.Fatal("expected invalid credential key error")
 	}
 }
@@ -493,7 +497,7 @@ func buildTestRuntimeServices(t *testing.T, cfg *config.Config) *runtimeServices
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

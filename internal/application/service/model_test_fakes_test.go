@@ -13,6 +13,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	rerankport "github.com/dajee/langhuan/internal/ports/rerank"
 )
 
 type fakeModelProviderRepository struct {
@@ -231,6 +232,60 @@ func (r fakeFactoryRegistry) Factory(modelType value.ModelType, provider string)
 	return r.factory, nil
 }
 
+// fakeRerankFactory 是测试用的 rerank Factory。
+type fakeRerankFactory struct {
+	provider string
+	client   rerankport.Client
+}
+
+func (f *fakeRerankFactory) Provider() string           { return f.provider }
+func (f *fakeRerankFactory) CredentialFields() []string { return []string{"api_key"} }
+func (f *fakeRerankFactory) DecodeProvider(input rerankport.ProviderDecodeInput) (map[string]any, []byte, error) {
+	var config map[string]any
+	if err := json.Unmarshal(input.Config, &config); err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", domainerrors.ErrInvalidProviderConfig, err)
+	}
+	if len(input.Credentials) == 0 {
+		return nil, nil, domainerrors.ErrCredentialsRequired
+	}
+	return config, bytes.Clone(input.Credentials), nil
+}
+func (f *fakeRerankFactory) DecodeModel(input rerankport.ModelDecodeInput) (map[string]any, error) {
+	if input.ModelName == "" {
+		return nil, fmt.Errorf("%w: model_name 不能为空", domainerrors.ErrInvalidProviderConfig)
+	}
+	var parameters map[string]any
+	if err := json.Unmarshal(input.Parameters, &parameters); err != nil {
+		return nil, err
+	}
+	if parameters == nil {
+		parameters = map[string]any{}
+	}
+	// 测试默认补全最小合法值。
+	if _, ok := parameters["max_documents"]; !ok {
+		parameters["max_documents"] = float64(100)
+	}
+	if _, ok := parameters["max_query_chars"]; !ok {
+		parameters["max_query_chars"] = float64(4096)
+	}
+	if _, ok := parameters["max_document_chars"]; !ok {
+		parameters["max_document_chars"] = float64(8192)
+	}
+	return parameters, nil
+}
+func (f *fakeRerankFactory) NewClient(_ context.Context, _ rerankport.ClientInput) (rerankport.Client, error) {
+	return f.client, nil
+}
+
+type fakeRerankFactoryRegistry struct{ factory *fakeRerankFactory }
+
+func (r fakeRerankFactoryRegistry) Factory(provider string) (rerankport.Factory, error) {
+	if r.factory == nil || provider != r.factory.Provider() {
+		return nil, domainerrors.ErrUnsupportedProvider
+	}
+	return r.factory, nil
+}
+
 type recordingEmbeddingClient struct {
 	dimension int
 	input     embeddingport.EmbedInput
@@ -268,3 +323,6 @@ func cloneTestModel(input *model.Model) *model.Model {
 	}
 	return &cloned
 }
+
+// intPtr 返回 int 值的指针，便于构造 *int 类型的测试输入。
+func intPtr(value int) *int { return &value }

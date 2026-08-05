@@ -36,6 +36,8 @@ import (
 	parserprovideradapter "github.com/dajee/langhuan/internal/adapters/parserprovider"
 	minerufactory "github.com/dajee/langhuan/internal/adapters/parserprovider/mineru"
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
+	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
+	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
 	s3storage "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	"github.com/dajee/langhuan/internal/application/dto"
@@ -55,6 +57,7 @@ import (
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
 	parserproviderport "github.com/dajee/langhuan/internal/ports/parserprovider"
 	queueport "github.com/dajee/langhuan/internal/ports/queue"
+	rerankport "github.com/dajee/langhuan/internal/ports/rerank"
 	storageport "github.com/dajee/langhuan/internal/ports/storage"
 	webspa "github.com/dajee/langhuan/web"
 )
@@ -257,11 +260,15 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	if err != nil {
 		return nil, err
 	}
+	rerankRegistry, err := buildRuntimeRerankRegistry()
+	if err != nil {
+		return nil, err
+	}
 	parserProviderRegistry, err := buildRuntimeParserProviderRegistry(cfg)
 	if err != nil {
 		return nil, err
 	}
-	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, parserProviderRegistry)
+	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, rerankRegistry, parserProviderRegistry)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +321,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	return app, nil
 }
 
-func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry) (*runtimeServices, error) {
+func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry) (*runtimeServices, error) {
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
@@ -493,9 +500,9 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		workspaceReadiness:   service.NewWorkspaceReadinessService(workspaceReadinessRepo),
 		knowledgeBaseSummary: service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
 		knowledgeBases:       service.NewKnowledgeBaseService(kbRepo, kbRepo),
-		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, buildProviderFactoryResolver(embeddingRegistry, parserProviderRegistry)),
-		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry),
-		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry),
+		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, buildProviderFactoryResolver(embeddingRegistry, rerankRegistry, parserProviderRegistry)),
+		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry, rerankRegistry),
+		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry, rerankRegistry),
 		documents:            service.NewDocumentService(documentRepo, kbRepo),
 		documentAssets:       service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
 		jobs:                 service.NewJobService(jobRepo),
@@ -539,6 +546,12 @@ func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
 	)
 }
 
+// buildRuntimeRerankRegistry 构建 Rerank Factory 注册表。
+// 当前注册 rerank_compatible 一个 Provider；后续原生 adapter 出现真实需求时在此追加。
+func buildRuntimeRerankRegistry() (rerankport.FactoryRegistry, error) {
+	return rerankadapter.NewRegistry(rerankcompatible.NewFactory())
+}
+
 // buildRuntimeParserProviderRegistry 构建解析器 Provider Factory 注册表。
 // 仅当 mineru.enabled=true 时注册 mineru factory：未开启配置时，
 // 用户不能在 Web Console 创建 MinerU Provider（避免配置了却无法使用）。
@@ -550,21 +563,24 @@ func buildRuntimeParserProviderRegistry(cfg *config.Config) (*parserprovideradap
 	return parserprovideradapter.NewRegistry(factories...)
 }
 
-// buildProviderFactoryResolver 构建 embedding + parser 多能力域解析器。
-// parserRegistry 为 nil 时只支持 embedding 能力域。
-func buildProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistry, parserRegistry *parserprovideradapter.Registry) *service.ProviderFactoryResolver {
+// buildProviderFactoryResolver 构建 embedding + rerank + parser 多能力域解析器。
+// parserRegistry 为 nil 时只支持 embedding/rerank 能力域。
+func buildProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserRegistry *parserprovideradapter.Registry) *service.ProviderFactoryResolver {
 	var adapter *service.ParserRegistryAdapter
 	if parserRegistry != nil {
 		adapter = service.NewParserRegistryAdapter(parserRegistry)
 	}
-	// 可用 provider 键集合：embedding 5 个 + 条件注册的 parser provider（如 mineru）。
+	// 可用 provider 键集合：embedding 5 个 + rerank 1 个 + 条件注册的 parser provider（如 mineru）。
 	supported := []string{"openai", "ark", "ollama", "dashscope", "tencentcloud"}
+	if rerankRegistry != nil {
+		supported = append(supported, "rerank_compatible")
+	}
 	if parserRegistry != nil {
 		for _, factory := range parserRegistry.Factories() {
 			supported = append(supported, factory.Provider())
 		}
 	}
-	return service.NewProviderFactoryResolver(embeddingRegistry, adapter, supported...)
+	return service.NewProviderFactoryResolver(embeddingRegistry, rerankRegistry, adapter, supported...)
 }
 
 func clearSensitiveBytes(value []byte) {

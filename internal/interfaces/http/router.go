@@ -206,6 +206,8 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			if deps.Models != nil {
 				modelH := modelHandler{models: deps.Models, connections: deps.ModelConnectionTests}
 				memberGroup.GET("/model-providers/:provider_id/models", modelH.listWorkspace)
+				// /models 必须注册在 /models/:model_id 之前，Gin 静态优先
+				memberGroup.GET("/models", modelH.listSelectable)
 				memberGroup.GET("/models/:model_id", modelH.getWorkspace)
 			}
 			if deps.Documents != nil {
