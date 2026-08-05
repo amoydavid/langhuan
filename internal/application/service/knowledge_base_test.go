@@ -162,7 +162,7 @@ func TestCreateKnowledgeBaseCreatesActiveEmptyGeneration(t *testing.T) {
 	if root == nil || root.ID != kb.FileTreeRootID || root.NodeType != value.FileTreeNodeRoot || root.ParentID != nil || root.DocumentID != nil {
 		t.Fatalf("root = %#v", root)
 	}
-	if generation == nil || generation.ID != *kb.ActiveIndexGenerationID || generation.Status != value.IndexGenerationReady || generation.ChunkerVersion != 2 {
+	if generation == nil || generation.ID != *kb.ActiveIndexGenerationID || generation.Status != value.IndexGenerationReady || generation.ChunkerVersion != value.StandardChunkerVersion {
 		t.Fatalf("generation = %#v", generation)
 	}
 	if created.ActiveIndexGenerationID == nil || *created.ActiveIndexGenerationID != generation.ID || created.FileTreeRootID != root.ID {

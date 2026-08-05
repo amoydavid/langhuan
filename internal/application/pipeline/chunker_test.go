@@ -26,9 +26,9 @@ func TestChunkerRejectsFAQWithTypedValidationError(t *testing.T) {
 	}
 }
 
-func TestCurrentStandardChunkerVersionIsTwo(t *testing.T) {
-	if CurrentStandardChunkerVersion != 2 {
-		t.Fatalf("CurrentStandardChunkerVersion = %d, want 2", CurrentStandardChunkerVersion)
+func TestCurrentStandardChunkerVersionIsThree(t *testing.T) {
+	if CurrentStandardChunkerVersion != 3 {
+		t.Fatalf("CurrentStandardChunkerVersion = %d, want 3", CurrentStandardChunkerVersion)
 	}
 }
 
