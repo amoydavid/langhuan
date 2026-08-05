@@ -385,9 +385,23 @@ export function RetrievalTest({
                         </CardTitle>
                         <Badge variant='outline'>{result.document_kind}</Badge>
                         <span className='ms-auto font-medium text-sm'>
-                          RRF {score(result.score)}
+                          {result.ranking_stage === 'rerank'
+                            ? t('retrieval.test.rerankScore', {
+                                value: score(result.rerank_score),
+                              })
+                            : t('retrieval.test.rrfScore', {
+                                value: score(result.score),
+                              })}
                         </span>
                       </div>
+                      {result.ranking_stage === 'rrf_fallback' && (
+                        <p
+                          role='alert'
+                          className='mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-900 text-xs dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200'
+                        >
+                          {t('retrieval.test.fallbackWarning')}
+                        </p>
+                      )}
                       <CardDescription className='mt-1'>
                         {showHeading && <span>{heading} · </span>}
                         {sourceAnchorLabel(result.source_anchor)}
@@ -424,6 +438,13 @@ export function RetrievalTest({
                     </ul>
                   </div>
                   <div className='flex flex-wrap items-center gap-x-4 gap-y-2 text-muted-foreground text-xs'>
+                    {result.ranking_stage === 'rerank' && (
+                      <span>
+                        {t('retrieval.test.rrfScore', {
+                          value: score(result.score),
+                        })}
+                      </span>
+                    )}
                     <span>
                       {t('retrieval.test.vectorScore', {
                         value: score(result.vector_score),

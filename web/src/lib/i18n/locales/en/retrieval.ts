@@ -25,6 +25,10 @@ export const retrieval = {
     matchedChildren: 'Matched excerpts {{count}}',
     vectorScore: 'Vector {{value}}',
     keywordScore: 'Keyword {{value}}',
+    rrfScore: 'RRF {{value}}',
+    rerankScore: 'Rerank {{value}}',
+    fallbackWarning:
+      'Rerank service temporarily unavailable; results returned in RRF order.',
     viewSourceLink: 'View source',
     openChunkLink: 'Open chunk',
     emptyTitle: 'No matching evidence found',

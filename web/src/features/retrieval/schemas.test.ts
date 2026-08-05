@@ -25,6 +25,7 @@ describe('retrievalResultsSchema', () => {
         score: 0.0325,
         vector_score: 0.84,
         keyword_score: 12.31,
+        ranking_stage: 'rrf',
         metadata: {},
         matched_children: [
           {

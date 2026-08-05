@@ -8,6 +8,8 @@ export const retrievalRequestSchema = z.object({
   final_top_k: z.number().int().min(1).max(50).optional(),
 })
 
+export const rankingStageSchema = z.enum(['rrf', 'rerank', 'rrf_fallback'])
+
 export const retrievalResultSchema = z.object({
   chunk_id: z.uuid(),
   chunk_revision_id: z.uuid(),
@@ -19,6 +21,8 @@ export const retrievalResultSchema = z.object({
   score: z.number(),
   vector_score: z.number().optional(),
   keyword_score: z.number().optional(),
+  rerank_score: z.number().optional(),
+  ranking_stage: rankingStageSchema,
   metadata: z.record(z.string(), z.unknown()),
   matched_children: z.array(
     z.object({

@@ -441,7 +441,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 - 接入 PostgreSQL AGE 做图索引和图查询。
 - 增加外部写入 entities/relations 的 API。
-- 增加 rerank adapter。
+- ~~增加 rerank adapter。~~ 已于当前版本交付：`rerank_compatible` Provider、Generation 重排快照、单库/多库重排与结构化日志。
 - 增加更多 parser adapter。
 - 扩展 workspace 权限模型，例如资源级权限或更细粒度的 token scope。
 - 增加数据源同步框架。

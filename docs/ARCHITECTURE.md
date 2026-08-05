@@ -279,4 +279,6 @@ duration 必须大于 0；batch 必须为 1–10000。Cleanup service 已在 run
 
 数据库验收覆盖复合外键、FAQ 完整性、父子分块 lineage 与 flat 回退、父块不入索引、完整父块检索上下文、文件树 cycle/name/delete、Revision 冲突、Generation 原子切换、FAQ 答案不入索引、HNSW 表达式兼容、跨租户负向矩阵和 Auth/Model 数据保留。
 
-当前非目标：正式 RLS policy、crawler、Rerank、LLM 回答生成与图查询。
+当前非目标：正式 RLS policy、crawler、LLM 回答生成与图查询。
+
+> Rerank 已于当前版本交付：检索在 Vector/FTS + RRF + parent 聚合后，按 active Generation 的可选不可变 Rerank 快照执行一次重排，返回 `rerank_score` 与 `ranking_stage`（`rrf`/`rerank`/`rrf_fallback`）。多知识库检索要求所有 active Generation 的 Rerank 快照完全一致或全部关闭，否则在模型调用前返回 `rerank_configuration_conflict`。Rerank 模型身份、config hash、候选数与失败策略作为 Generation 快照固化，运行时与快照不一致时拒绝执行。

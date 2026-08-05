@@ -33,6 +33,7 @@ const results: RetrievalResult[] = [
     score: 0.0325,
     vector_score: 0.84,
     keyword_score: 12.31,
+    ranking_stage: 'rrf',
     metadata: { heading: 'Docker 部署', internal_hash: 'do-not-render' },
     matched_children: [
       {

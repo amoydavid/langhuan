@@ -94,6 +94,8 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
   "chunk_id": "<parent-or-flat-chunk-id>",
   "content": "完整父块正文或 flat 正文",
   "score": 0.031,
+  "rerank_score": 0.91,
+  "ranking_stage": "rerank",
   "matched_children": [
     {
       "chunk_id": "<matched-child-or-flat-id>",
@@ -105,6 +107,8 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
   ]
 }
 ```
+
+`score` 始终是 RRF 融合分数；`rerank_score` 仅在 active Generation 启用 Rerank 且成功应用时出现；`ranking_stage` 为 `rrf`（未启用重排）、`rerank`（成功重排）或 `rrf_fallback`（重排远端失败后回退到 RRF 顺序）。多知识库检索要求所有 active Generation 的 Rerank 快照完全一致或全部关闭，否则在模型调用前返回 `409 rerank_configuration_conflict`。
 
 ## 6. MCP
 

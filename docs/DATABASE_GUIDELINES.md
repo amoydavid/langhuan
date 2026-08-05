@@ -298,6 +298,16 @@ KnowledgeBase/Document 使用 `deleted_at` 提供恢复窗口。软删除 Docume
 
 Cleanup 仍然必须进入 `WithinWorkspace`，不允许用无租户的全表后台任务绕过 RLS-ready 边界。
 
+### 9.x Generation Rerank 快照（迁移 000014）
+
+迁移 000014 为 `knowledge_base_index_generations` 增加可选 Rerank 快照：
+
+- 新增列 `rerank_model_id`/`rerank_provider_id`（`uuid NULL ... ON DELETE RESTRICT`）、`rerank_model_name`/`rerank_model_config_hash`（`text NULL`）、`rerank_config jsonb NOT NULL DEFAULT '{}'`。
+- CHECK 约束 `index_generations_rerank_snapshot_shape_check` 强制全空（关闭）或全非空 + `rerank_config` 含 `candidate_top_k` 与 `failure_mode`；既有 Generation 默认关闭，无需回填。
+- 部分索引 `idx_index_generations_rerank_model_id` / `idx_index_generations_rerank_provider_id` 支持引用统计与删除保护诊断。
+- Row codec 把 `*model.RerankSnapshot` 映射为四列 + `{"candidate_top_k":N,"failure_mode":"..."}`；`nil` 快照写全空。
+- `CountGenerationReferences`（Model）使用 `embedding_model_id = ? OR rerank_model_id = ?`；Provider 使用 `provider_id = ? OR rerank_provider_id = ?`，被引用时 Provider config 语义变更返回 `ErrImmutableModelField`，只允许轮换凭证。
+
 ## 10. 迁移与测试
 
 - 迁移位于 `internal/infrastructure/migrate/migrations/`，版本严格递增，每个 up 有对应 down。
