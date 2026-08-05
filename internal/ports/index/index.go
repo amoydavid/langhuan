@@ -36,12 +36,16 @@ type SearchEvidence struct {
 	EntryID, ChunkID, ChunkRevisionID, DocumentID uuid.UUID
 	DocumentKind                                  value.DocumentKind
 	Content, DocumentName                         string
-	SourceAnchor                                  value.SourceAnchor
-	Metadata                                      map[string]any
-	MatchedChunkID, MatchedChunkRevisionID        uuid.UUID
-	MatchedContent                                string
-	MatchedSourceAnchor                           value.SourceAnchor
-	MatchedRole                                   value.ChunkRole
+	// SearchContent 是命中的检索原始文本（FAQ 为问题集合，file/web 为片段正文）。
+	// 仅用于排序（如 Rerank 文本构造），不进入 API DTO。
+	SearchContent                          string
+	SourceAnchor                           value.SourceAnchor
+	Metadata                               map[string]any
+	MatchedChunkID, MatchedChunkRevisionID uuid.UUID
+	MatchedContent                         string
+	MatchedSearchContent                   string
+	MatchedSourceAnchor                    value.SourceAnchor
+	MatchedRole                            value.ChunkRole
 }
 
 // SearchReader performs candidate and evidence reads on one Workspace-bound transaction.

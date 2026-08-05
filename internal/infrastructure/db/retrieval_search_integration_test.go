@@ -90,6 +90,10 @@ func TestLoadEvidenceReturnsParentContextForChildren(t *testing.T) {
 			if item.ChunkID != parent.ID || item.Content != "完整父块正文" || item.MatchedRole != value.ChunkRoleChild {
 				t.Fatalf("child evidence = %#v", item)
 			}
+			// SearchContent 来自命中 entry 的 search_content，用于重排文本构造；不等于返回用 Content。
+			if item.SearchContent == "" || item.MatchedSearchContent == "" {
+				t.Fatalf("search content empty = %#v", item)
+			}
 		}
 		return nil
 	})

@@ -19,6 +19,8 @@ type SearchResult struct {
 	Score           float64            `json:"score"`
 	VectorScore     *float64           `json:"vector_score,omitempty"`
 	KeywordScore    *float64           `json:"keyword_score,omitempty"`
+	RerankScore     *float64           `json:"rerank_score,omitempty"`
+	RankingStage    value.RankingStage `json:"ranking_stage"`
 	Metadata        map[string]any     `json:"metadata"`
 	MatchedChildren []MatchedChild     `json:"matched_children"`
 	// KnowledgeBaseID/Name 为多知识库检索的来源归属；单库检索可为零值。

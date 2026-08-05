@@ -27,19 +27,21 @@ type SearchInput struct {
 
 // SearchServiceDeps contains hybrid-search persistence and embedding dependencies.
 type SearchServiceDeps struct {
-	Repository indexport.SearchRepository
-	Resolver   EmbeddingClientResolver
+	Repository     indexport.SearchRepository
+	Resolver       EmbeddingClientResolver
+	RerankResolver RerankClientResolver
 }
 
 // SearchService executes active-Generation vector/FTS retrieval and RRF fusion.
 type SearchService struct {
-	repository indexport.SearchRepository
-	resolver   EmbeddingClientResolver
+	repository     indexport.SearchRepository
+	resolver       EmbeddingClientResolver
+	rerankResolver RerankClientResolver
 }
 
 // NewSearchService creates the hybrid-search use case.
 func NewSearchService(deps SearchServiceDeps) *SearchService {
-	return &SearchService{repository: deps.Repository, resolver: deps.Resolver}
+	return &SearchService{repository: deps.Repository, resolver: deps.Resolver, rerankResolver: deps.RerankResolver}
 }
 
 // Search returns evidence from the active Generation without generating an answer.
@@ -67,6 +69,26 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 		resolved.ProviderID != generation.ProviderID || resolved.ModelName != generation.ModelName ||
 		resolved.Dimensions != generation.EmbeddingDimension {
 		return nil, domainerrors.ErrDimensionMismatch
+	}
+	if resolved.ModelConfigHash != "" && generation.ModelConfigHash != "" && resolved.ModelConfigHash != generation.ModelConfigHash {
+		return nil, domainerrors.ErrRerankSnapshotMismatch
+	}
+	// 启用 Rerank 时解析并校验快照（仅构造客户端，不发远端请求）。
+	var rerankClient *ResolvedRerankClient
+	if generation.Rerank != nil {
+		if s.rerankResolver == nil {
+			return nil, fmt.Errorf("%w: Rerank resolver 不能为空", domainerrors.ErrValidation)
+		}
+		rerankClient, err = s.rerankResolver.Resolve(ctx, input.WorkspaceID, generation.Rerank.ModelID)
+		if err != nil {
+			return nil, err
+		}
+		if rerankClient == nil || rerankClient.ModelID != generation.Rerank.ModelID ||
+			rerankClient.ProviderID != generation.Rerank.ProviderID ||
+			rerankClient.ModelName != generation.Rerank.ModelName ||
+			rerankClient.ModelConfigHash != generation.Rerank.ModelConfigHash {
+			return nil, domainerrors.ErrRerankSnapshotMismatch
+		}
 	}
 	embedded, err := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: []string{query}})
 	if err != nil {
@@ -116,6 +138,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 			return fmt.Errorf("%w: Search evidence 不完整", domainerrors.ErrConflict)
 		}
 		grouped := make(map[uuid.UUID]*dto.SearchResult, len(fused))
+		groupedSearchContent := make(map[uuid.UUID][]string, len(fused))
 		for _, candidate := range fused {
 			item, ok := byID[candidate.EntryID]
 			if !ok {
@@ -124,11 +147,13 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 			current := dto.SearchResultFromEvidence(item, candidate.Score, candidate.VectorScore, candidate.KeywordScore)
 			if prior := grouped[current.ChunkID]; prior != nil {
 				prior.MatchedChildren = append(prior.MatchedChildren, current.MatchedChildren[0])
+				groupedSearchContent[current.ChunkID] = append(groupedSearchContent[current.ChunkID], matchedSearchContentOf(item))
 				if current.Score > prior.Score {
 					prior.Score, prior.VectorScore, prior.KeywordScore = current.Score, current.VectorScore, current.KeywordScore
 				}
 			} else {
 				grouped[current.ChunkID] = current
+				groupedSearchContent[current.ChunkID] = []string{matchedSearchContentOf(item)}
 			}
 		}
 		results = make([]*dto.SearchResult, 0, len(grouped))
@@ -148,6 +173,28 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 				}
 				return result.MatchedChildren[i].ChunkID.String() < result.MatchedChildren[j].ChunkID.String()
 			})
+		}
+		// Rerank：在 parent grouping 之后、final truncate 之前执行一次重排。
+		rankingStage := value.RankingStageRRF
+		if generation.Rerank != nil && rerankClient != nil {
+			rankables := buildRankablesWithContent(results, groupedSearchContent)
+			ranked, stage, rerankErr := applyRerank(txCtx, rerankClient, rankables, generation.Rerank.CandidateTopK, rerankClient.MaxDocumentChars)
+			if rerankErr != nil {
+				if generation.Rerank.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
+					rankingStage = value.RankingStageRRFFallback
+				} else {
+					return rerankErr
+				}
+			} else {
+				results = make([]*dto.SearchResult, len(ranked))
+				for i, item := range ranked {
+					results[i] = item.Result
+				}
+				rankingStage = stage
+			}
+		}
+		for _, result := range results {
+			result.RankingStage = rankingStage
 		}
 		if len(results) > options.finalTopK {
 			results = results[:options.finalTopK]

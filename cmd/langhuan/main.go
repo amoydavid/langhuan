@@ -423,6 +423,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		return nil, fmt.Errorf("构造 runtime parser registry 失败: %w", err)
 	}
 	embeddingResolver := service.NewEmbeddingClientResolver(modelRepo, credentialCipher, embeddingRegistry)
+	rerankResolver := service.NewRerankClientResolver(modelRepo, credentialCipher, rerankRegistry)
 	documentPipeline := pipeline.NewDocumentPipeline(pipeline.DocumentPipelineDeps{
 		Documents:         documentRepo,
 		Revisions:         documentRevisionRepo,
@@ -450,7 +451,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Resolver: embeddingResolver, Index: retrievalRepo,
 	})
 	search := service.NewSearchService(service.SearchServiceDeps{
-		Repository: retrievalRepo, Resolver: embeddingResolver,
+		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver,
 	})
 	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
 	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, apiKeyNameStore, cfg.Search)
