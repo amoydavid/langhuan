@@ -1,49 +1,32 @@
 package mineru
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/dajee/langhuan/internal/domain/model"
-	"github.com/dajee/langhuan/internal/domain/value"
+	markdownparser "github.com/dajee/langhuan/internal/adapters/parser/markdown"
 	parserport "github.com/dajee/langhuan/internal/ports/parser"
 )
 
 // buildParsedDocument 把 MinerU 产出的 Markdown 组装成 ParsedDocument。
 // MinerU Markdown 通常已是结构化文本，这里生成一个简单的 manifest：
 // 把整篇 Markdown 作为一个 paragraph block，anchor 指向文档级别。
-func buildParsedDocument(markdown, modelVersion string) (*parserport.ParsedDocument, error) {
+func buildParsedDocument(ctx context.Context, markdown, modelVersion string) (*parserport.ParsedDocument, error) {
 	markdown = trimWhitespace(markdown)
 	if markdown == "" {
 		return nil, fmt.Errorf("MinerU 返回空 Markdown")
 	}
 
-	blocks := buildBlocks(markdown)
-	manifest := model.ParseManifest{
-		Version:       model.CurrentParseManifestVersion,
-		Parser:        "pdf",
-		ParserVersion: 1,
-		Blocks:        blocks,
-		Warnings:      nil,
+	parsed, err := markdownparser.New().Parse(ctx, parserport.ParseInput{FileType: "markdown", Content: []byte(markdown)})
+	if err != nil {
+		return nil, fmt.Errorf("MinerU Markdown 结构化解析失败: %w", err)
 	}
-
-	return &parserport.ParsedDocument{
-		Markdown: markdown,
-		Manifest: manifest,
-	}, nil
-}
-
-func buildBlocks(markdown string) []model.ParsedBlock {
-	return []model.ParsedBlock{
-		{
-			Sequence:        0,
-			Kind:            model.BlockKindParagraph,
-			NormalizedStart: 0,
-			NormalizedEnd:   len(markdown),
-			SourceAnchor: value.SourceAnchor{
-				SourceType: "pdf",
-			},
-		},
+	for index := range parsed.Manifest.Blocks {
+		parsed.Manifest.Blocks[index].SourceAnchor.SourceType = "pdf"
 	}
+	parsed.Manifest.Parser = "pdf"
+	parsed.Manifest.ParserVersion = 1
+	return parsed, nil
 }
 
 func trimWhitespace(s string) string {
