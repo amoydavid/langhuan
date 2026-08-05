@@ -87,6 +87,20 @@ describe('DocumentPreview', () => {
     await expect.element(screen.getByText('第 2 版')).toBeVisible()
   })
 
+  it('renders an injected chunk list as the fourth file-detail tab', async () => {
+    const screen = await renderPreview({
+      document: item,
+      extraTab: {
+        value: 'chunks',
+        label: '分块列表 2',
+        content: <p>第一个分块</p>,
+      },
+    })
+
+    await userEvent.click(screen.getByRole('tab', { name: '分块列表 2' }))
+    await expect.element(screen.getByText('第一个分块')).toBeVisible()
+  })
+
   it('renders image assets in the info tab when workspace and document are provided', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },

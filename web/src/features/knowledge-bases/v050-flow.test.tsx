@@ -14,6 +14,7 @@ const ids = {
   workspace: '10000000-0000-4000-8000-000000000001',
   knowledgeBase: '20000000-0000-4000-8000-000000000002',
   root: '30000000-0000-4000-8000-000000000003',
+  folder: '35000000-0000-4000-8000-000000000003',
   file: '40000000-0000-4000-8000-000000000004',
   document: '50000000-0000-4000-8000-000000000005',
   chunk: '60000000-0000-4000-8000-000000000006',
@@ -32,13 +33,23 @@ const tree = fileTreeSchema.parse({
     path: '/',
     children: [
       {
-        id: ids.file,
+        id: ids.folder,
         parent_id: ids.root,
-        node_type: 'file',
-        name: 'installation.md',
-        document_id: ids.document,
-        path: '/installation.md',
-        children: [],
+        node_type: 'folder',
+        name: 'docs',
+        document_id: null,
+        path: '/docs',
+        children: [
+          {
+            id: ids.file,
+            parent_id: ids.folder,
+            node_type: 'file',
+            name: 'installation.md',
+            document_id: ids.document,
+            path: '/docs/installation.md',
+            children: [],
+          },
+        ],
       },
     ],
   },
@@ -123,7 +134,7 @@ describe('v0.5.0 role boundary', () => {
       <FileTree
         tree={tree}
         canManage={canManage}
-        onSelectDocument={vi.fn()}
+        onSelectFolder={vi.fn()}
         onCreateFolder={vi.fn()}
         onRenameNode={vi.fn()}
         onMoveNode={vi.fn()}
@@ -133,11 +144,11 @@ describe('v0.5.0 role boundary', () => {
     await expect
       .element(fileTree.getByRole('button', { name: '新建文件夹' }))
       .toBeVisible()
-    await userEvent.click(
-      fileTree.getByRole('treeitem', { name: 'installation.md' })
-    )
+    await userEvent.click(fileTree.getByRole('treeitem', { name: 'docs' }))
+    // 行级 ⋯ 菜单在 hover/focus 时出现；先触发 hover 再打开菜单
+    await userEvent.click(fileTree.getByRole('button', { name: 'docs 的操作' }))
     await expect
-      .element(fileTree.getByRole('button', { name: '删除 installation.md' }))
+      .element(fileTree.getByRole('menuitem', { name: '删除' }))
       .toBeVisible()
 
     const chunkInspector = await render(

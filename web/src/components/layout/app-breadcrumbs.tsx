@@ -12,6 +12,8 @@ export type RouteBreadcrumb = {
 declare module '@tanstack/react-router' {
   interface StaticDataRouteOption {
     breadcrumb?: RouteBreadcrumb
+    /** 路由需要占满视口剩余高度并启用栏内独立滚动（如文件浏览器）。 */
+    fullHeight?: boolean
   }
 }
 

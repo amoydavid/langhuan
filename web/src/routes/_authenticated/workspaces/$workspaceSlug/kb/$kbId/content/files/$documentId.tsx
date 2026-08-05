@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { Workflow } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -12,14 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
 import { meQueryOptions } from '@/features/auth/queries'
 import { createChunkRevision } from '@/features/chunks/api'
 import { ChunkDetailDialog } from '@/features/chunks/inspector/chunk-detail-dialog'
@@ -40,7 +32,6 @@ import { canonicalDocumentHref, findFileNode } from '@/features/content/routing'
 import { documentQueryOptions } from '@/features/documents/queries'
 import { canManageIndex } from '@/features/knowledge-bases/permissions'
 import { knowledgeBaseSummaryQueryOptions } from '@/features/knowledge-bases/workbench/queries'
-import { useMediaQuery } from '@/hooks/use-media-query'
 import { parseApiError } from '@/lib/api/error'
 import i18n from '@/lib/i18n'
 
@@ -49,6 +40,7 @@ const fileDetailSearchSchema = z.object({
   // 外部 deep link（如检索测试结果）用 anchor 强制初始为原文视图。
   anchor: z.number().int().nonnegative().optional(),
   enabled: z.boolean().optional(),
+  folder: z.string().optional(),
   job: z.string().optional(),
   page: z.number().int().positive().optional(),
 })
@@ -107,13 +99,6 @@ function FileDetailPage() {
   const [editing, setEditing] = useState<Chunk>()
   const [latestRevision, setLatestRevision] = useState<ChunkRevision>()
   const [editorDirty, setEditorDirty] = useState(false)
-  const [chunkPanelOpen, setChunkPanelOpen] = useState(Boolean(search.chunk))
-  const wideDesktop = useMediaQuery('(min-width: 1280px)')
-
-  useEffect(() => {
-    if (search.chunk && !wideDesktop) setChunkPanelOpen(true)
-  }, [search.chunk, wideDesktop])
-
   if (!item || !tree || !summary) return null
   const node = findFileNode(tree.root, documentId)
   const displayName =
@@ -202,74 +187,82 @@ function FileDetailPage() {
   )
 
   return (
-    <div className='space-y-4'>
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <label className='flex items-center gap-2 text-sm'>
-          <input
-            type='checkbox'
-            checked={search.enabled === true}
-            onChange={(event) =>
-              void navigate({
-                search: {
-                  ...search,
-                  enabled: event.target.checked || undefined,
-                },
-                replace: true,
-              })
-            }
-          />
-          {t('routes.workspaces.kb.content.files.detail.showOnlySearchable')}
-        </label>
-        {search.job && (
-          <Button variant='outline' size='sm' asChild>
-            <a
-              href={`/workspaces/${encodeURIComponent(workspaceSlug)}/jobs/${encodeURIComponent(search.job)}`}
-            >
-              <Workflow />
-              {t('routes.workspaces.kb.content.files.detail.viewJob')}
-            </a>
-          </Button>
-        )}
-      </div>
-
-      <div className='grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)]'>
-        <DocumentPreview
-          document={item}
-          displayName={displayName}
-          path={path}
-          initialView={search.anchor !== undefined ? 'raw' : 'preview'}
-          workspaceSlug={workspaceSlug}
-          documentId={documentId}
-        />
-        {wideDesktop ? (
-          inspector
-        ) : (
-          <Sheet open={chunkPanelOpen} onOpenChange={setChunkPanelOpen}>
-            <SheetTrigger asChild>
-              <Button variant='outline'>
-                {t('routes.workspaces.kb.content.files.detail.viewChunks', {
+    <>
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) {
+            void navigate({
+              to: '/workspaces/$workspaceSlug/kb/$kbId/content/files',
+              params: { workspaceSlug, kbId },
+              search: {
+                folder: search.folder,
+              },
+              replace: true,
+            })
+          }
+        }}
+      >
+        <DialogContent className='flex max-h-[90svh] flex-col overflow-hidden sm:max-w-6xl'>
+          <DialogHeader className='sr-only'>
+            <DialogTitle>{displayName}</DialogTitle>
+            <DialogDescription>{path}</DialogDescription>
+          </DialogHeader>
+          <div className='min-h-0 flex-1 overflow-y-auto pr-1'>
+            <DocumentPreview
+              document={item}
+              displayName={displayName}
+              path={path}
+              initialView={search.anchor !== undefined ? 'raw' : 'preview'}
+              workspaceSlug={workspaceSlug}
+              documentId={documentId}
+              extraTab={{
+                value: 'chunks',
+                label: t('content.documentPreview.tabChunks', {
                   count: chunks.length,
-                })}
-              </Button>
-            </SheetTrigger>
-            <SheetContent className='w-full overflow-y-auto sm:max-w-xl'>
-              <SheetHeader>
-                <SheetTitle>
-                  {t('routes.workspaces.kb.content.files.detail.sheetTitle', {
-                    name: displayName,
-                  })}
-                </SheetTitle>
-                <SheetDescription>
-                  {t(
-                    'routes.workspaces.kb.content.files.detail.sheetDescription'
-                  )}
-                </SheetDescription>
-              </SheetHeader>
-              <div className='p-4 pt-0'>{inspector}</div>
-            </SheetContent>
-          </Sheet>
-        )}
-      </div>
+                }),
+                content: (
+                  <div className='space-y-4 rounded-xl border bg-card p-4'>
+                    <div className='flex flex-wrap items-center justify-between gap-2'>
+                      <label className='flex items-center gap-2 text-sm'>
+                        <input
+                          type='checkbox'
+                          checked={search.enabled === true}
+                          onChange={(event) =>
+                            void navigate({
+                              search: {
+                                ...search,
+                                enabled: event.target.checked || undefined,
+                              },
+                              replace: true,
+                            })
+                          }
+                        />
+                        {t(
+                          'routes.workspaces.kb.content.files.detail.showOnlySearchable'
+                        )}
+                      </label>
+                      {search.job && (
+                        <Button variant='outline' size='sm' asChild>
+                          <a
+                            href={`/workspaces/${encodeURIComponent(workspaceSlug)}/jobs/${encodeURIComponent(search.job)}`}
+                          >
+                            <Workflow />
+                            {t(
+                              'routes.workspaces.kb.content.files.detail.viewJob'
+                            )}
+                          </a>
+                        </Button>
+                      )}
+                    </div>
+                    {inspector}
+                  </div>
+                ),
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(editing)}
@@ -319,7 +312,7 @@ function FileDetailPage() {
           setEditing(chunk)
         }}
       />
-    </div>
+    </>
   )
 }
 
@@ -368,6 +361,7 @@ export const Route = createFileRoute(
       label: 'routes.workspaces.kb.content.files.detail.breadcrumb',
       resolve: loaderDocumentName,
     },
+    fullHeight: true,
   },
   component: FileDetailPage,
 })

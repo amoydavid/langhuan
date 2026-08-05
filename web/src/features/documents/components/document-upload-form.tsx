@@ -21,6 +21,7 @@ import { parseApiError } from '@/lib/api/error'
 import i18n from '@/lib/i18n'
 import { uploadDocument } from '../api'
 import { type DocumentUploadFormValues, documentUploadSchema } from '../schemas'
+import type { DocumentIngestResult } from '../types'
 
 export const DOCUMENT_ACCEPT = '.pdf,.md,.markdown,.txt,.csv,.xlsx,.docx'
 
@@ -39,12 +40,14 @@ type DocumentUploadFormProps = {
   workspaceSlug: string
   kbId: string
   parentNodeId?: string
+  onUploaded?: (result: DocumentIngestResult) => void | Promise<void>
 }
 
 export function DocumentUploadForm({
   workspaceSlug,
   kbId,
   parentNodeId,
+  onUploaded,
 }: DocumentUploadFormProps) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -76,6 +79,10 @@ export function DocumentUploadForm({
           ? t('documents.uploadForm.dedupedToast')
           : t('documents.uploadForm.uploadedToast')
       )
+      if (onUploaded) {
+        await onUploaded(result)
+        return
+      }
       await navigate({
         to: '/workspaces/$workspaceSlug/kb/$kbId/content/files/$documentId',
         params: {

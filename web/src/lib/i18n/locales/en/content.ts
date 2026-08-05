@@ -8,18 +8,20 @@ export const content = {
   // File tree (FileTree)
   fileTree: {
     newFolderAriaLabel: 'New folder',
-    searchAriaLabel: 'Search files',
-    searchPlaceholder: 'Search files…',
-    treeAriaLabel: 'Files',
+    searchAriaLabel: 'Search folders',
+    searchPlaceholder: 'Search folders…',
+    treeAriaLabel: 'Folders',
     renameAction: 'Rename',
     moveAction: 'Move',
     deleteAction: 'Delete',
     renameActionAriaLabel: 'Rename {{name}}',
     moveActionAriaLabel: 'Move {{name}}',
     deleteActionAriaLabel: 'Delete {{name}}',
-    noMatches: 'No matching files',
-    empty: 'No files yet',
+    rowActionsAriaLabel: 'Actions for {{name}}',
+    noMatches: 'No matching folders',
+    empty: 'No folders yet',
     createFolder: {
+      modalTitle: 'New folder',
       formAriaLabel: 'Create folder in {{path}}',
       nameAriaLabel: 'Folder name',
       namePlaceholder: 'e.g. guides',
@@ -27,25 +29,38 @@ export const content = {
       create: 'Create',
     },
     rename: {
+      modalTitle: 'Rename',
       inputAriaLabel: 'Rename {{name}}',
       nameRequired: 'Name cannot be empty',
       nameTooLong: 'Name cannot exceed 255 characters',
+      cancel: 'Cancel',
+      save: 'Save name',
     },
     move: {
       dialogAriaLabel: 'Choose a target folder',
       title: 'Choose a target folder',
+      modalTitle: 'Move “{{name}}”',
+      currentLocation: 'Current location: {{path}}',
       toTarget: 'Move to {{path}}',
+      confirm: 'Move to {{path}}',
       cancel: 'Cancel',
     },
     delete: {
       dialogAriaLabel: 'Confirm delete {{name}}',
       title: 'Delete “{{name}}”?',
+      modalTitle: 'Confirm delete',
+      filePath: '{{path}}',
+      fileWarning:
+        'File deletion is irreversible; associated chunks and vectors will be removed.',
+      folderWarning:
+        'A non-empty folder cannot be deleted; clear its contents first.',
       fileDescription:
         'The file will be removed from retrieval; the backend performs a soft delete.',
       folderDescription:
         'A non-empty folder cannot be deleted; move or delete its contents first.',
       cancel: 'Cancel',
       confirm: 'Confirm delete',
+      deleteAction: 'Delete',
     },
     errors: {
       notEmpty: 'The folder still has contents; move or delete them first.',
@@ -63,6 +78,35 @@ export const content = {
   // File tree workspace (FileTreeWorkspace)
   fileWorkspace: {
     uploadFile: 'Upload file',
+  },
+
+  fileBrowser: {
+    label: 'Files in current folder',
+    currentFolder: 'Current folder: {{path}}',
+    uploadFile: 'Upload file',
+    createFolder: 'New folder',
+    searchAriaLabel: 'Search current folder files',
+    searchPlaceholder: 'Search current folder files…',
+    statusAriaLabel: 'Filter by status',
+    sortAriaLabel: 'File order',
+    allStatuses: 'All statuses',
+    sortUpdated: 'Recently updated',
+    sortName: 'Name',
+    emptyTitle: 'This folder has no files',
+    emptyDescription:
+      'Upload a file and it will be processed and indexed in the background.',
+    columnName: 'Name',
+    columnStatus: 'Status',
+    columnUpdatedAt: 'Updated',
+    columnActions: 'Actions',
+    rowActionsAriaLabel: 'Actions for {{name}}',
+    viewFile: 'View content',
+  },
+
+  fileUpload: {
+    modalTitle: 'Upload file',
+    description:
+      'The file will be uploaded to “{{path}}” and processed in the background.',
   },
 
   // Content list (ContentList)
@@ -100,6 +144,7 @@ export const content = {
     tabPreview: 'Preview',
     tabRaw: 'Raw Markdown',
     tabInfo: 'File info',
+    tabChunks: 'Chunks {{count}}',
     noNormalizedContent: 'No normalized content available for preview yet.',
     noRawMarkdown: 'No raw Markdown available yet.',
     fieldOriginalFilename: 'Original file name',

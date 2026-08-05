@@ -133,7 +133,7 @@ function ContentAllPage() {
           <div className='flex flex-wrap gap-2'>
             <Button asChild variant='outline'>
               <a
-                href={`/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/files/upload`}
+                href={`/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/files?upload=true`}
               >
                 <Upload />
                 {t('routes.workspaces.kb.content.all.uploadButton')}

@@ -1,29 +1,34 @@
 import {
   ChevronDown,
   ChevronRight,
-  FileText,
   Folder,
   FolderOpen,
   FolderPlus,
+  MoreHorizontal,
   Move,
   Pencil,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import {
-  CreateFolderEditor,
+  CreateFolderDialog,
   DeleteDialog,
   fileTreeActionErrorMessage,
   MoveDialog,
-  RenameEditor,
+  RenameDialog,
 } from './file-tree-actions'
 import {
-  allFolders,
-  descendantIds,
   filterTree,
   findNode,
   folderIds,
@@ -33,10 +38,9 @@ import type { FileTreeData, FileTreeNode } from './schemas'
 
 type FileTreeProps = {
   tree: FileTreeData
-  selectedDocumentId?: string
   canManage?: boolean
-  onSelectDocument: (documentId: string) => void
-  onSelectFolder?: (node: FileTreeNode) => void
+  selectedFolderId?: string
+  onSelectFolder: (node: FileTreeNode) => void
   onRenameNode?: (node: FileTreeNode, name: string) => Promise<void> | void
   onCreateFolder?: (parent: FileTreeNode, name: string) => Promise<void> | void
   onMoveNode?: (
@@ -48,9 +52,8 @@ type FileTreeProps = {
 
 export function FileTree({
   tree,
-  selectedDocumentId,
   canManage = false,
-  onSelectDocument,
+  selectedFolderId: controlledSelectedFolderId,
   onSelectFolder,
   onRenameNode,
   onCreateFolder,
@@ -64,39 +67,23 @@ export function FileTree({
   const [focusedId, setFocusedId] = useState(
     tree.root.children[0]?.id ?? tree.root.id
   )
-  const [renamingId, setRenamingId] = useState<string>()
-  const [activeNodeId, setActiveNodeId] = useState(tree.root.id)
+  const [renamingNode, setRenamingNode] = useState<FileTreeNode>()
+  const [uncontrolledSelectedFolderId, setUncontrolledSelectedFolderId] =
+    useState<string | undefined>(tree.root.id)
   const [creating, setCreating] = useState(false)
-  const [moving, setMoving] = useState(false)
-  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [movingNode, setMovingNode] = useState<FileTreeNode>()
+  const [deletingNode, setDeletingNode] = useState<FileTreeNode>()
   const [actionError, setActionError] = useState<string>()
   const [query, setQuery] = useState('')
   const itemRefs = useRef(new Map<string, HTMLButtonElement>())
   const filteredRoot = useMemo(
-    () => filterTree(tree.root, query.trim().toLocaleLowerCase()) ?? tree.root,
+    () => filterTree(tree.root, query.trim().toLocaleLowerCase()),
     [query, tree.root]
   )
   const nodes = useMemo(
-    () => visibleNodes(filteredRoot, expanded),
+    () => (filteredRoot ? visibleNodes(filteredRoot, expanded) : []),
     [expanded, filteredRoot]
   )
-  const activeNode = findNode(tree.root, activeNodeId) ?? tree.root
-  const activeFolder =
-    activeNode.node_type === 'root' || activeNode.node_type === 'folder'
-      ? activeNode
-      : (findNode(tree.root, activeNode.parent_id ?? '') ?? tree.root)
-  const excludedMoveTargets = descendantIds(activeNode)
-  const moveTargets = allFolders(tree.root).filter(
-    (node) =>
-      !excludedMoveTargets.has(node.id) && node.id !== activeNode.parent_id
-  )
-
-  useEffect(() => {
-    const selected = nodes.find(
-      ({ node }) => node.document_id === selectedDocumentId
-    )
-    if (selected) setFocusedId(selected.node.id)
-  }, [nodes, selectedDocumentId])
 
   function focusNode(nodeId: string) {
     setFocusedId(nodeId)
@@ -104,7 +91,7 @@ export function FileTree({
   }
 
   function toggle(node: FileTreeNode, force?: boolean) {
-    if (node.node_type !== 'folder') return
+    if (node.node_type !== 'folder' && node.node_type !== 'root') return
     setExpanded((current) => {
       const next = new Set(current)
       const shouldExpand = force ?? !next.has(node.id)
@@ -114,18 +101,11 @@ export function FileTree({
     })
   }
 
-  function activate(node: FileTreeNode) {
-    setActiveNodeId(node.id)
+  function selectNode(node: FileTreeNode) {
     setActionError(undefined)
     setCreating(false)
-    setMoving(false)
-    setConfirmingDelete(false)
-    if (node.node_type === 'file' && node.document_id) {
-      onSelectDocument(node.document_id)
-      return
-    }
-    onSelectFolder?.(node)
-    toggle(node)
+    setUncontrolledSelectedFolderId(node.id)
+    onSelectFolder(node)
   }
 
   function handleKeyDown(
@@ -143,7 +123,10 @@ export function FileTree({
     }
     if (event.key === 'ArrowRight') {
       event.preventDefault()
-      if (node.node_type === 'folder' && !expanded.has(node.id)) {
+      if (
+        (node.node_type === 'folder' || node.node_type === 'root') &&
+        !expanded.has(node.id)
+      ) {
         toggle(node, true)
         return
       }
@@ -153,7 +136,10 @@ export function FileTree({
     }
     if (event.key === 'ArrowLeft') {
       event.preventDefault()
-      if (node.node_type === 'folder' && expanded.has(node.id)) {
+      if (
+        (node.node_type === 'folder' || node.node_type === 'root') &&
+        expanded.has(node.id)
+      ) {
         toggle(node, false)
         return
       }
@@ -164,17 +150,32 @@ export function FileTree({
     }
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      activate(node)
+      selectNode(node)
       return
     }
-    if (event.key === 'F2' && canManage && onRenameNode) {
+    if (
+      event.key === 'F2' &&
+      node.node_type === 'folder' &&
+      canManage &&
+      onRenameNode
+    ) {
       event.preventDefault()
-      setRenamingId(node.id)
+      setRenamingNode(node)
     }
   }
 
+  const activeFolder = useMemo(() => {
+    const targetId =
+      controlledSelectedFolderId ?? uncontrolledSelectedFolderId ?? tree.root.id
+    const found = findNode(tree.root, targetId)
+    if (found && (found.node_type === 'root' || found.node_type === 'folder')) {
+      return found
+    }
+    return tree.root
+  }, [controlledSelectedFolderId, tree.root, uncontrolledSelectedFolderId])
+
   return (
-    <div className='min-w-0'>
+    <div className='flex min-w-0 flex-col'>
       <div className='mb-3 flex items-center justify-between gap-2 px-2'>
         <div className='flex min-w-0 items-center gap-2'>
           <FolderOpen className='size-4 shrink-0 text-primary' />
@@ -188,8 +189,6 @@ export function FileTree({
             aria-label={t('content.fileTree.newFolderAriaLabel')}
             onClick={() => {
               setCreating(true)
-              setMoving(false)
-              setConfirmingDelete(false)
             }}
           >
             <FolderPlus />
@@ -205,61 +204,6 @@ export function FileTree({
           onChange={(event) => setQuery(event.target.value)}
         />
       </div>
-      {canManage && activeNode.node_type !== 'root' && (
-        <div className='mb-3 flex flex-wrap gap-1 px-2'>
-          {onRenameNode && (
-            <Button
-              type='button'
-              variant='ghost'
-              size='sm'
-              aria-label={t('content.fileTree.renameActionAriaLabel', {
-                name: activeNode.name,
-              })}
-              onClick={() => setRenamingId(activeNode.id)}
-            >
-              <Pencil />
-              {t('content.fileTree.renameAction')}
-            </Button>
-          )}
-          {onMoveNode && (
-            <Button
-              type='button'
-              variant='ghost'
-              size='sm'
-              aria-label={t('content.fileTree.moveActionAriaLabel', {
-                name: activeNode.name,
-              })}
-              onClick={() => {
-                setMoving(true)
-                setCreating(false)
-                setConfirmingDelete(false)
-              }}
-            >
-              <Move />
-              {t('content.fileTree.moveAction')}
-            </Button>
-          )}
-          {onDeleteNode && (
-            <Button
-              type='button'
-              variant='ghost'
-              size='sm'
-              aria-label={t('content.fileTree.deleteActionAriaLabel', {
-                name: activeNode.name,
-              })}
-              className='text-destructive'
-              onClick={() => {
-                setConfirmingDelete(true)
-                setCreating(false)
-                setMoving(false)
-              }}
-            >
-              <Trash2 />
-              {t('content.fileTree.deleteAction')}
-            </Button>
-          )}
-        </div>
-      )}
       {actionError && (
         <p
           className='mx-2 mb-3 rounded-md bg-destructive/10 p-2 text-destructive text-xs'
@@ -267,43 +211,6 @@ export function FileTree({
         >
           {actionError}
         </p>
-      )}
-      {creating && onCreateFolder && (
-        <div className='mb-3 px-2'>
-          <CreateFolderEditor
-            parent={activeFolder}
-            onCancel={() => setCreating(false)}
-            onCreate={async (name) => {
-              try {
-                await onCreateFolder(activeFolder, name)
-                setCreating(false)
-              } catch (error) {
-                setActionError(fileTreeActionErrorMessage(error))
-              }
-            }}
-          />
-        </div>
-      )}
-      {moving && onMoveNode && (
-        <MoveDialog
-          node={activeNode}
-          targets={moveTargets}
-          onCancel={() => setMoving(false)}
-          onMove={onMoveNode}
-          onError={setActionError}
-        />
-      )}
-      {confirmingDelete && onDeleteNode && (
-        <DeleteDialog
-          node={activeNode}
-          onCancel={() => setConfirmingDelete(false)}
-          onDelete={onDeleteNode}
-          onDeleted={() => {
-            setConfirmingDelete(false)
-            setActiveNodeId(tree.root.id)
-          }}
-          onError={setActionError}
-        />
       )}
       {nodes.length === 0 ? (
         <p className='rounded-lg border border-dashed p-5 text-center text-muted-foreground text-sm'>
@@ -319,72 +226,174 @@ export function FileTree({
         >
           {nodes.map(({ node, level }, index) => {
             const isFolder = node.node_type === 'folder'
-            const isExpanded = isFolder && expanded.has(node.id)
-            const selected = node.document_id === selectedDocumentId
+            const isRoot = node.node_type === 'root'
+            const isExpandable = isFolder || isRoot
+            const isExpanded = isExpandable && expanded.has(node.id)
+            const isSelectedFolder = node.id === activeFolder.id
             return (
               <div
                 key={node.id}
-                className='flex min-w-0 items-center'
+                className='group flex min-w-0 items-center'
                 style={{
                   paddingInlineStart: `${Math.max(0, level - 1) * 16}px`,
                 }}
               >
-                {renamingId === node.id && onRenameNode ? (
-                  <RenameEditor
-                    node={node}
-                    onCancel={() => setRenamingId(undefined)}
-                    onError={setActionError}
-                    onSave={async (name) => {
-                      await onRenameNode(node, name)
-                      setRenamingId(undefined)
-                      focusNode(node.id)
-                    }}
-                  />
-                ) : (
+                {isExpandable ? (
                   <button
-                    ref={(element) => {
-                      if (element) itemRefs.current.set(node.id, element)
-                      else itemRefs.current.delete(node.id)
-                    }}
                     type='button'
-                    role='treeitem'
-                    aria-label={node.name}
-                    aria-level={level}
-                    aria-selected={selected}
-                    aria-expanded={isFolder ? isExpanded : undefined}
-                    tabIndex={focusedId === node.id ? 0 : -1}
-                    className={cn(
-                      'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none transition-colors',
-                      'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50',
-                      selected && 'bg-primary/10 text-primary'
-                    )}
-                    onClick={() => {
-                      setFocusedId(node.id)
-                      activate(node)
+                    aria-label={isExpanded ? '收起' : '展开'}
+                    className='flex size-5 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground'
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      toggle(node)
                     }}
-                    onKeyDown={(event) => handleKeyDown(event, node, index)}
                   >
-                    {isFolder ? (
-                      isExpanded ? (
-                        <ChevronDown className='size-3.5 shrink-0' />
-                      ) : (
-                        <ChevronRight className='size-3.5 shrink-0' />
-                      )
+                    {isExpanded ? (
+                      <ChevronDown className='size-3.5' />
                     ) : (
-                      <span className='size-3.5 shrink-0' />
+                      <ChevronRight className='size-3.5' />
                     )}
-                    {isFolder ? (
-                      <Folder className='size-4 shrink-0 text-primary' />
-                    ) : (
-                      <FileText className='size-4 shrink-0 text-muted-foreground' />
-                    )}
-                    <span className='truncate'>{node.name}</span>
                   </button>
+                ) : (
+                  <span className='size-5 shrink-0' />
                 )}
+                <button
+                  ref={(element) => {
+                    if (element) itemRefs.current.set(node.id, element)
+                    else itemRefs.current.delete(node.id)
+                  }}
+                  type='button'
+                  role='treeitem'
+                  aria-label={node.name}
+                  aria-level={level}
+                  aria-selected={isSelectedFolder}
+                  aria-expanded={isExpandable ? isExpanded : undefined}
+                  tabIndex={focusedId === node.id ? 0 : -1}
+                  title={node.name}
+                  className={cn(
+                    'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-sm outline-none transition-colors',
+                    'hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50',
+                    isSelectedFolder && 'bg-primary/10 text-primary'
+                  )}
+                  onClick={() => {
+                    setFocusedId(node.id)
+                    selectNode(node)
+                  }}
+                  onKeyDown={(event) => handleKeyDown(event, node, index)}
+                >
+                  <Folder className='size-4 shrink-0 text-primary' />
+                  <span className='truncate'>{node.name}</span>
+                </button>
+                {canManage &&
+                  isFolder &&
+                  (onRenameNode || onMoveNode || onDeleteNode) && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          className='size-7 shrink-0 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100'
+                          aria-label={t(
+                            'content.fileTree.rowActionsAriaLabel',
+                            {
+                              name: node.name,
+                            }
+                          )}
+                        >
+                          <MoreHorizontal className='size-4' />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='end'>
+                        {onRenameNode && (
+                          <DropdownMenuItem
+                            onClick={() => setRenamingNode(node)}
+                          >
+                            <Pencil className='size-4' />
+                            {t('content.fileTree.renameAction')}
+                          </DropdownMenuItem>
+                        )}
+                        {onMoveNode && (
+                          <DropdownMenuItem onClick={() => setMovingNode(node)}>
+                            <Move className='size-4' />
+                            {t('content.fileTree.moveAction')}
+                          </DropdownMenuItem>
+                        )}
+                        {onDeleteNode && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              variant='destructive'
+                              onClick={() => setDeletingNode(node)}
+                            >
+                              <Trash2 className='size-4' />
+                              {t('content.fileTree.deleteAction')}
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
               </div>
             )
           })}
         </div>
+      )}
+      {movingNode && onMoveNode && (
+        <MoveDialog
+          node={movingNode}
+          root={tree.root}
+          open={Boolean(movingNode)}
+          onOpenChange={(open) => {
+            if (!open) setMovingNode(undefined)
+          }}
+          onMove={onMoveNode}
+          onError={setActionError}
+        />
+      )}
+      {deletingNode && onDeleteNode && (
+        <DeleteDialog
+          node={deletingNode}
+          open={Boolean(deletingNode)}
+          onOpenChange={(open) => {
+            if (!open) setDeletingNode(undefined)
+          }}
+          onDelete={onDeleteNode}
+          onDeleted={() => {
+            setDeletingNode(undefined)
+            setUncontrolledSelectedFolderId(tree.root.id)
+          }}
+          onError={setActionError}
+        />
+      )}
+      {creating && onCreateFolder && (
+        <CreateFolderDialog
+          parent={activeFolder}
+          open={creating}
+          onOpenChange={setCreating}
+          onCreate={async (name) => {
+            try {
+              await onCreateFolder(activeFolder, name)
+            } catch (error) {
+              setActionError(fileTreeActionErrorMessage(error))
+              throw error
+            }
+          }}
+        />
+      )}
+      {renamingNode && onRenameNode && (
+        <RenameDialog
+          node={renamingNode}
+          open={Boolean(renamingNode)}
+          onOpenChange={(open) => {
+            if (!open) setRenamingNode(undefined)
+          }}
+          onError={setActionError}
+          onSave={async (name) => {
+            await onRenameNode(renamingNode, name)
+            focusNode(renamingNode.id)
+          }}
+        />
       )}
     </div>
   )

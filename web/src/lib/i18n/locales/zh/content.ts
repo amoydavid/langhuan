@@ -2,19 +2,21 @@ export const content = {
   // 文件树（FileTree）
   fileTree: {
     newFolderAriaLabel: '新建文件夹',
-    searchAriaLabel: '搜索文件',
-    searchPlaceholder: '搜索文件…',
-    treeAriaLabel: '文件',
+    searchAriaLabel: '搜索目录',
+    searchPlaceholder: '搜索目录…',
+    treeAriaLabel: '目录',
     renameAction: '重命名',
     moveAction: '移动',
     deleteAction: '删除',
     renameActionAriaLabel: '重命名 {{name}}',
     moveActionAriaLabel: '移动 {{name}}',
     deleteActionAriaLabel: '删除 {{name}}',
-    noMatches: '没有匹配的文件',
-    empty: '还没有文件',
+    rowActionsAriaLabel: '{{name}} 的操作',
+    noMatches: '没有匹配的目录',
+    empty: '还没有目录',
     // 新建文件夹
     createFolder: {
+      modalTitle: '新建文件夹',
       formAriaLabel: '在 {{path}} 中新建文件夹',
       nameAriaLabel: '文件夹名称',
       namePlaceholder: '例如 guides',
@@ -23,25 +25,36 @@ export const content = {
     },
     // 重命名
     rename: {
+      modalTitle: '重命名',
       inputAriaLabel: '重命名 {{name}}',
       nameRequired: '名称不能为空',
       nameTooLong: '名称不能超过 255 个字符',
+      cancel: '取消',
+      save: '保存名称',
     },
     // 移动对话框
     move: {
       dialogAriaLabel: '选择目标目录',
       title: '选择目标目录',
+      modalTitle: '移动“{{name}}”',
+      currentLocation: '当前位置：{{path}}',
       toTarget: '移动到 {{path}}',
+      confirm: '移动到 {{path}}',
       cancel: '取消',
     },
     // 删除对话框
     delete: {
       dialogAriaLabel: '确认删除 {{name}}',
       title: '删除“{{name}}”？',
+      modalTitle: '确认删除',
+      filePath: '{{path}}',
+      fileWarning: '文件删除后不可恢复，关联的分块和向量将一并移除。',
+      folderWarning: '文件夹非空时无法删除，请先清空子内容。',
       fileDescription: '文件会从检索中移除，后台完成软删除。',
       folderDescription: '非空目录不能删除，请先移动或删除其中内容。',
       cancel: '取消',
       confirm: '确认删除',
+      deleteAction: '删除',
     },
     // 文件树操作错误
     errors: {
@@ -60,6 +73,33 @@ export const content = {
   // 文件树工作区（FileTreeWorkspace）
   fileWorkspace: {
     uploadFile: '上传文件',
+  },
+
+  fileBrowser: {
+    label: '当前目录文件',
+    currentFolder: '当前目录：{{path}}',
+    uploadFile: '上传文件',
+    createFolder: '新建文件夹',
+    searchAriaLabel: '搜索当前目录文件',
+    searchPlaceholder: '搜索当前目录文件…',
+    statusAriaLabel: '按状态筛选',
+    sortAriaLabel: '文件排序',
+    allStatuses: '全部状态',
+    sortUpdated: '最近更新',
+    sortName: '名称',
+    emptyTitle: '此目录还没有文件',
+    emptyDescription: '上传文件后，系统会在后台完成处理和索引。',
+    columnName: '名称',
+    columnStatus: '状态',
+    columnUpdatedAt: '更新时间',
+    columnActions: '操作',
+    rowActionsAriaLabel: '{{name}} 的操作',
+    viewFile: '查看内容',
+  },
+
+  fileUpload: {
+    modalTitle: '上传文件',
+    description: '文件将上传到「{{path}}」，并在后台完成处理和索引。',
   },
 
   // 内容列表（ContentList）
@@ -97,6 +137,7 @@ export const content = {
     tabPreview: '预览',
     tabRaw: '原始 Markdown',
     tabInfo: '文件信息',
+    tabChunks: '分块列表 {{count}}',
     noNormalizedContent: '当前还没有可预览的规范化内容。',
     noRawMarkdown: '当前还没有原始 Markdown。',
     fieldOriginalFilename: '原始文件名',

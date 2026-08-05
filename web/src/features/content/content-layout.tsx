@@ -1,4 +1,10 @@
-import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router'
+import {
+  Link,
+  Outlet,
+  useLocation,
+  useMatches,
+  useNavigate,
+} from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -74,6 +80,8 @@ export function ContentLayout({
   const { t } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
+  const matches = useMatches()
+  const fullHeight = matches.some((m) => m.staticData.fullHeight === true)
   const tabs = contentTabs(workspaceSlug, kbId, summary)
   const current =
     tabs.find(
@@ -83,10 +91,18 @@ export function ContentLayout({
     ) ?? tabs[0]
 
   return (
-    <section className='space-y-4'>
+    <section
+      className={cn(
+        'space-y-4',
+        fullHeight && 'flex h-full flex-col overflow-hidden'
+      )}
+    >
       <nav
         aria-label={t('content.contentLayout.tabsAriaLabel')}
-        className='hidden flex-wrap gap-1 md:flex'
+        className={cn(
+          'hidden flex-wrap gap-1 md:flex',
+          fullHeight && 'shrink-0'
+        )}
       >
         {tabs.map((tab) => {
           const selected = tab.segment === current?.segment
@@ -127,7 +143,11 @@ export function ContentLayout({
           </SelectContent>
         </Select>
       </div>
-      <div className='min-w-0'>{children ?? <Outlet />}</div>
+      <div
+        className={cn('min-w-0', fullHeight && 'flex min-h-0 flex-1 flex-col')}
+      >
+        {children ?? <Outlet />}
+      </div>
     </section>
   )
 }

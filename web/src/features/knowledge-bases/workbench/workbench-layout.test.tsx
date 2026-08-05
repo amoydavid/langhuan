@@ -19,6 +19,7 @@ vi.mock('@tanstack/react-router', () => ({
     pathname: '/workspaces/acme/kb/de305d54-75b4-431b-adb2-eb6b9e546014',
   }),
   useNavigate: () => vi.fn(),
+  useMatches: () => [],
 }))
 
 const kbId = 'de305d54-75b4-431b-adb2-eb6b9e546014'

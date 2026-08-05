@@ -1,6 +1,12 @@
-import { Link, Outlet, useLocation, useNavigate } from '@tanstack/react-router'
+import {
+  Link,
+  Outlet,
+  useLocation,
+  useMatches,
+  useNavigate,
+} from '@tanstack/react-router'
 import { ArrowRight, CircleAlert } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { UploadFileDialog } from '@/features/content/file-tree/upload-file-dialog'
 import type { KnowledgeBase } from '@/features/knowledge-bases/types'
 import { cn } from '@/lib/utils'
 import type { KnowledgeBaseSummary, KnowledgeBaseSyncState } from './types'
@@ -47,8 +54,11 @@ export function KnowledgeBaseWorkbenchLayout({
   children,
 }: KnowledgeBaseWorkbenchLayoutProps) {
   const { t } = useTranslation()
+  const [uploadOpen, setUploadOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
+  const matches = useMatches()
+  const fullHeight = matches.some((m) => m.staticData.fullHeight === true)
   const syncStateLabel: Record<KnowledgeBaseSyncState, string> = {
     synced: t('knowledgeBases.workbench.syncState.synced'),
     updating: t('knowledgeBases.workbench.syncState.updating'),
@@ -84,36 +94,37 @@ export function KnowledgeBaseWorkbenchLayout({
     },
   ]
   const current = activeTab(location.pathname, tabs)
-  const addContentHref = `${tabs[1]?.href ?? ''}`
 
   return (
-    <section data-testid='knowledge-base-workbench' className='space-y-5'>
-      <header className='space-y-4 border-b pb-4'>
-        <div className='flex flex-col justify-between gap-4 lg:flex-row lg:items-start'>
-          <div className='min-w-0'>
-            <div className='flex flex-wrap items-center gap-2'>
-              <h1 className='truncate font-semibold text-2xl tracking-tight'>
-                {knowledgeBase.name ||
-                  t('knowledgeBases.workbench.unnamedName')}
-              </h1>
-              <Badge
-                variant={
-                  summary.sync_state === 'failed'
-                    ? 'destructive'
-                    : summary.sync_state === 'synced'
-                      ? 'outline'
-                      : 'secondary'
-                }
-              >
-                {summary.sync_state === 'failed' && <CircleAlert />}
-                {syncStateLabel[summary.sync_state]}
-              </Badge>
-            </div>
-            <p className='mt-2 max-w-3xl text-muted-foreground text-sm leading-6'>
-              {knowledgeBase.description ||
-                t('knowledgeBases.workbench.noDescription')}
-            </p>
-            <p className='mt-2 text-muted-foreground text-xs'>
+    <section
+      data-testid='knowledge-base-workbench'
+      className={cn(
+        'space-y-4',
+        fullHeight && 'flex h-full flex-col space-y-3 overflow-hidden'
+      )}
+    >
+      <header className='shrink-0 border-b'>
+        <div className='flex min-h-12 flex-col justify-between gap-2 py-2 sm:flex-row sm:items-center'>
+          <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
+            <h1 className='truncate font-semibold text-xl tracking-tight'>
+              {knowledgeBase.name || t('knowledgeBases.workbench.unnamedName')}
+            </h1>
+            <Badge
+              variant={
+                summary.sync_state === 'failed'
+                  ? 'destructive'
+                  : summary.sync_state === 'synced'
+                    ? 'outline'
+                    : 'secondary'
+              }
+            >
+              {summary.sync_state === 'failed' && <CircleAlert />}
+              {syncStateLabel[summary.sync_state]}
+            </Badge>
+            <span aria-hidden className='text-muted-foreground'>
+              ·
+            </span>
+            <p className='text-muted-foreground text-sm'>
               {t('knowledgeBases.workbench.contentMeta', {
                 version: summary.content_version,
                 chunkCount: summary.active_generation?.chunk_count ?? 0,
@@ -122,18 +133,21 @@ export function KnowledgeBaseWorkbenchLayout({
           </div>
           {(current.segment === 'overview' ||
             current.segment === 'content') && (
-            <Button asChild className='shrink-0'>
-              <a href={addContentHref}>
-                {t('knowledgeBases.workbench.addContentButton')}
-                <ArrowRight />
-              </a>
+            <Button
+              type='button'
+              size='sm'
+              className='shrink-0'
+              onClick={() => setUploadOpen(true)}
+            >
+              {t('knowledgeBases.workbench.addContentButton')}
+              <ArrowRight />
             </Button>
           )}
         </div>
 
         <nav
           aria-label={t('knowledgeBases.workbench.areaAriaLabel')}
-          className='hidden gap-1 md:flex'
+          className='-mb-px hidden h-10 items-end gap-1 md:flex'
         >
           {tabs.map((tab) => {
             const selected = current.segment === tab.segment
@@ -143,7 +157,7 @@ export function KnowledgeBaseWorkbenchLayout({
                 to={tab.href}
                 aria-current={selected ? 'page' : undefined}
                 className={cn(
-                  'rounded-md px-3 py-2 font-medium text-sm transition-colors',
+                  'rounded-t-md px-3 py-2 font-medium text-sm transition-colors',
                   selected
                     ? 'bg-primary/10 text-primary'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -155,7 +169,7 @@ export function KnowledgeBaseWorkbenchLayout({
           })}
         </nav>
 
-        <div className='md:hidden'>
+        <div className='pb-2 md:hidden'>
           <Select
             value={current.href}
             onValueChange={(href) => void navigate({ to: href })}
@@ -177,7 +191,18 @@ export function KnowledgeBaseWorkbenchLayout({
         </div>
       </header>
 
-      <div className='min-w-0'>{children ?? <Outlet />}</div>
+      <div
+        className={cn('min-w-0', fullHeight && 'flex min-h-0 flex-1 flex-col')}
+      >
+        {children ?? <Outlet />}
+      </div>
+      <UploadFileDialog
+        workspaceSlug={workspaceSlug}
+        kbId={kbId}
+        parentPath='/'
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+      />
     </section>
   )
 }

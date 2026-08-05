@@ -46,43 +46,62 @@ describe('FileTree', () => {
     expect(fileTreeSchema.safeParse(invalid).success).toBe(false)
   })
 
-  it('supports arrow navigation, Enter selection and F2 rename', async () => {
-    const onSelectDocument = vi.fn()
+  it('shows the root and folders only, then reports the selected folder', async () => {
+    const onSelectFolder = vi.fn()
+    const screen = await render(
+      <FileTree tree={tree} onSelectFolder={onSelectFolder} />
+    )
+
+    const root = screen.getByRole('treeitem', { name: '文件' })
+    await userEvent.click(root)
+
+    expect(onSelectFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ node_type: 'root', name: '文件' })
+    )
+    await expect
+      .element(screen.getByRole('treeitem', { name: 'docs' }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole('treeitem', { name: 'installation.md' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('supports folder keyboard navigation and opens rename in a dialog', async () => {
+    const onSelectFolder = vi.fn()
     const onRenameNode = vi.fn().mockResolvedValue(undefined)
     const screen = await render(
       <FileTree
         tree={tree}
         canManage
-        onSelectDocument={onSelectDocument}
+        onSelectFolder={onSelectFolder}
         onRenameNode={onRenameNode}
       />
     )
 
-    const folder = screen.getByRole('treeitem', { name: 'docs' })
-    await userEvent.click(folder)
-    await userEvent.keyboard('{ArrowRight}{ArrowRight}{Enter}')
-    expect(onSelectDocument).toHaveBeenCalledWith(
-      '60000000-0000-4000-8000-000000000006'
+    const root = screen.getByRole('treeitem', { name: '文件' })
+    await userEvent.click(root)
+    await userEvent.keyboard('{ArrowDown}{Enter}')
+    expect(onSelectFolder).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: 'docs' })
     )
 
-    const file = screen.getByRole('treeitem', { name: 'installation.md' })
-    await userEvent.click(file)
     await userEvent.keyboard('{F2}')
-    const input = screen.getByRole('textbox', {
-      name: '重命名 installation.md',
-    })
+    await expect
+      .element(screen.getByRole('dialog', { name: '重命名' }))
+      .toBeVisible()
+    const input = screen.getByRole('textbox', { name: '重命名 docs' })
     await userEvent.clear(input)
-    await userEvent.fill(input, 'setup.md')
-    await userEvent.keyboard('{Enter}')
+    await userEvent.fill(input, 'guides')
+    await userEvent.click(screen.getByRole('button', { name: '保存名称' }))
     await vi.waitFor(() =>
       expect(onRenameNode).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'installation.md' }),
-        'setup.md'
+        expect.objectContaining({ name: 'docs' }),
+        'guides'
       )
     )
   })
 
-  it('offers keyboard-accessible create, move and delete actions without drag and drop', async () => {
+  it('uses dialogs for folder creation, movement and deletion', async () => {
     const onCreateFolder = vi.fn().mockResolvedValue(undefined)
     const onMoveNode = vi.fn().mockResolvedValue(undefined)
     const onDeleteNode = vi.fn().mockResolvedValue(undefined)
@@ -90,7 +109,7 @@ describe('FileTree', () => {
       <FileTree
         tree={tree}
         canManage
-        onSelectDocument={vi.fn()}
+        onSelectFolder={vi.fn()}
         onCreateFolder={onCreateFolder}
         onMoveNode={onMoveNode}
         onDeleteNode={onDeleteNode}
@@ -99,6 +118,9 @@ describe('FileTree', () => {
 
     await userEvent.click(screen.getByRole('treeitem', { name: 'docs' }))
     await userEvent.click(screen.getByRole('button', { name: '新建文件夹' }))
+    await expect
+      .element(screen.getByRole('dialog', { name: '新建文件夹' }))
+      .toBeVisible()
     await userEvent.fill(screen.getByLabelText('文件夹名称'), 'guides')
     await userEvent.click(screen.getByRole('button', { name: '创建' }))
     await vi.waitFor(() =>
@@ -108,37 +130,34 @@ describe('FileTree', () => {
       )
     )
 
-    await userEvent.click(screen.getByRole('treeitem', { name: 'docs' }))
-    await userEvent.click(
-      screen.getByRole('treeitem', { name: 'installation.md' })
-    )
-    await userEvent.click(
-      screen.getByRole('button', { name: '移动 installation.md' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'docs 的操作' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '移动' }))
     await expect
-      .element(screen.getByRole('dialog', { name: '选择目标目录' }))
+      .element(screen.getByRole('dialog', { name: '移动“docs”' }))
       .toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: /文件/ }))
     await userEvent.click(screen.getByRole('button', { name: '移动到 /' }))
     await vi.waitFor(() =>
       expect(onMoveNode).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'installation.md' }),
+        expect.objectContaining({ name: 'docs' }),
         expect.objectContaining({ node_type: 'root' })
       )
     )
 
-    await userEvent.click(
-      screen.getByRole('button', { name: '删除 installation.md' })
-    )
-    await expect.element(screen.getByText('会从检索中移除')).toBeVisible()
+    await userEvent.click(screen.getByRole('button', { name: 'docs 的操作' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: '删除' }))
+    await expect
+      .element(screen.getByText('文件夹非空时无法删除，请先清空子内容。'))
+      .toBeVisible()
     await userEvent.click(screen.getByRole('button', { name: '确认删除' }))
     await vi.waitFor(() =>
       expect(onDeleteNode).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'installation.md' })
+        expect.objectContaining({ name: 'docs' })
       )
     )
   })
 
-  it('keeps rename mode open and explains a same-name conflict', async () => {
+  it('keeps the rename dialog open and explains a same-name conflict', async () => {
     const onRenameNode = vi
       .fn()
       .mockRejectedValue(
@@ -148,21 +167,17 @@ describe('FileTree', () => {
       <FileTree
         tree={tree}
         canManage
-        onSelectDocument={vi.fn()}
+        onSelectFolder={vi.fn()}
         onRenameNode={onRenameNode}
       />
     )
 
-    await userEvent.click(
-      screen.getByRole('treeitem', { name: 'installation.md' })
-    )
+    await userEvent.click(screen.getByRole('treeitem', { name: 'docs' }))
     await userEvent.keyboard('{F2}')
-    const input = screen.getByRole('textbox', {
-      name: '重命名 installation.md',
-    })
+    const input = screen.getByRole('textbox', { name: '重命名 docs' })
     await userEvent.clear(input)
-    await userEvent.fill(input, 'existing.md')
-    await userEvent.keyboard('{Enter}')
+    await userEvent.fill(input, 'existing')
+    await userEvent.click(screen.getByRole('button', { name: '保存名称' }))
 
     await expect
       .element(screen.getByText('目标目录中已存在同名项目，请更换名称。'))
@@ -170,41 +185,19 @@ describe('FileTree', () => {
     await expect.element(input).toBeVisible()
   })
 
-  it('explains why a non-empty folder cannot be deleted', async () => {
-    const onDeleteNode = vi
-      .fn()
-      .mockRejectedValue(new ApiError('not empty', 409, 'file_tree_not_empty'))
+  it('filters folders by readable directory name without exposing files', async () => {
     const screen = await render(
-      <FileTree
-        tree={tree}
-        canManage
-        onSelectDocument={vi.fn()}
-        onDeleteNode={onDeleteNode}
-      />
+      <FileTree tree={tree} onSelectFolder={vi.fn()} />
     )
-
-    await userEvent.click(screen.getByRole('treeitem', { name: 'docs' }))
-    await userEvent.click(screen.getByRole('button', { name: '删除 docs' }))
-    await userEvent.click(screen.getByRole('button', { name: '确认删除' }))
-
-    await expect
-      .element(screen.getByText('目录中仍有内容，请先移动或删除其中内容。'))
-      .toBeVisible()
-  })
-
-  it('filters File nodes by readable name while retaining their parent folders', async () => {
-    const screen = await render(
-      <FileTree tree={tree} onSelectDocument={vi.fn()} />
-    )
-    await userEvent.fill(screen.getByLabelText('搜索文件'), 'installation')
+    await userEvent.fill(screen.getByLabelText('搜索目录'), 'docs')
     await expect
       .element(screen.getByRole('treeitem', { name: 'docs' }))
       .toBeVisible()
     await expect
       .element(screen.getByRole('treeitem', { name: 'installation.md' }))
-      .toBeVisible()
-    await userEvent.clear(screen.getByLabelText('搜索文件'))
-    await userEvent.fill(screen.getByLabelText('搜索文件'), 'missing')
-    await expect.element(screen.getByText('没有匹配的文件')).toBeVisible()
+      .not.toBeInTheDocument()
+    await userEvent.clear(screen.getByLabelText('搜索目录'))
+    await userEvent.fill(screen.getByLabelText('搜索目录'), 'missing')
+    await expect.element(screen.getByText('没有匹配的目录')).toBeVisible()
   })
 })

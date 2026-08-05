@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { FileText, ImageIcon } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SafeMarkdown } from '@/components/safe-markdown'
 import { StatusBadge } from '@/components/status-badge'
@@ -17,6 +18,11 @@ type DocumentPreviewProps = {
   /** 可选：提供 workspaceSlug + documentId 后，info tab 展示该文档的图片资产 */
   workspaceSlug?: string
   documentId?: string
+  extraTab?: {
+    value: string
+    label: string
+    content: ReactNode
+  }
 }
 
 function documentAssetsQueryOptions(workspaceSlug: string, documentId: string) {
@@ -89,6 +95,7 @@ export function DocumentPreview({
   initialView = 'preview',
   workspaceSlug,
   documentId,
+  extraTab,
 }: DocumentPreviewProps) {
   const { t } = useTranslation()
   const name = displayName || item.title || t('content.documentPreview.unnamed')
@@ -142,6 +149,9 @@ export function DocumentPreview({
           <TabsTrigger value='info'>
             {t('content.documentPreview.tabInfo')}
           </TabsTrigger>
+          {extraTab && (
+            <TabsTrigger value={extraTab.value}>{extraTab.label}</TabsTrigger>
+          )}
         </TabsList>
         <TabsContent
           value='preview'
@@ -267,6 +277,11 @@ export function DocumentPreview({
             </div>
           )}
         </TabsContent>
+        {extraTab && (
+          <TabsContent value={extraTab.value} className='min-h-64'>
+            {extraTab.content}
+          </TabsContent>
+        )}
       </Tabs>
     </article>
   )

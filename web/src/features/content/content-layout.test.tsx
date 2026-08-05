@@ -20,6 +20,7 @@ vi.mock('@tanstack/react-router', () => ({
   Outlet: () => <div>内容叶子路由</div>,
   useLocation: () => location,
   useNavigate: () => vi.fn(),
+  useMatches: () => [],
 }))
 
 const summary: KnowledgeBaseSummary = {
