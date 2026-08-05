@@ -155,6 +155,32 @@ func TestMultiSearchEmbedsOncePerSnapshotGroup(t *testing.T) {
 	}
 }
 
+func TestMultiSearchGroupsMatchingChildrenBeforeFinalTopK(t *testing.T) {
+	workspaceID := uuid.New()
+	group := embeddingGroupKey{EmbeddingModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "model", EmbeddingDimension: 4, ModelConfigHash: "hash"}
+	svc, repo, _ := newMultiSearchFixture([]embeddingGroupKey{group})
+	kbID, entryA, entryB, parentID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	repo.activeGens[kbID] = makeGeneration(workspaceID, kbID, group)
+	repo.vectorByKB[kbID] = []indexport.SearchCandidate{{EntryID: entryA, Score: 0.9}, {EntryID: entryB, Score: 0.8}}
+	repo.evidenceByEntry[entryA] = indexport.SearchEvidence{
+		EntryID: entryA, ChunkID: parentID, ChunkRevisionID: uuid.New(), Content: "完整父块",
+		MatchedChunkID: uuid.New(), MatchedChunkRevisionID: uuid.New(), MatchedContent: "命中子块 A", MatchedRole: value.ChunkRoleChild,
+	}
+	repo.evidenceByEntry[entryB] = indexport.SearchEvidence{
+		EntryID: entryB, ChunkID: parentID, ChunkRevisionID: uuid.New(), Content: "完整父块",
+		MatchedChunkID: uuid.New(), MatchedChunkRevisionID: uuid.New(), MatchedContent: "命中子块 B", MatchedRole: value.ChunkRoleChild,
+	}
+
+	results, err := svc.Search(context.Background(), MultiKnowledgeSearchInput{
+		WorkspaceID: workspaceID, Access: value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true},
+		KnowledgeBaseIDs: []uuid.UUID{kbID}, Query: "配置",
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, parentID, results[0].ChunkID)
+	require.Len(t, results[0].MatchedChildren, 2)
+}
+
 // embedCallCount 统计所有 countingEmbeddingClient 的 embed 次数。
 func embedCallCount(resolver *fakeMultiResolver) int {
 	total := 0

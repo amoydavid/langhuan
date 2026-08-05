@@ -11,7 +11,7 @@ import (
 )
 
 // knowledgeBaseCreateAdapter 把 service.KnowledgeBaseService.Create 适配为
-// MCPKnowledgeBaseService，处理 chunk_size/overlap 到 ChunkingConfig 的转换。
+// MCPKnowledgeBaseService，并保留 MCP 分块配置中显式传入的 false 值。
 type knowledgeBaseCreateAdapter struct {
 	svc KnowledgeBaseCreator
 }
@@ -31,8 +31,27 @@ func (a *knowledgeBaseCreateAdapter) Create(ctx context.Context, in MCPCreateKno
 		WorkspaceID: in.WorkspaceID, CallerAPIKeyID: in.CallerAPIKeyID,
 		Name: in.Name, Description: in.Description, EmbeddingModelID: in.EmbeddingModelID,
 	}
-	if in.ChunkSize != nil && in.ChunkOverlap != nil {
-		input.ChunkingConfig = &value.ChunkingConfig{ChunkSize: *in.ChunkSize, ChunkOverlap: *in.ChunkOverlap}
+	if in.Strategy != nil || in.EnableParentChild != nil || in.ParentChunkSize != nil || in.ChildChunkSize != nil || in.ChunkSize != nil || in.ChunkOverlap != nil {
+		config := value.DefaultChunkingConfig()
+		if in.Strategy != nil {
+			config.Strategy = *in.Strategy
+		}
+		if in.EnableParentChild != nil {
+			config.EnableParentChild = *in.EnableParentChild
+		}
+		if in.ParentChunkSize != nil {
+			config.ParentChunkSize = *in.ParentChunkSize
+		}
+		if in.ChildChunkSize != nil {
+			config.ChildChunkSize = *in.ChildChunkSize
+		}
+		if in.ChunkSize != nil {
+			config.ChunkSize = *in.ChunkSize
+		}
+		if in.ChunkOverlap != nil {
+			config.ChunkOverlap = *in.ChunkOverlap
+		}
+		input.ChunkingConfig = &config
 	}
 	return a.svc.Create(ctx, input)
 }

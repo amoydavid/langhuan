@@ -58,7 +58,7 @@ type embeddingGroup struct {
 // Workspace read 中加载全部 KB 名称和 ready active Generation -> 全部 access
 // 校验 -> 按五元组分组 -> errgroup + semaphore 每组 resolve/一次 embed ->
 // 每 KB 用共同 multi_merge_rrf_k 做 vector/keyword RRF -> 合并 model-
-// independent score -> 稳定排序与全局截断 -> 加载完整 evidence。
+// independent score -> 加载完整 evidence -> 按父块聚合 -> 稳定排序与全局截断。
 type MultiKnowledgeSearchService struct {
 	repository       indexport.SearchRepository
 	resolver         EmbeddingClientResolver
@@ -151,12 +151,18 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 
 	// 全局稳定合并：score DESC, knowledge_base_id ASC, chunk_id ASC。
 	merged := mergeAcrossKnowledgeBases(perKBFused)
-	if finalTopK < len(merged) {
-		merged = merged[:finalTopK]
-	}
 
-	// 加载完整 evidence。
-	return s.loadEvidenceAndBuild(ctx, input.WorkspaceID, merged, snapshots)
+	// 先加载 evidence 才能识别 child 对应的 parent；全局截断必须发生在
+	// parent 聚合之后，避免同一父块的多个命中子块占用结果名额。
+	results, err := s.loadEvidenceAndBuild(ctx, input.WorkspaceID, merged, snapshots)
+	if err != nil {
+		return nil, err
+	}
+	results = groupMultiSearchResults(results)
+	if finalTopK < len(results) {
+		results = results[:finalTopK]
+	}
+	return results, nil
 }
 
 // loadSnapshots 在一个 Workspace read 内加载每个 KB 的名称和 ready active Generation。
@@ -410,6 +416,53 @@ func (s *MultiKnowledgeSearchService) loadEvidenceAndBuild(ctx context.Context, 
 		return results[i].ChunkID.String() < results[j].ChunkID.String()
 	})
 	return results, nil
+}
+
+// groupMultiSearchResults merges hits for the same effective parent within one KB.
+// LoadEvidence resolves a flat chunk to itself, so this also retains flat semantics.
+func groupMultiSearchResults(results []*dto.SearchResult) []*dto.SearchResult {
+	type groupKey struct {
+		knowledgeBaseID uuid.UUID
+		chunkID         uuid.UUID
+	}
+	grouped := make(map[groupKey]*dto.SearchResult, len(results))
+	for _, current := range results {
+		if current == nil {
+			continue
+		}
+		key := groupKey{knowledgeBaseID: current.KnowledgeBaseID, chunkID: current.ChunkID}
+		prior := grouped[key]
+		if prior == nil {
+			grouped[key] = current
+			continue
+		}
+		if current.Score > prior.Score {
+			matched := prior.MatchedChildren
+			*prior = *current
+			prior.MatchedChildren = matched
+		}
+		prior.MatchedChildren = append(prior.MatchedChildren, current.MatchedChildren...)
+	}
+	merged := make([]*dto.SearchResult, 0, len(grouped))
+	for _, result := range grouped {
+		sort.Slice(result.MatchedChildren, func(i, j int) bool {
+			if result.MatchedChildren[i].Score != result.MatchedChildren[j].Score {
+				return result.MatchedChildren[i].Score > result.MatchedChildren[j].Score
+			}
+			return result.MatchedChildren[i].ChunkID.String() < result.MatchedChildren[j].ChunkID.String()
+		})
+		merged = append(merged, result)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].Score != merged[j].Score {
+			return merged[i].Score > merged[j].Score
+		}
+		if merged[i].KnowledgeBaseID != merged[j].KnowledgeBaseID {
+			return merged[i].KnowledgeBaseID.String() < merged[j].KnowledgeBaseID.String()
+		}
+		return merged[i].ChunkID.String() < merged[j].ChunkID.String()
+	})
+	return merged
 }
 
 func dedupeUUIDs(ids []uuid.UUID) []uuid.UUID {

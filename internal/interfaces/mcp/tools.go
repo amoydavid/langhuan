@@ -122,16 +122,24 @@ var (
 // ===== knowledge_base_create =====
 
 type knowledgeBaseCreateInput struct {
-	Name             string `json:"name" jsonschema:"知识库名称"`
-	Description      string `json:"description,omitempty" jsonschema:"知识库描述"`
-	EmbeddingModelID string `json:"embedding_model_id" jsonschema:"Embedding 模型 ID"`
-	ChunkSize        *int   `json:"chunk_size,omitempty" jsonschema:"分块大小，需与 chunk_overlap 成对提供"`
-	ChunkOverlap     *int   `json:"chunk_overlap,omitempty" jsonschema:"分块重叠，需与 chunk_size 成对提供"`
+	Name              string                  `json:"name" jsonschema:"知识库名称"`
+	Description       string                  `json:"description,omitempty" jsonschema:"知识库描述"`
+	EmbeddingModelID  string                  `json:"embedding_model_id" jsonschema:"Embedding 模型 ID"`
+	Strategy          *value.ChunkingStrategy `json:"strategy,omitempty" jsonschema:"分块策略：auto、heading、heuristic 或 recursive"`
+	EnableParentChild *bool                   `json:"enable_parent_child,omitempty" jsonschema:"是否启用父子分块；显式 false 使用扁平分块"`
+	ParentChunkSize   *int                    `json:"parent_chunk_size,omitempty" jsonschema:"父块大小，用于返回完整上下文"`
+	ChildChunkSize    *int                    `json:"child_chunk_size,omitempty" jsonschema:"子块大小，用于召回"`
+	ChunkSize         *int                    `json:"chunk_size,omitempty" jsonschema:"扁平分块大小，需与 chunk_overlap 成对提供"`
+	ChunkOverlap      *int                    `json:"chunk_overlap,omitempty" jsonschema:"扁平分块重叠，需与 chunk_size 成对提供"`
 }
 
 type chunkingConfigOutput struct {
-	ChunkSize    int `json:"chunk_size"`
-	ChunkOverlap int `json:"chunk_overlap"`
+	Strategy          value.ChunkingStrategy `json:"strategy"`
+	EnableParentChild bool                   `json:"enable_parent_child"`
+	ParentChunkSize   int                    `json:"parent_chunk_size"`
+	ChildChunkSize    int                    `json:"child_chunk_size"`
+	ChunkSize         int                    `json:"chunk_size"`
+	ChunkOverlap      int                    `json:"chunk_overlap"`
 }
 
 type knowledgeBaseCreateOutput struct {
@@ -169,6 +177,8 @@ func registerKnowledgeBaseCreate(srv *mcpserver.MCPServer, deps Dependencies) {
 		kb, err := deps.KnowledgeBases.Create(ctx, MCPCreateKnowledgeBaseInput{
 			WorkspaceID: auth.WorkspaceID, CallerAPIKeyID: &apiKeyID,
 			Name: in.Name, Description: in.Description, EmbeddingModelID: modelID,
+			Strategy: in.Strategy, EnableParentChild: in.EnableParentChild,
+			ParentChunkSize: in.ParentChunkSize, ChildChunkSize: in.ChildChunkSize,
 			ChunkSize: in.ChunkSize, ChunkOverlap: in.ChunkOverlap,
 		})
 		if err != nil {
@@ -178,6 +188,8 @@ func registerKnowledgeBaseCreate(srv *mcpserver.MCPServer, deps Dependencies) {
 			ID: kb.ID.String(), Name: kb.Name, Description: kb.Description,
 			EmbeddingModelID: kb.EmbeddingModelID.String(),
 			ChunkingConfig: chunkingConfigOutput{
+				Strategy: kb.ChunkingConfig.Strategy, EnableParentChild: kb.ChunkingConfig.EnableParentChild,
+				ParentChunkSize: kb.ChunkingConfig.ParentChunkSize, ChildChunkSize: kb.ChunkingConfig.ChildChunkSize,
 				ChunkSize: kb.ChunkingConfig.ChunkSize, ChunkOverlap: kb.ChunkingConfig.ChunkOverlap,
 			}, ContentVersion: kb.ContentVersion,
 			CreatedAt: kb.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),

@@ -17,13 +17,17 @@ type MCPKnowledgeBaseService interface {
 
 // MCPCreateKnowledgeBaseInput 是 MCP 工具层的知识库创建输入。
 type MCPCreateKnowledgeBaseInput struct {
-	WorkspaceID      uuid.UUID
-	CallerAPIKeyID   *uuid.UUID
-	Name             string
-	Description      string
-	EmbeddingModelID uuid.UUID
-	ChunkSize        *int
-	ChunkOverlap     *int
+	WorkspaceID       uuid.UUID
+	CallerAPIKeyID    *uuid.UUID
+	Name              string
+	Description       string
+	EmbeddingModelID  uuid.UUID
+	Strategy          *value.ChunkingStrategy
+	EnableParentChild *bool
+	ParentChunkSize   *int
+	ChildChunkSize    *int
+	ChunkSize         *int
+	ChunkOverlap      *int
 }
 
 // MCPDocumentIngestService 是 MCP document_ingest 工具所需的导入端口。
