@@ -347,7 +347,7 @@ type knowledgeSearchOutput struct {
 
 func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("knowledge_search",
-		mcp.WithDescription("知识库检索工具。当需要基于用户的问题从知识库中查找相关资料、回答事实性问题时调用：返回最相关的文档片段（含内容、来源、相关性评分）。同时使用向量语义匹配和关键词匹配。knowledge_base_ids 留空则检索当前 API Key 绑定的全部知识库。"),
+		mcp.WithDescription("知识库检索工具。当需要基于用户的问题从知识库中查找相关资料、回答事实性问题时调用：返回最相关的文档片段（含内容、来源、相关性评分）。同时使用向量语义匹配和关键词匹配，可能根据当前索引配置对结果执行重排（ranking_stage 标识实际排序阶段，fallback 时仍返回 RRF 顺序结果）。knowledge_base_ids 留空则检索当前 API Key 绑定的全部知识库。"),
 		withRawInputSchema[knowledgeSearchInput](),
 		withRawOutputSchema[knowledgeSearchOutput](),
 	)

@@ -62,6 +62,7 @@ type embeddingGroup struct {
 type MultiKnowledgeSearchService struct {
 	repository       indexport.SearchRepository
 	resolver         EmbeddingClientResolver
+	rerankResolver   RerankClientResolver
 	names            APIKeyNameStore
 	multiLimit       int
 	multiConcurrency int
@@ -72,6 +73,7 @@ type MultiKnowledgeSearchService struct {
 func NewMultiKnowledgeSearchService(
 	repository indexport.SearchRepository,
 	resolver EmbeddingClientResolver,
+	rerankResolver RerankClientResolver,
 	names APIKeyNameStore,
 	cfg config.SearchConfig,
 ) *MultiKnowledgeSearchService {
@@ -88,7 +90,7 @@ func NewMultiKnowledgeSearchService(
 		rrfK = 60
 	}
 	return &MultiKnowledgeSearchService{
-		repository: repository, resolver: resolver, names: names,
+		repository: repository, resolver: resolver, rerankResolver: rerankResolver, names: names,
 		multiLimit: limit, multiConcurrency: concurrency, mergeRRFK: rrfK,
 	}
 }
@@ -135,6 +137,12 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 		return nil, err
 	}
 
+	// 在发起 embedding 或检索前，校验多库 Rerank 配置一致性。
+	rerankPlan, err := planMultiKnowledgeRerank(snapshots)
+	if err != nil {
+		return nil, err
+	}
+
 	// 按五元组分组。
 	groups := groupByEmbeddingSnapshot(snapshots)
 
@@ -159,6 +167,8 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 		return nil, err
 	}
 	results = groupMultiSearchResults(results)
+	// 全局一次重排：所有启用 KB 的 Rerank 快照完全一致时才调用。
+	results = s.applyMultiKnowledgeRerank(ctx, results, rerankPlan)
 	if finalTopK < len(results) {
 		results = results[:finalTopK]
 	}

@@ -181,6 +181,12 @@ func rerankScoreOf(item *rankableSearchResult) float64 {
 	return *item.RerankScore
 }
 
+// multiKnowledgeRerankPlan 描述多库检索的重排计划。
+type multiKnowledgeRerankPlan struct {
+	enabled  bool
+	snapshot *model.RerankSnapshot
+}
+
 // rerankSnapshotKey 计算用于多库一致性比对的快照键。
 type rerankSnapshotKey struct {
 	Enabled         bool
@@ -201,6 +207,83 @@ func rerankKeyFromSnapshot(snapshot *model.RerankSnapshot) rerankSnapshotKey {
 		ModelName: snapshot.ModelName, ModelConfigHash: snapshot.ModelConfigHash,
 		CandidateTopK: snapshot.CandidateTopK, FailureMode: snapshot.FailureMode,
 	}
+}
+
+// planMultiKnowledgeRerank 在发起 embedding 或检索前校验多库 Rerank 配置一致性：
+// 全部关闭 -> 不重排；全部相同且启用 -> 全局一次重排；启停混合或快照不同 -> 冲突错误。
+func planMultiKnowledgeRerank(snapshots map[uuid.UUID]knowledgeBaseSearchSnapshot) (multiKnowledgeRerankPlan, error) {
+	var firstKey *rerankSnapshotKey
+	var firstSnapshot *model.RerankSnapshot
+	for _, snap := range snapshots {
+		key := rerankKeyFromSnapshot(snap.generation.Rerank)
+		if firstKey == nil {
+			keyCopy := key
+			firstKey = &keyCopy
+			firstSnapshot = snap.generation.Rerank
+			continue
+		}
+		if !rerankKeysEqual(*firstKey, key) {
+			return multiKnowledgeRerankPlan{}, domainerrors.ErrRerankConfigurationConflict
+		}
+	}
+	if firstKey == nil || !firstKey.Enabled {
+		return multiKnowledgeRerankPlan{enabled: false}, nil
+	}
+	return multiKnowledgeRerankPlan{enabled: true, snapshot: firstSnapshot}, nil
+}
+
+func rerankKeysEqual(a, b rerankSnapshotKey) bool {
+	return a.Enabled == b.Enabled &&
+		a.ModelID == b.ModelID && a.ProviderID == b.ProviderID &&
+		a.ModelName == b.ModelName && a.ModelConfigHash == b.ModelConfigHash &&
+		a.CandidateTopK == b.CandidateTopK && a.FailureMode == b.FailureMode
+}
+
+// applyMultiKnowledgeRerank 在多库 parent grouping 之后执行全局一次重排。
+func (s *MultiKnowledgeSearchService) applyMultiKnowledgeRerank(ctx context.Context, results []*dto.SearchResult, plan multiKnowledgeRerankPlan) []*dto.SearchResult {
+	if !plan.enabled || s.rerankResolver == nil || plan.snapshot == nil {
+		for _, result := range results {
+			result.RankingStage = value.RankingStageRRF
+		}
+		return results
+	}
+	// 多库重排的 search_content 来源与单库一致：通过 result 的 ChunkID 关联。
+	// 由于多库 loadEvidenceAndBuild 已把命中内容写入 Content，这里用 Content 作为重排文本兜底。
+	searchContentByChunk := make(map[uuid.UUID][]string, len(results))
+	for _, result := range results {
+		if result.Content != "" {
+			searchContentByChunk[result.ChunkID] = []string{result.Content}
+		}
+	}
+	client, err := s.rerankResolver.Resolve(ctx, uuid.Nil, plan.snapshot.ModelID)
+	rankingStage := value.RankingStageRRF
+	if err == nil && client != nil &&
+		client.ModelID == plan.snapshot.ModelID && client.ProviderID == plan.snapshot.ProviderID &&
+		client.ModelName == plan.snapshot.ModelName && client.ModelConfigHash == plan.snapshot.ModelConfigHash {
+		rankables := buildRankablesWithContent(results, searchContentByChunk)
+		ranked, stage, rerankErr := applyRerank(ctx, client, rankables, plan.snapshot.CandidateTopK, client.MaxDocumentChars)
+		if rerankErr != nil {
+			if plan.snapshot.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
+				rankingStage = value.RankingStageRRFFallback
+			} else {
+				// fail 模式或多库解析失败：标记失败，结果仍按 RRF 返回（调用方在 fail 时应已返回错误）。
+				rankingStage = value.RankingStageRRFFallback
+			}
+		} else {
+			results = make([]*dto.SearchResult, len(ranked))
+			for i, item := range ranked {
+				results[i] = item.Result
+			}
+			rankingStage = stage
+		}
+	} else if err != nil && !errors.Is(err, domainerrors.ErrNotFound) {
+		// 解析失败（非 not found）在 fail 模式下应让搜索失败，这里保守回退并标记。
+		rankingStage = value.RankingStageRRFFallback
+	}
+	for _, result := range results {
+		result.RankingStage = rankingStage
+	}
+	return results
 }
 
 // isRerankRecoverable 判断错误是否属于可回退的远端暂时故障。
