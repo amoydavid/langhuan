@@ -11,18 +11,20 @@ import (
 
 // Chunk exposes stable source lineage and its current effective revision.
 type Chunk struct {
-	ID                 uuid.UUID      `json:"id"`
-	WorkspaceID        uuid.UUID      `json:"workspace_id"`
-	KnowledgeBaseID    uuid.UUID      `json:"knowledge_base_id"`
-	DocumentID         uuid.UUID      `json:"document_id"`
-	DocumentRevisionID uuid.UUID      `json:"document_revision_id"`
-	ChunkSetID         uuid.UUID      `json:"chunk_set_id"`
-	Sequence           int            `json:"sequence"`
-	SourceContent      string         `json:"source_content"`
-	SourceAnchor       map[string]any `json:"source_anchor"`
-	Metadata           map[string]any `json:"metadata"`
-	ActiveRevision     *ChunkRevision `json:"active_revision,omitempty"`
-	CreatedAt          time.Time      `json:"created_at"`
+	ID                 uuid.UUID       `json:"id"`
+	WorkspaceID        uuid.UUID       `json:"workspace_id"`
+	KnowledgeBaseID    uuid.UUID       `json:"knowledge_base_id"`
+	DocumentID         uuid.UUID       `json:"document_id"`
+	DocumentRevisionID uuid.UUID       `json:"document_revision_id"`
+	ChunkSetID         uuid.UUID       `json:"chunk_set_id"`
+	Role               value.ChunkRole `json:"role"`
+	ParentChunkID      *uuid.UUID      `json:"parent_chunk_id,omitempty"`
+	Sequence           int             `json:"sequence"`
+	SourceContent      string          `json:"source_content"`
+	SourceAnchor       map[string]any  `json:"source_anchor"`
+	Metadata           map[string]any  `json:"metadata"`
+	ActiveRevision     *ChunkRevision  `json:"active_revision,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
 }
 
 // ChunkRevision exposes one immutable effective text revision.
@@ -51,7 +53,8 @@ func ChunkFromModel(chunk *model.Chunk, revision *model.ChunkRevision) *Chunk {
 	return &Chunk{
 		ID: chunk.ID, WorkspaceID: chunk.WorkspaceID, KnowledgeBaseID: chunk.KnowledgeBaseID,
 		DocumentID: chunk.DocumentID, DocumentRevisionID: chunk.DocumentRevisionID,
-		ChunkSetID: chunk.ChunkSetID, Sequence: chunk.Sequence, SourceContent: chunk.SourceContent,
+		ChunkSetID: chunk.ChunkSetID, Role: chunk.Role, ParentChunkID: chunk.ParentChunkID,
+		Sequence: chunk.Sequence, SourceContent: chunk.SourceContent,
 		SourceAnchor: map[string]any{
 			"source_type":  chunk.SourceAnchor.SourceType,
 			"offset_start": chunk.SourceAnchor.OffsetStart, "offset_end": chunk.SourceAnchor.OffsetEnd,

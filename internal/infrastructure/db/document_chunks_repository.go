@@ -38,7 +38,8 @@ func (r *DocumentChunksRepository) ListDocumentChunkFacts(
 	filter appservice.DocumentChunkFactsFilter,
 ) (*appservice.DocumentChunkFactsPage, error) {
 	if workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil || documentID == uuid.Nil || filter.Limit < 1 ||
-		(filter.AfterSequence == nil) != (filter.AfterID == nil) {
+		(filter.AfterSequence == nil) != (filter.AfterID == nil) ||
+		(filter.AfterRoleRank == nil) != (filter.AfterID == nil) {
 		return nil, fmt.Errorf("%w: Document Chunk repository filter 无效", domainerrors.ErrValidation)
 	}
 	var page *appservice.DocumentChunkFactsPage
@@ -144,14 +145,15 @@ func loadDocumentChunkItems(
 	if filter.Enabled != nil {
 		query = query.Where("active_revisions.enabled = ?", *filter.Enabled)
 	}
-	if filter.AfterSequence != nil && filter.AfterID != nil {
+	roleRank := "CASE chunks.role WHEN 'parent' THEN 0 WHEN 'child' THEN 1 ELSE 2 END"
+	if filter.AfterRoleRank != nil && filter.AfterSequence != nil && filter.AfterID != nil {
 		query = query.Where(
-			"(chunks.sequence > ? OR (chunks.sequence = ? AND chunks.id > ?))",
-			*filter.AfterSequence, *filter.AfterSequence, *filter.AfterID,
+			"("+roleRank+" > ? OR ("+roleRank+" = ? AND (chunks.sequence > ? OR (chunks.sequence = ? AND chunks.id > ?))))",
+			*filter.AfterRoleRank, *filter.AfterRoleRank, *filter.AfterSequence, *filter.AfterSequence, *filter.AfterID,
 		)
 	}
 	var chunkRows []ChunkRow
-	if err := query.Order("chunks.sequence ASC, chunks.id ASC").Limit(filter.Limit).Scan(&chunkRows).Error; err != nil {
+	if err := query.Order(roleRank + " ASC, chunks.sequence ASC, chunks.id ASC").Limit(filter.Limit).Scan(&chunkRows).Error; err != nil {
 		return nil, fmt.Errorf("列出 Document Chunks 失败: %w", err)
 	}
 	if len(chunkRows) == 0 {

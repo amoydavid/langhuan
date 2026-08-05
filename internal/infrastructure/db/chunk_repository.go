@@ -23,7 +23,7 @@ func (r *ChunkRepository) ListByChunkSet(ctx context.Context, workspaceID, chunk
 	var rows []ChunkRow
 	if err := r.db.WithContext(ctx).
 		Where("workspace_id = ? AND chunk_set_id = ?", workspaceID, chunkSetID).
-		Order("sequence ASC").Find(&rows).Error; err != nil {
+		Order("CASE role WHEN 'parent' THEN 0 WHEN 'child' THEN 1 ELSE 2 END, sequence ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("列出 ChunkSet 分块失败: %w", err)
 	}
 	chunks := make([]*model.Chunk, len(rows))

@@ -36,7 +36,7 @@ func (r *ChunkSetRepository) GetReadyIndexSource(
 		var chunkRows []ChunkRow
 		if err := tx.WithContext(ctx).
 			Where("workspace_id = ? AND chunk_set_id = ?", workspaceID, chunkSetID).
-			Order("sequence ASC").Find(&chunkRows).Error; err != nil {
+			Order("CASE role WHEN 'parent' THEN 0 WHEN 'child' THEN 1 ELSE 2 END, sequence ASC, id ASC").Find(&chunkRows).Error; err != nil {
 			return translateDBError(err, "读取 ChunkSet Chunks 失败")
 		}
 		var revisionRows []ChunkRevisionRow
@@ -45,7 +45,7 @@ func (r *ChunkSetRepository) GetReadyIndexSource(
 				Select("chunk_revisions.*").
 				Joins("JOIN chunks ON chunks.workspace_id = chunk_revisions.workspace_id AND chunks.active_revision_id = chunk_revisions.id").
 				Where("chunks.workspace_id = ? AND chunks.chunk_set_id = ?", workspaceID, chunkSetID).
-				Order("chunks.sequence ASC").Find(&revisionRows).Error; err != nil {
+				Order("CASE chunks.role WHEN 'parent' THEN 0 WHEN 'child' THEN 1 ELSE 2 END, chunks.sequence ASC, chunks.id ASC").Find(&revisionRows).Error; err != nil {
 				return translateDBError(err, "读取 active ChunkRevisions 失败")
 			}
 		}

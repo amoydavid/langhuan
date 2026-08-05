@@ -37,7 +37,7 @@ func TestDocumentChunksIncludesDisabledActiveRevision(t *testing.T) {
 	}
 }
 
-func TestDocumentChunksUsesOpaqueSequenceIDCursor(t *testing.T) {
+func TestDocumentChunksUsesOpaqueRoleSequenceIDCursor(t *testing.T) {
 	input := validDocumentChunksInput()
 	input.Limit = 2
 	first := documentChunkFacts(input, 2, true, value.ChunkEditSourceSystem, nil)
@@ -70,6 +70,15 @@ func TestDocumentChunksUsesOpaqueSequenceIDCursor(t *testing.T) {
 	if store.filter.AfterSequence == nil || *store.filter.AfterSequence != second.Chunk.Sequence ||
 		store.filter.AfterID == nil || *store.filter.AfterID != second.Chunk.ID {
 		t.Fatalf("decoded cursor = sequence %v id %v", store.filter.AfterSequence, store.filter.AfterID)
+	}
+	if store.filter.AfterRoleRank == nil || *store.filter.AfterRoleRank != 2 {
+		t.Fatalf("decoded cursor role rank = %v, want flat", store.filter.AfterRoleRank)
+	}
+}
+
+func TestChunkRoleRankOrdersParentChildThenFlat(t *testing.T) {
+	if chunkRoleRank(value.ChunkRoleParent) != 0 || chunkRoleRank(value.ChunkRoleChild) != 1 || chunkRoleRank(value.ChunkRoleFlat) != 2 {
+		t.Fatal("unexpected role ranks")
 	}
 }
 

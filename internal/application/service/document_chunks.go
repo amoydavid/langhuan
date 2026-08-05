@@ -14,6 +14,7 @@ import (
 	"github.com/dajee/langhuan/internal/application/dto"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 const (
@@ -38,6 +39,7 @@ type DocumentChunkFactsPage struct {
 // DocumentChunkFactsFilter is the repository-facing stable seek filter.
 type DocumentChunkFactsFilter struct {
 	Enabled       *bool
+	AfterRoleRank *int
 	AfterSequence *int
 	AfterID       *uuid.UUID
 	Limit         int
@@ -90,6 +92,7 @@ func (s *DocumentChunksService) List(ctx context.Context, input DocumentChunksIn
 		if err != nil {
 			return nil, fmt.Errorf("%w: Document Chunk cursor 无效", domainerrors.ErrValidation)
 		}
+		filter.AfterRoleRank = &cursor.RoleRank
 		filter.AfterSequence = &cursor.Sequence
 		filter.AfterID = &cursor.ID
 	}
@@ -119,7 +122,7 @@ func (s *DocumentChunksService) List(ctx context.Context, input DocumentChunksIn
 	var nextCursor *string
 	if len(facts.Items) > limit && pageSize > 0 {
 		last := facts.Items[pageSize-1].Chunk
-		encoded, err := encodeDocumentChunksCursor(documentChunksCursor{Sequence: last.Sequence, ID: last.ID})
+		encoded, err := encodeDocumentChunksCursor(documentChunksCursor{RoleRank: chunkRoleRank(last.Role), Sequence: last.Sequence, ID: last.ID})
 		if err != nil {
 			return nil, fmt.Errorf("编码 Document Chunk cursor 失败: %w", err)
 		}
@@ -132,6 +135,7 @@ func (s *DocumentChunksService) List(ctx context.Context, input DocumentChunksIn
 }
 
 type documentChunksCursor struct {
+	RoleRank int       `json:"role_rank"`
 	Sequence int       `json:"sequence"`
 	ID       uuid.UUID `json:"id"`
 }
@@ -158,8 +162,19 @@ func decodeDocumentChunksCursor(input string) (documentChunksCursor, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return documentChunksCursor{}, fmt.Errorf("cursor 包含多余内容")
 	}
-	if cursor.Sequence < 0 || cursor.ID == uuid.Nil {
+	if cursor.RoleRank < 0 || cursor.RoleRank > 2 || cursor.Sequence < 0 || cursor.ID == uuid.Nil {
 		return documentChunksCursor{}, fmt.Errorf("cursor 字段无效")
 	}
 	return cursor, nil
+}
+
+func chunkRoleRank(role value.ChunkRole) int {
+	switch role {
+	case value.ChunkRoleParent:
+		return 0
+	case value.ChunkRoleChild:
+		return 1
+	default:
+		return 2
+	}
 }
