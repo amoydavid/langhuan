@@ -199,7 +199,7 @@ func assertSingleIntegrationChunk(
 		Find(&chunkSets).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(chunkSets) != 1 || chunkSets[0].Status != string(value.ChunkSetReady) || chunkSets[0].ChunkCount != 1 {
+	if len(chunkSets) != 1 || chunkSets[0].Status != string(value.ChunkSetReady) || chunkSets[0].ChunkCount != 2 {
 		t.Fatalf("chunk sets = %#v, want one ready set", chunkSets)
 	}
 	chunks, err := chunkRepo.ListByChunkSet(ctx, workspaceID, chunkSets[0].ID)
@@ -210,21 +210,27 @@ func assertSingleIntegrationChunk(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chunks) != 1 || len(revisions) != 1 {
-		t.Fatalf("chunks/revisions = %d/%d, want 1/1", len(chunks), len(revisions))
+	if len(chunks) != 2 || len(revisions) != 2 {
+		t.Fatalf("chunks/revisions = %d/%d, want 2/2", len(chunks), len(revisions))
 	}
-	chunk, chunkRevision := chunks[0], revisions[0]
-	if chunk.DocumentID != documentID {
-		t.Fatalf("chunk document_id = %s, want %s", chunk.DocumentID, documentID)
+	byRole := map[value.ChunkRole]*model.Chunk{}
+	for _, chunk := range chunks {
+		byRole[chunk.Role] = chunk
 	}
-	if chunk.Sequence != 0 {
-		t.Fatalf("chunk sequence = %d, want 0", chunk.Sequence)
+	parent, child := byRole[value.ChunkRoleParent], byRole[value.ChunkRoleChild]
+	if parent == nil || child == nil || child.ParentChunkID == nil || *child.ParentChunkID != parent.ID {
+		t.Fatalf("parent/child lineage = %#v", chunks)
 	}
-	if chunk.SourceContent != content || chunkRevision.Content != content || chunkRevision.EmbeddingContent == "" {
-		t.Fatalf("chunk source/revision/embedding = %q / %q / %q", chunk.SourceContent, chunkRevision.Content, chunkRevision.EmbeddingContent)
+	if parent.DocumentID != documentID || parent.Sequence != 0 || parent.SourceContent != content {
+		t.Fatalf("parent = %#v", parent)
 	}
-	if chunk.ActiveRevisionID == nil || *chunk.ActiveRevisionID != chunkRevision.ID {
-		t.Fatalf("active chunk revision = %v, want %s", chunk.ActiveRevisionID, chunkRevision.ID)
+	for _, revision := range revisions {
+		if revision.ChunkID == child.ID && revision.EmbeddingContent == "" {
+			t.Fatal("child embedding content is empty")
+		}
+		if revision.ChunkID == parent.ID && revision.Content != content {
+			t.Fatalf("parent revision = %#v", revision)
+		}
 	}
 	return chunkSets[0].ID
 }
