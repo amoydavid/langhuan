@@ -268,7 +268,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	if err != nil {
 		return nil, err
 	}
-	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, rerankRegistry, parserProviderRegistry)
+	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, rerankRegistry, parserProviderRegistry, log)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +321,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	return app, nil
 }
 
-func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry) (*runtimeServices, error) {
+func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry, log *slog.Logger) (*runtimeServices, error) {
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
@@ -451,7 +451,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Resolver: embeddingResolver, Index: retrievalRepo,
 	})
 	search := service.NewSearchService(service.SearchServiceDeps{
-		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver,
+		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver, Logger: log,
 	})
 	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
 	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, rerankResolver, apiKeyNameStore, cfg.Search)

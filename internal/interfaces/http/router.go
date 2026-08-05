@@ -67,6 +67,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(RequestID())
 
 	cookieName := deps.SessionConfig.CookieName
 	api := router.Group("/api/v1")
@@ -76,6 +77,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	if deps.MCPHandler != nil {
 		// /mcp 只接受 Bearer API Key，不接受浏览器 Cookie，不进入 SPA fallback。
 		mcpAuth := router.Group("/mcp")
+		mcpAuth.Use(MCPTransport())
 		if deps.APIKeyAuth != nil {
 			mcpAuth.Use(APIKeyOnlyAuth(deps.APIKeyAuth))
 		}

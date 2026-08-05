@@ -225,7 +225,7 @@ func startV031ModelConfigurationE2E(t *testing.T) *v031E2E {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(ctx, gormDB, cfg, nil, redisClient, registry, rerankRegistry, parserRegistry)
+	services, err := buildRuntimeServices(ctx, gormDB, cfg, nil, redisClient, registry, rerankRegistry, parserRegistry, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

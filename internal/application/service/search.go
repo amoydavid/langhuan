@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -30,6 +32,7 @@ type SearchServiceDeps struct {
 	Repository     indexport.SearchRepository
 	Resolver       EmbeddingClientResolver
 	RerankResolver RerankClientResolver
+	Logger         *slog.Logger
 }
 
 // SearchService executes active-Generation vector/FTS retrieval and RRF fusion.
@@ -37,15 +40,20 @@ type SearchService struct {
 	repository     indexport.SearchRepository
 	resolver       EmbeddingClientResolver
 	rerankResolver RerankClientResolver
+	logger         *slog.Logger
 }
 
 // NewSearchService creates the hybrid-search use case.
 func NewSearchService(deps SearchServiceDeps) *SearchService {
-	return &SearchService{repository: deps.Repository, resolver: deps.Resolver, rerankResolver: deps.RerankResolver}
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &SearchService{repository: deps.Repository, resolver: deps.Resolver, rerankResolver: deps.RerankResolver, logger: logger}
 }
 
 // Search returns evidence from the active Generation without generating an answer.
-func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.SearchResult, error) {
+func (s *SearchService) Search(ctx context.Context, input SearchInput) (results []*dto.SearchResult, err error) {
 	query := strings.TrimSpace(input.Query)
 	if input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil || query == "" {
 		return nil, fmt.Errorf("%w: Search Workspace/KnowledgeBase/query 无效", domainerrors.ErrValidation)
@@ -53,6 +61,11 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 	if s.repository == nil || s.resolver == nil {
 		return nil, fmt.Errorf("%w: Search dependencies 不能为空", domainerrors.ErrValidation)
 	}
+	stats := &searchRunStats{startedAt: time.Now(), queryChars: len([]rune(query))}
+	defer func() {
+		stats.err = err
+		s.logTerminal(ctx, stats, input, query)
+	}()
 	generation, err := s.activeGeneration(ctx, input.WorkspaceID, input.KnowledgeBaseID)
 	if err != nil {
 		return nil, err
@@ -76,6 +89,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 	// 启用 Rerank 时解析并校验快照（仅构造客户端，不发远端请求）。
 	var rerankClient *ResolvedRerankClient
 	if generation.Rerank != nil {
+		stats.rerankEnabled = true
 		if s.rerankResolver == nil {
 			return nil, fmt.Errorf("%w: Rerank resolver 不能为空", domainerrors.ErrValidation)
 		}
@@ -104,7 +118,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 		Dimension:  generation.EmbeddingDimension,
 		VectorTopK: options.vectorTopK, KeywordTopK: options.keywordTopK,
 	}
-	var results []*dto.SearchResult
+	results = nil
 	err = s.repository.WithinWorkspace(ctx, input.WorkspaceID, func(txCtx context.Context, reader indexport.SearchReader) error {
 		current, err := reader.GetActiveGeneration(txCtx, input.KnowledgeBaseID)
 		if err != nil {
@@ -182,6 +196,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 			if rerankErr != nil {
 				if generation.Rerank.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
 					rankingStage = value.RankingStageRRFFallback
+					stats.rerankFallback = true
+					s.logger.WarnContext(txCtx, "search.rerank_fallback",
+						slog.String("error_class", errorClassOf(rerankErr)),
+					)
 				} else {
 					return rerankErr
 				}
@@ -191,11 +209,14 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) ([]*dto.S
 					results[i] = item.Result
 				}
 				rankingStage = stage
+				stats.rerankApplied = true
 			}
 		}
 		for _, result := range results {
 			result.RankingStage = rankingStage
 		}
+		stats.rankingStage = string(rankingStage)
+		stats.resultCount = len(results)
 		if len(results) > options.finalTopK {
 			results = results[:options.finalTopK]
 		}
