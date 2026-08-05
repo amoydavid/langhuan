@@ -76,7 +76,7 @@ func (s ChunkStage) Run(ctx context.Context, workspaceID, revisionID, generation
 	if err != nil {
 		return uuid.Nil, err
 	}
-	configMap := map[string]any{"chunk_size": config.ChunkSize, "chunk_overlap": config.ChunkOverlap}
+	configMap := chunkingConfigMap(config)
 	configHash, err := standardChunkConfigHash(generation.ChunkerVersion, configMap)
 	if err != nil {
 		return uuid.Nil, err
@@ -117,8 +117,12 @@ func decodeChunkingConfig(raw map[string]any) (value.ChunkingConfig, error) {
 		return value.ChunkingConfig{}, fmt.Errorf("编码 ChunkingConfig 失败: %w", err)
 	}
 	var encodedConfig struct {
-		ChunkSize    int `json:"chunk_size"`
-		ChunkOverlap int `json:"chunk_overlap"`
+		ChunkSize         int                    `json:"chunk_size"`
+		ChunkOverlap      int                    `json:"chunk_overlap"`
+		Strategy          value.ChunkingStrategy `json:"strategy"`
+		EnableParentChild *bool                  `json:"enable_parent_child"`
+		ParentChunkSize   int                    `json:"parent_chunk_size"`
+		ChildChunkSize    int                    `json:"child_chunk_size"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
@@ -128,13 +132,32 @@ func decodeChunkingConfig(raw map[string]any) (value.ChunkingConfig, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return value.ChunkingConfig{}, fmt.Errorf("%w: ChunkingConfig 包含多余 JSON 值", domainerrors.ErrValidation)
 	}
-	config := value.ChunkingConfig{
-		ChunkSize: encodedConfig.ChunkSize, ChunkOverlap: encodedConfig.ChunkOverlap,
+	config := value.DefaultChunkingConfig()
+	config.ChunkSize, config.ChunkOverlap = encodedConfig.ChunkSize, encodedConfig.ChunkOverlap
+	if encodedConfig.Strategy != "" {
+		config.Strategy = encodedConfig.Strategy
+	}
+	if encodedConfig.EnableParentChild != nil {
+		config.EnableParentChild = *encodedConfig.EnableParentChild
+	}
+	if encodedConfig.ParentChunkSize != 0 {
+		config.ParentChunkSize = encodedConfig.ParentChunkSize
+	}
+	if encodedConfig.ChildChunkSize != 0 {
+		config.ChildChunkSize = encodedConfig.ChildChunkSize
 	}
 	if err := config.Validate(); err != nil {
 		return value.ChunkingConfig{}, err
 	}
 	return config, nil
+}
+
+func chunkingConfigMap(config value.ChunkingConfig) map[string]any {
+	return map[string]any{
+		"strategy": string(config.Strategy), "enable_parent_child": config.EnableParentChild,
+		"parent_chunk_size": config.ParentChunkSize, "child_chunk_size": config.ChildChunkSize,
+		"chunk_size": config.ChunkSize, "chunk_overlap": config.ChunkOverlap,
+	}
 }
 
 func standardChunkConfigHash(chunkerVersion int, config map[string]any) (string, error) {

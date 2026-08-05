@@ -55,6 +55,38 @@ func TestChunkerUsesUnicodeRunesAndOverlap(t *testing.T) {
 	}
 }
 
+func TestChunkerBuildsParentAndRetrievableChildren(t *testing.T) {
+	markdown := "# 安装\n\n" + strings.Repeat("配置服务。", 120)
+	input := chunkerInput("安装", markdown, []model.ParsedBlock{
+		{Sequence: 0, Kind: model.BlockKindHeading, NormalizedStart: 0, NormalizedEnd: len("# 安装"), HeadingPath: []string{"安装"}, SourceAnchor: textAnchor(0, 4)},
+		{Sequence: 1, Kind: model.BlockKindParagraph, NormalizedStart: len("# 安装\n\n"), NormalizedEnd: len(markdown), HeadingPath: []string{"安装"}, SourceAnchor: textAnchor(6, len([]rune(markdown)))},
+	})
+	config := value.DefaultChunkingConfig()
+	config.ParentChunkSize, config.ChildChunkSize = 1024, 128
+	chunks, revisions, err := NewChunker().Chunk(input, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parents, children := 0, 0
+	for index, chunk := range chunks {
+		switch chunk.Role {
+		case value.ChunkRoleParent:
+			parents++
+			if chunk.ParentChunkID != nil || revisions[index].Status != value.ChunkRevisionReady {
+				t.Fatalf("parent=%#v revision=%#v", chunk, revisions[index])
+			}
+		case value.ChunkRoleChild:
+			children++
+			if chunk.ParentChunkID == nil || revisions[index].Status != value.ChunkRevisionPending {
+				t.Fatalf("child=%#v revision=%#v", chunk, revisions[index])
+			}
+		}
+	}
+	if parents == 0 || children < 2 {
+		t.Fatalf("parents=%d children=%d chunks=%#v", parents, children, chunks)
+	}
+}
+
 func TestChunkerKeepsHeadingBoundaryAndBuildsContext(t *testing.T) {
 	markdown := "# 指南\n\n第一节正文\n\n# 附录\n\n第二节正文"
 	blocks := []model.ParsedBlock{

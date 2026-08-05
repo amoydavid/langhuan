@@ -70,12 +70,17 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 	}
 
 	drafts := make([]chunkDraft, 0)
+	workingConfig := config
+	if config.EnableParentChild {
+		workingConfig.ChunkSize = config.ChildChunkSize
+		workingConfig.ChunkOverlap = config.ChildChunkSize / 5
+	}
 	ordinary := make([]model.ParsedBlock, 0)
 	flushOrdinary := func() error {
 		if len(ordinary) == 0 {
 			return nil
 		}
-		created, err := splitOrdinary(input.Markdown, ordinary, config)
+		created, err := splitOrdinary(input.Markdown, ordinary, workingConfig)
 		if err != nil {
 			return err
 		}
@@ -102,7 +107,7 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 				rows = append(rows, blocks[cursor])
 				cursor++
 			}
-			created, err := splitTable(input.Markdown, block, rows, tableID, config.ChunkSize)
+			created, err := splitTable(input.Markdown, block, rows, tableID, workingConfig.ChunkSize)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -126,6 +131,13 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 		return nil, nil, err
 	}
 
+	if !config.EnableParentChild {
+		return materializeChunkDrafts(input, drafts, value.ChunkRoleFlat, nil)
+	}
+	return materializeParentChildDrafts(input, drafts, config)
+}
+
+func materializeChunkDrafts(input ChunkInput, drafts []chunkDraft, role value.ChunkRole, parentID *uuid.UUID) ([]*model.Chunk, []*model.ChunkRevision, error) {
 	now := time.Now().UTC()
 	chunks := make([]*model.Chunk, len(drafts))
 	revisions := make([]*model.ChunkRevision, len(drafts))
@@ -153,12 +165,61 @@ func (Chunker) Chunk(input ChunkInput, config value.ChunkingConfig) ([]*model.Ch
 		chunks[sequence] = &model.Chunk{
 			ID: chunkID, WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 			DocumentID: input.DocumentID, DocumentRevisionID: input.DocumentRevisionID,
-			ChunkSetID: input.ChunkSetID, Sequence: sequence, SourceContent: draft.content,
+			ChunkSetID: input.ChunkSetID, Role: role, ParentChunkID: parentID, Sequence: sequence, SourceContent: draft.content,
 			ActiveRevisionID: &revisionID,
 			Content:          draft.content, ContextHeader: header, EmbeddingContent: embedding,
 			SourceAnchor: draft.anchor, Metadata: metadata, CreatedAt: now,
 		}
 		revisions[sequence] = revision
+	}
+	return chunks, revisions, nil
+}
+
+func materializeParentChildDrafts(input ChunkInput, drafts []chunkDraft, config value.ChunkingConfig) ([]*model.Chunk, []*model.ChunkRevision, error) {
+	if len(drafts) == 0 {
+		return []*model.Chunk{}, []*model.ChunkRevision{}, nil
+	}
+	chunks := make([]*model.Chunk, 0, len(drafts)*2)
+	revisions := make([]*model.ChunkRevision, 0, len(drafts)*2)
+	for start := 0; start < len(drafts); {
+		end := start + 1
+		size := utf8.RuneCountInString(drafts[start].content)
+		for end < len(drafts) && sameStrings(drafts[start].headingPath, drafts[end].headingPath) {
+			next := utf8.RuneCountInString(drafts[end].content)
+			if size+2+next > config.ParentChunkSize && end > start {
+				break
+			}
+			size += 2 + next
+			end++
+		}
+		parentDraft := drafts[start]
+		parts := make([]string, 0, end-start)
+		for _, draft := range drafts[start:end] {
+			parts = append(parts, draft.content)
+		}
+		parentDraft.content = strings.Join(parts, "\n\n")
+		parentID := id.New()
+		parentChunks, parentRevisions, err := materializeChunkDrafts(input, []chunkDraft{parentDraft}, value.ChunkRoleParent, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		parentChunks[0].ID = parentID
+		parentRevisions[0].ChunkID = parentID
+		parentChunks[0].ActiveRevisionID = &parentRevisions[0].ID
+		parentRevisions[0].Status = value.ChunkRevisionReady
+		children, childRevisions, err := materializeChunkDrafts(input, drafts[start:end], value.ChunkRoleChild, &parentID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for index := range children {
+			children[index].Sequence = start + index
+		}
+		parentChunks[0].Sequence = start
+		chunks = append(chunks, parentChunks[0])
+		chunks = append(chunks, children...)
+		revisions = append(revisions, parentRevisions[0])
+		revisions = append(revisions, childRevisions...)
+		start = end
 	}
 	return chunks, revisions, nil
 }
