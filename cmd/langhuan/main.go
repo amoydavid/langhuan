@@ -454,7 +454,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver, Logger: log,
 	})
 	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
-	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, rerankResolver, apiKeyNameStore, cfg.Search)
+	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, rerankResolver, apiKeyNameStore, cfg.Search, log)
 	retrievalCleanup := service.NewRetrievalCleanupService(retrievalCleanupRepo, service.RetrievalCleanupOptions{
 		FailedStagingRetention:     cfg.Retrieval.FailedStagingRetention,
 		RetiredGenerationRetention: cfg.Retrieval.RetiredGenerationRetention,

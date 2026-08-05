@@ -118,7 +118,7 @@ func newMultiSearchFixture(groupKeys []embeddingGroupKey) (*MultiKnowledgeSearch
 	names := &fakeAPIKeyNameStore{kbNames: map[uuid.UUID]string{}}
 	svc := NewMultiKnowledgeSearchService(repo, resolver, nil, names, config.SearchConfig{
 		MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60,
-	})
+	}, nil)
 	return svc, repo, resolver
 }
 

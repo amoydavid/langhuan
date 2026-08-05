@@ -21,7 +21,13 @@ type searchRunStats struct {
 	rerankApplied,
 	rerankFallback bool
 	rankingStage string
-	resultCount  int
+	// 召回与重排阶段计数，证明重排实际参与排序。
+	vectorCandidateCount,
+	keywordCandidateCount,
+	fusedCandidateCount,
+	groupedCandidateCount,
+	rerankCandidateCount,
+	resultCount int
 }
 
 // logTerminal 根据最终 error 记录唯一的 search.completed 或 search.failed 事件。
@@ -40,9 +46,14 @@ func (s *SearchService) logTerminal(ctx context.Context, stats *searchRunStats, 
 		slog.String("workspace_id", input.WorkspaceID.String()),
 		slog.String("knowledge_base_id", input.KnowledgeBaseID.String()),
 		slog.Int("query_chars", stats.queryChars),
+		slog.Int("vector_candidate_count", stats.vectorCandidateCount),
+		slog.Int("keyword_candidate_count", stats.keywordCandidateCount),
+		slog.Int("fused_candidate_count", stats.fusedCandidateCount),
+		slog.Int("grouped_candidate_count", stats.groupedCandidateCount),
 		slog.Bool("rerank_enabled", stats.rerankEnabled),
 		slog.Bool("rerank_applied", stats.rerankApplied),
 		slog.Bool("rerank_fallback", stats.rerankFallback),
+		slog.Int("rerank_candidate_count", stats.rerankCandidateCount),
 		slog.Int("result_count", stats.resultCount),
 		slog.String("ranking_stage", stats.rankingStage),
 		slog.Int64("total_duration_ms", totalMS),

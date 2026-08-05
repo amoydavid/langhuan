@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -64,6 +65,7 @@ type MultiKnowledgeSearchService struct {
 	resolver         EmbeddingClientResolver
 	rerankResolver   RerankClientResolver
 	names            APIKeyNameStore
+	logger           *slog.Logger
 	multiLimit       int
 	multiConcurrency int
 	mergeRRFK        int
@@ -76,6 +78,7 @@ func NewMultiKnowledgeSearchService(
 	rerankResolver RerankClientResolver,
 	names APIKeyNameStore,
 	cfg config.SearchConfig,
+	logger *slog.Logger,
 ) *MultiKnowledgeSearchService {
 	limit := cfg.MultiKnowledgeBaseLimit
 	if limit < 1 {
@@ -89,9 +92,12 @@ func NewMultiKnowledgeSearchService(
 	if rrfK <= 0 {
 		rrfK = 60
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &MultiKnowledgeSearchService{
 		repository: repository, resolver: resolver, rerankResolver: rerankResolver, names: names,
-		multiLimit: limit, multiConcurrency: concurrency, mergeRRFK: rrfK,
+		logger: logger, multiLimit: limit, multiConcurrency: concurrency, mergeRRFK: rrfK,
 	}
 }
 

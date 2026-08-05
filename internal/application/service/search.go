@@ -135,7 +135,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		if err != nil {
 			return err
 		}
+		stats.vectorCandidateCount = len(vectorCandidates)
+		stats.keywordCandidateCount = len(keywordCandidates)
 		fused := ReciprocalRankFusion(vectorCandidates, keywordCandidates, options.rrfK)
+		stats.fusedCandidateCount = len(fused)
 		entryIDs := make([]uuid.UUID, len(fused))
 		for index := range fused {
 			entryIDs[index] = fused[index].EntryID
@@ -189,21 +192,48 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 			})
 		}
 		// Rerank：在 parent grouping 之后、final truncate 之前执行一次重排。
+		stats.groupedCandidateCount = len(results)
 		rankingStage := value.RankingStageRRF
 		if generation.Rerank != nil && rerankClient != nil {
 			rankables := buildRankablesWithContent(results, groupedSearchContent)
-			ranked, stage, rerankErr := applyRerank(txCtx, rerankClient, rankables, generation.Rerank.CandidateTopK, rerankClient.MaxDocumentChars)
+			candidateTopK := generation.Rerank.CandidateTopK
+			rerankStarted := time.Now()
+			ranked, stage, rerankErr := applyRerank(txCtx, rerankClient, rankables, candidateTopK, rerankClient.MaxDocumentChars)
+			rerankMS := time.Since(rerankStarted).Milliseconds()
+			rerankCandidateCount := len(rankables)
+			if rerankCandidateCount > candidateTopK {
+				rerankCandidateCount = candidateTopK
+			}
+			stats.rerankCandidateCount = rerankCandidateCount
 			if rerankErr != nil {
+				s.logger.DebugContext(txCtx, "rerank.call.failed",
+					slog.String("event", "rerank.call.failed"),
+					slog.String("provider", rerankClient.ProviderKey),
+					slog.String("model_id", rerankClient.ModelID.String()),
+					slog.String("provider_id", rerankClient.ProviderID.String()),
+					slog.Int("candidate_count", rerankCandidateCount),
+					slog.Int64("duration_ms", rerankMS),
+					slog.String("error_class", errorClassOf(rerankErr)),
+				)
 				if generation.Rerank.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
 					rankingStage = value.RankingStageRRFFallback
 					stats.rerankFallback = true
 					s.logger.WarnContext(txCtx, "search.rerank_fallback",
+						slog.String("event", "search.rerank_fallback"),
 						slog.String("error_class", errorClassOf(rerankErr)),
 					)
 				} else {
 					return rerankErr
 				}
 			} else {
+				s.logger.DebugContext(txCtx, "rerank.call.completed",
+					slog.String("event", "rerank.call.completed"),
+					slog.String("provider", rerankClient.ProviderKey),
+					slog.String("model_id", rerankClient.ModelID.String()),
+					slog.String("provider_id", rerankClient.ProviderID.String()),
+					slog.Int("candidate_count", rerankCandidateCount),
+					slog.Int64("duration_ms", rerankMS),
+				)
 				results = make([]*dto.SearchResult, len(ranked))
 				for i, item := range ranked {
 					results[i] = item.Result

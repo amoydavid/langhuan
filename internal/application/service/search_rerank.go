@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -261,8 +263,24 @@ func (s *MultiKnowledgeSearchService) applyMultiKnowledgeRerank(ctx context.Cont
 		client.ModelID == plan.snapshot.ModelID && client.ProviderID == plan.snapshot.ProviderID &&
 		client.ModelName == plan.snapshot.ModelName && client.ModelConfigHash == plan.snapshot.ModelConfigHash {
 		rankables := buildRankablesWithContent(results, searchContentByChunk)
-		ranked, stage, rerankErr := applyRerank(ctx, client, rankables, plan.snapshot.CandidateTopK, client.MaxDocumentChars)
+		candidateTopK := plan.snapshot.CandidateTopK
+		rerankStarted := time.Now()
+		ranked, stage, rerankErr := applyRerank(ctx, client, rankables, candidateTopK, client.MaxDocumentChars)
+		rerankMS := time.Since(rerankStarted).Milliseconds()
+		rerankCandidateCount := len(rankables)
+		if rerankCandidateCount > candidateTopK {
+			rerankCandidateCount = candidateTopK
+		}
 		if rerankErr != nil {
+			s.logger.DebugContext(ctx, "rerank.call.failed",
+				slog.String("event", "rerank.call.failed"),
+				slog.String("provider", client.ProviderKey),
+				slog.String("model_id", client.ModelID.String()),
+				slog.String("provider_id", client.ProviderID.String()),
+				slog.Int("candidate_count", rerankCandidateCount),
+				slog.Int64("duration_ms", rerankMS),
+				slog.String("error_class", errorClassOf(rerankErr)),
+			)
 			if plan.snapshot.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
 				rankingStage = value.RankingStageRRFFallback
 			} else {
@@ -270,6 +288,14 @@ func (s *MultiKnowledgeSearchService) applyMultiKnowledgeRerank(ctx context.Cont
 				rankingStage = value.RankingStageRRFFallback
 			}
 		} else {
+			s.logger.DebugContext(ctx, "rerank.call.completed",
+				slog.String("event", "rerank.call.completed"),
+				slog.String("provider", client.ProviderKey),
+				slog.String("model_id", client.ModelID.String()),
+				slog.String("provider_id", client.ProviderID.String()),
+				slog.Int("candidate_count", rerankCandidateCount),
+				slog.Int64("duration_ms", rerankMS),
+			)
 			results = make([]*dto.SearchResult, len(ranked))
 			for i, item := range ranked {
 				results[i] = item.Result
@@ -278,6 +304,10 @@ func (s *MultiKnowledgeSearchService) applyMultiKnowledgeRerank(ctx context.Cont
 		}
 	} else if err != nil && !errors.Is(err, domainerrors.ErrNotFound) {
 		// 解析失败（非 not found）在 fail 模式下应让搜索失败，这里保守回退并标记。
+		s.logger.DebugContext(ctx, "rerank.call.failed",
+			slog.String("event", "rerank.call.failed"),
+			slog.String("error_class", errorClassOf(err)),
+		)
 		rankingStage = value.RankingStageRRFFallback
 	}
 	for _, result := range results {

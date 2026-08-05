@@ -125,3 +125,62 @@ func TestSearchLogsFailedEventOnGenerationNotReady(t *testing.T) {
 		t.Fatalf("failed events = %d, want 1\n%s", handler.countEvent("search.failed"), handler.json())
 	}
 }
+
+func TestSearchLogsRerankCallDebugEvent(t *testing.T) {
+	workspaceID, kbID := uuid.New(), uuid.New()
+	embeddingModelID, embeddingProviderID := uuid.New(), uuid.New()
+	rerankModelID, rerankProviderID := uuid.New(), uuid.New()
+	generation := &model.IndexGeneration{
+		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
+		EmbeddingModelID: embeddingModelID, ProviderID: embeddingProviderID,
+		ModelName: "embed", EmbeddingDimension: 1024, ModelConfigHash: "ehash",
+		ChunkerVersion: 1, RetrievalConfig: map[string]any{"fts_config": "simple", "vector_top_k": 30, "keyword_top_k": 30, "final_top_k": 10, "rrf_k": 60},
+		Status: value.IndexGenerationReady,
+		Rerank: &model.RerankSnapshot{
+			ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank",
+			ModelConfigHash: "rhash", CandidateTopK: 50, FailureMode: value.RerankFailureFallback,
+		},
+	}
+	entryID := uuid.New()
+	repo := &searchRepositoryFake{
+		generation: generation,
+		vector:     []indexport.SearchCandidate{{EntryID: entryID, Score: 0.5}},
+		evidence: map[uuid.UUID]indexport.SearchEvidence{
+			entryID: {EntryID: entryID, ChunkID: uuid.New(), DocumentID: uuid.New(), Content: "正文", SearchContent: "片段", MatchedChunkID: entryID, MatchedSearchContent: "片段", MatchedRole: value.ChunkRoleFlat},
+		},
+	}
+	embeddingResolver := &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{
+		Client: &chunkRevisionEmbeddingSpy{dimension: 1024}, ModelID: embeddingModelID, ProviderID: embeddingProviderID,
+		ModelName: "embed", ModelConfigHash: "ehash", Dimensions: 1024, BatchSize: 32,
+	}}
+	rerankResolver := &stubRerankResolver{client: &ResolvedRerankClient{
+		Client:  &recordingRerankClientForSearch{scores: []float64{0.9}},
+		ModelID: rerankModelID, ProviderID: rerankProviderID, ProviderKey: "rerank_compatible",
+		ModelName: "rerank", ModelConfigHash: "rhash", MaxDocuments: 100, MaxQueryChars: 4096, MaxDocumentChars: 8192,
+	}}
+	logger, handler := newCaptureLogger()
+	svc := NewSearchService(SearchServiceDeps{
+		Repository: repo, Resolver: embeddingResolver, RerankResolver: rerankResolver, Logger: logger,
+	})
+
+	_, err := svc.Search(context.Background(), SearchInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID, Query: "退款",
+	})
+	if err != nil {
+		t.Fatalf("search err = %v", err)
+	}
+	// Debug 级 rerank.call.completed 应被记录，证明重排实际执行。
+	if handler.countEvent("rerank.call.completed") != 1 {
+		t.Fatalf("rerank.call.completed events = %d, want 1\n%s", handler.countEvent("rerank.call.completed"), handler.json())
+	}
+	// terminal event 应含召回阶段计数。
+	if handler.countEvent("search.completed") != 1 {
+		t.Fatalf("search.completed = %d, want 1\n%s", handler.countEvent("search.completed"), handler.json())
+	}
+	got := handler.json()
+	for _, field := range []string{"vector_candidate_count", "keyword_candidate_count", "fused_candidate_count", "grouped_candidate_count", "rerank_candidate_count", "ranking_stage", "duration_ms", "model_id"} {
+		if !strings.Contains(got, field) {
+			t.Fatalf("log missing field %q: %s", field, got)
+		}
+	}
+}
