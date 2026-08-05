@@ -18,11 +18,12 @@ import (
 // （RustFS / MinIO）上的 Put/Open/Delete round-trip。
 //
 // 通过环境变量配置：
-//   LANGHUAN_TEST_S3_ENDPOINT  (默认 http://127.0.0.1:19000)
-//   LANGHUAN_TEST_S3_BUCKET    (默认 langhuan-test)
-//   LANGHUAN_TEST_S3_ACCESS_KEY (默认 rustfsadmin)
-//   LANGHUAN_TEST_S3_SECRET_KEY (默认 rustfsadmin)
-//   LANGHUAN_TEST_S3_REGION    (默认 us-east-1)
+//
+//	LANGHUAN_TEST_S3_ENDPOINT  (默认 http://127.0.0.1:19000)
+//	LANGHUAN_TEST_S3_BUCKET    (默认 langhuan-test)
+//	LANGHUAN_TEST_S3_ACCESS_KEY (默认 rustfsadmin)
+//	LANGHUAN_TEST_S3_SECRET_KEY (默认 rustfsadmin)
+//	LANGHUAN_TEST_S3_REGION    (默认 us-east-1)
 //
 // 未提供 endpoint 时跳过，不依赖任何外部服务。
 func TestS3StoreRustFSRoundTrip(t *testing.T) {

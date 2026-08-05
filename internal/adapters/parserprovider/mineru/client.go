@@ -173,10 +173,10 @@ func (c *Client) Poll(ctx context.Context, batchID string) (*TaskResult, error) 
 			// 每个文件一条结果；批量查询的主状态在 extract_result 数组里，
 			// 不在 data 顶层。top-level 的 state/full_zip_url 字段不存在。
 			ExtractResult []struct {
-				FileName    string `json:"file_name"`
-				State       string `json:"state"`
-				ErrMsg      string `json:"err_msg"`
-				FullZipURL  string `json:"full_zip_url"`
+				FileName   string `json:"file_name"`
+				State      string `json:"state"`
+				ErrMsg     string `json:"err_msg"`
+				FullZipURL string `json:"full_zip_url"`
 			} `json:"extract_result"`
 			ExtractProgress *struct {
 				ExtractedPages int `json:"extracted_pages"`
