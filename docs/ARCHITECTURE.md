@@ -239,6 +239,41 @@ transaction: Document/next Revision + answer + all questions + Job
 
 Worker payload显式包含 Workspace、KB、Document、Revision、Generation 和 Job lineage。handler 只解码并调用 application pipeline；任务重入先检查 ready/published/terminal 状态。FAQ 不调用 parser/raw storage，File/Web 不读取 FAQ 子表。
 
+## 8.1 飞书内容源同步
+
+琅嬛支持把飞书云文档/知识库作为内容源接入，复用现有 parse/chunk/index 管线，不引入新的 DocumentKind。飞书文档一律以 `file` kind 落库（当 Markdown 处理），来源语义由 `documents.source_type="feishu"` + `external_id`（飞书节点稳定 token）承载。
+
+### 数据流
+
+```text
+飞书 KB（凭证来自 workspace_source_connections）
+  -> SourceConnector.ListTree（递归 wiki/drive 节点树）
+  -> 按增量游标 sync_cursor 跳过未变更 docx（基于 obj_edit_time）
+  -> SourceConnector.Fetch docx（raw_content → markdown）
+  -> rawStore.Put
+  -> 单 Workspace 事务：Document(file, external_id) + Revision(reason=crawl, markdown)
+     + FileTreeNode(file) + Job(document_parse_start)
+  -> 入队 document_parse_start
+  -> 复用现有 parse / chunk / index / publish 管线
+```
+
+- folder 节点同步为 FileTree folder 节点；docx 节点同步为 File Document；sheet/bitable 等非 docx 文档类型跳过并记 warning。
+- 删除检测：DB 里存在、本次飞书树里不存在的 external_id，软删对应 Document。
+- 同步后回写 `source_config.sync_cursor`（所有节点 EditTime 最大值），下次同步据此增量跳过。
+
+### Meta Scheduler 限流
+
+进程内单 goroutine Meta Scheduler（`SourceSyncScheduler`）周期扫描到期飞书 KB，按 `source_connection_id` 分组并限流：
+
+- 每个来源连接的最大并发同步任务数由 `config.yaml` 的 `source_sync.max_concurrent_per_connection` 配置（默认 2）；`source_sync.scheduler_interval_seconds` 控制 Tick 周期（默认 60s）。
+- 限流查询命中 `idx_jobs_conn_active` 部分索引，只统计 `type='source_sync' AND status IN ('pending','running')`。
+- 入队成功后按 `source_config.cron`（5 字段标准 cron）推进 `next_sync_at`；无 cron 时仅手动触发。
+- check-then-act 在单进程内无竞态；worker 完成后可调用 `TryDispatchConnection` 续跑同 connection 队列，避免空等下一个 Tick。
+
+### 凭证
+
+每个 Workspace 可注册多个飞书内部应用（`workspace_source_connections`，`provider='feishu'`）。`app_id` 等非敏感配置存 `config jsonb`；`app_secret` 经 `credential_cipher` AES-256-GCM 加密后存 `credentials_ciphertext`，**不写入 YAML**。飞书连接 cipher 复用主凭证密钥但 AAD 前缀为 `source-connection:`，与 model-provider 凭证物理隔离（同一密文不可跨用途解密）。List 接口不回显 secret。
+
 ## 9. 状态、删除与保留
 
 Document v2 状态固定为：

@@ -193,6 +193,45 @@ MCP 业务错误以 `isError=true` 的结构化结果返回同一份 `{"error":{
 
 SiliconFlow 使用一个 `provider=siliconflow` 连接，同时承载 Embedding 与 Rerank 模型：默认路径为 `/v1/embeddings` 与 `/v1/rerank`，凭证只保存一份。
 
+## 8.2 飞书应用管理与来源同步
+
+飞书内容源同步让 Workspace 注册一个或多个飞书内部应用，并把飞书云文档/知识库作为知识库来源，自动同步整棵目录树入库（详见 `docs/ARCHITECTURE.md` 8.1 节）。这套接口**仅限浏览器 Session**：admin/owner 可写、member 不可访问、Bearer API Key 不可访问（凭证与同步管理不对外开）。
+
+来源连接管理：
+
+| REST | 鉴权 | 说明 |
+|---|---|---|
+| `POST /api/v1/workspaces/:slug/source-connections` | Session admin/owner | 注册飞书应用（provider/name/app_id/app_secret）；app_secret 加密落库，不回显 |
+| `GET /api/v1/workspaces/:slug/source-connections` | Session admin/owner | 列出当前 Workspace 连接；不返回 app_secret |
+| `GET /api/v1/workspaces/:slug/source-connections/:connection_id` | Session admin/owner | 单条详情；不返回 app_secret |
+| `PATCH /api/v1/workspaces/:slug/source-connections/:connection_id` | Session admin/owner | 更新 config 或轮换 app_secret、启停 |
+| `DELETE /api/v1/workspaces/:slug/source-connections/:connection_id` | Session admin/owner | 软删连接 |
+
+手动触发同步：
+
+| REST | 鉴权 | 说明 |
+|---|---|---|
+| `POST /api/v1/workspaces/:slug/knowledge-bases/:id/sync` | Session admin/owner | 无请求体；返回 `202 {"job_id": ...}`；按 KB 幂等去重，同一 KB 同时只允许一个同步任务在队列中 |
+
+知识库创建支持来源字段（`POST /api/v1/workspaces/:slug/knowledge-bases`，Session admin/owner）：
+
+```json
+{
+  "name": "产品手册",
+  "source_type": "feishu_drive | feishu_wiki",
+  "source_config": { "root_token": "wikcnB...", "cron": "0 */6 * * *" },
+  "source_connection_id": "<uuid>"
+}
+```
+
+`source_type` 为飞书类型时必须绑定 `source_connection_id`；`source_config.url`（飞书分享链接）或 `root_token` + `root_kind` 指定同步根；可选 `cron`（5 字段标准 cron）开启定时增量。创建事务提交后自动入队首次 `source_sync` 任务。
+
+权限边界：
+
+- 来源连接管理与同步触发要求 Session admin/owner；member 调用返回 `403 forbidden`。
+- Bearer API Key 调用上述任一接口返回 `401 unauthorized`（路由不注册到 progGroup）。
+- `app_secret` 经 AES-256-GCM 加密落库，List/Get/PATCH 响应绝不回显明文；轮换只接受新值替换旧密文。
+
 ## 9. 安全须知
 
 - 生产环境必须使用 HTTPS。

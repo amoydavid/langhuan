@@ -315,6 +315,44 @@ Cleanup 仍然必须进入 `WithinWorkspace`，不允许用无租户的全表后
 - Model/Provider 引用统计同时覆盖 `workspace_search_settings.rerank_model_id` / `rerank_provider_id`，避免配置引用被删除保护遗漏。
 - Index Generation 旧 Rerank 快照列仍用于历史兼容，但 SearchService/MultiKnowledgeSearchService 的决策来源是 Workspace Search Settings。
 
+### 9.z 飞书内容源同步（迁移 000017 / 000018）
+
+飞书内容源同步引入多应用凭证、来源字段与按连接维度的任务限流，仍遵守租户边界与复合外键规则。
+
+`workspace_source_connections`（迁移 000018）保存每个 Workspace 的飞书内部应用：
+
+- 直接租户键 `workspace_id uuid NOT NULL` + `UNIQUE (workspace_id, id)`（主键为 `id`）。
+- `provider text NOT NULL`（CHECK 当前固定 `'feishu'`）、`name text NOT NULL`、`config jsonb NOT NULL DEFAULT '{}'`（存 `app_id`、可选 `base_url` 等**非敏感**配置）。
+- `credentials_ciphertext bytea` 保存 `app_secret` 的 AES-256-GCM 密文，复用 `credential_cipher` 的主密钥但 **AAD 前缀为 `source-connection:`**（`credentialAAD` 的 model-provider 前缀是 `model-provider:`），两类密文物理隔离，不可跨用途解密。
+- `status text NOT NULL DEFAULT 'active'`（CHECK `active|disabled`）、`deleted_at timestamptz` 支持软删。
+- 业务唯一性：`UNIQUE (workspace_id, provider, name)`；表达式唯一索引 `uq_workspace_source_connections_app_id` 在 `WHERE deleted_at IS NULL` 下保证同 Workspace + provider 的 `config->>'app_id'` 唯一。
+
+`knowledge_bases` 来源字段（迁移 000018）：
+
+- `source_type text NOT NULL DEFAULT 'upload'`（CHECK `upload|feishu_drive|feishu_wiki`）。默认 `upload` 使既有 KB 无需回填。
+- `source_config jsonb NOT NULL DEFAULT '{}'`：存同步根（`url` 或 `root_token`+`root_kind`）、可选 `cron`、运行期写入的 `next_sync_at` / `sync_cursor`（RFC3339）。
+- `source_connection_id uuid NULL ... REFERENCES workspace_source_connections(id) ON DELETE SET NULL`。
+
+`documents.external_id`（迁移 000018）保存飞书节点稳定 token，用于增量幂等与删除检测：
+
+- 部分索引 `idx_documents_kb_external ON documents(knowledge_base_id, external_id) WHERE external_id IS NOT NULL`，只索引飞书同步来源的文档。
+- 查询 `ListDocumentsByKB` 读取该 KB 下所有 `external_id` 非空的文档（含已软删的），与飞书树存活集合做差集实现删除检测。
+
+`jobs.source_connection_id`（迁移 000018）+ Meta Scheduler 限流：
+
+- `source_connection_id uuid NULL`（source_sync 任务填此列，普通任务为 NULL）。
+- 部分索引 `idx_jobs_conn_active ON jobs(workspace_id, source_connection_id, type, status) WHERE source_connection_id IS NOT NULL`，专供 `CountActiveByConnection`（统计某 connection 下 `type='source_sync' AND status IN ('pending','running')`）使用，避免全表扫描。
+
+`jobs_target_check`（迁移 000017）增加第三分支，放宽为三选一：
+
+```sql
+(document_id IS NOT NULL AND document_revision_id IS NOT NULL AND index_generation_id IS NULL)
+OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NOT NULL)
+OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND type = 'source_sync')
+```
+
+第三分支只允许 `type='source_sync'` 的任务以仅关联 KB 的形式落库（`document_id`/`document_revision_id`/`index_generation_id` 三者皆 nil）；非 source_sync 类型三者皆 nil 仍被拒绝。领域层 `model.NewJob` 同步放宽：当且仅当 `Type=="source_sync"` 时允许三者全 nil。
+
 ## 10. 迁移与测试
 
 - 迁移位于 `internal/infrastructure/migrate/migrations/`，版本严格递增，每个 up 有对应 down。

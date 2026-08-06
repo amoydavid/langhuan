@@ -365,6 +365,20 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 完成证据：v0.6.0 已交付。全局 `server.base_url` 派生 Web/REST/MCP/邀请地址（生产 HTTPS）；Workspace API Key 采用 `lhk_`+32-byte 随机的 SHA-256 鉴权 + HKDF/AES-256-GCM 可恢复密文，owner/admin 可重复 reveal；六个 typed MCP 工具（`knowledge_base_create`、`document_ingest`、`document_status`、`knowledge_search`、`document_delete`、`chunk_get`）由 mcp-go v0.57.0 stateless Streamable HTTP 提供，`/mcp` 只接受 Bearer；多知识库 `knowledge_search` 按 Embedding 模型五元组快照分组、每组一次 query embedding、统一 RRF 确定性合并；Web Console 提供列表/整页创建/详情 reveal/吊销。验收命令：`go test ./...`、`go test -tags=integration -p 1 ./internal/infrastructure/db ./internal/infrastructure/migrate ./cmd/langhuan`（含 v060 真实 E2E：admin 创建 key→Bearer REST 多库检索→reveal→吊销→401，以及 `/mcp` 有效 Bearer `tools/list` scope 过滤）、`pnpm --dir web check`、`pnpm --dir web test`（250 通过）、`pnpm --dir web build` 全部 exit 0。接入文档见 `docs/API_ACCESS.md`。
 
+### 飞书知识库内容源同步（已交付）
+
+在 v0.6.0 程序化消费闭环之上，新增飞书云文档/知识库作为内容源，复用现有 parse/chunk/index 管线，不引入新的 DocumentKind。飞书文档以 `file` kind 落库（当 Markdown 处理），来源语义由 `documents.source_type="feishu"` + `external_id`（飞书节点稳定 token）承载。
+
+- 多飞书应用：`workspace_source_connections` 支持每个 Workspace 注册多个飞书内部应用；`app_id` 存 `config jsonb`，`app_secret` 经 `credential_cipher` AES-256-GCM 加密落库（AAD 前缀 `source-connection:`，与 model-provider 物理隔离），不写入 YAML；List/Get 不回显 secret。
+- 飞书 SourceConnector 适配器（`internal/adapters/source/feishu`）基于飞书官方 SDK `github.com/larksuite/oapi-sdk-go/v3`，实现 `ListTree`（递归 wiki/drive 节点树）与 `Fetch`（docx raw_content → markdown），通过薄接口 `feishuAPI` 抽象 SDK 调用使编排逻辑可单测。
+- 全量 + 增量同步：`SourceSyncService` 列举整棵目录树 → 按 `source_config.sync_cursor`（obj_edit_time）增量跳过未变更 docx → Fetch → rawStore.Put → 单事务建 Document(file, external_id) + Revision(reason=crawl, markdown) + FileTreeNode + Job(document_parse_start) → 入队复用现有解析管线；删除检测软删飞书侧已删除的文档。
+- Meta Scheduler 限流：进程内单 goroutine（`SourceSyncScheduler`）按 `source_connection_id` 限流，`max_concurrent_per_connection`（`config.yaml`，默认 2）通过 `idx_jobs_conn_active` 部分索引查询；cron 推进 `next_sync_at`；worker 完成后 `TryDispatchConnection` 续跑。
+- HTTP CRUD：`POST/GET/PATCH/DELETE /api/v1/workspaces/:slug/source-connections`（Session admin/owner，API Key 不可达）、`POST /api/v1/workspaces/:slug/knowledge-bases/:id/sync`（返回 `202 {job_id}`）；KB 创建支持 `source_type`/`source_config`/`source_connection_id`。
+- 数据库：迁移 000017 放宽 `jobs_target_check` 第三分支（source_sync 仅 KB），000018 新增 `workspace_source_connections` 表与 `knowledge_bases`/`documents`/`jobs` 来源字段及部分索引。
+- Web Console：集成页（飞书应用列表/表单）与 KB 创建来源切换、详情同步状态、手动同步。
+
+验收：飞书协议正确性由 Task 4 的 `feishuAPI` fake 单测覆盖（薄接口设计下协议逻辑单测已充分）；worker 业务正确性由 Task 6 单测覆盖（fake store/connector）；持久化层（`CreateSourceSyncJob` / `CountActiveByConnection` / `CreateSyncedDocumentNodeRevisionAndJob` / `SoftDeleteDocument` / `UpdateSyncCursor`）由 `internal/infrastructure/db/source_sync_store_integration_test.go` 的 DB 集成测试覆盖；全链路 e2e 因官方 SDK mock 复杂度，依赖真实飞书凭证手动验收。文档见 `docs/ARCHITECTURE.md` 8.1、`docs/API_ACCESS.md` 8.2、`docs/DATABASE_GUIDELINES.md` 9.z。
+
 ### v0.7.0 - MinerU Cloud PDF 解析与资产归档（已完成）
 
 目标：在可视化和程序化消费闭环之上，补齐 PDF 这一最重的输入格式。
@@ -437,7 +451,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - PostgreSQL AGE 图查询。
 - GraphRAG。
 - 多向量数据库适配。
-- IM、飞书、Notion、语雀等数据源同步。
+- ~~IM、飞书、Notion、语雀等数据源同步。~~ 飞书知识库同步已交付（见上方「飞书知识库内容源同步」）；Notion、语雀等其它数据源仍不在首版范围。
 
 ## 未来方向
 
@@ -446,5 +460,5 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - ~~增加 rerank adapter。~~ 已于当前版本交付：`rerank_compatible` Provider、Generation 重排快照、单库/多库重排与结构化日志。
 - 增加更多 parser adapter。
 - 扩展 workspace 权限模型，例如资源级权限或更细粒度的 token scope。
-- 增加数据源同步框架。
+- ~~增加数据源同步框架。~~ 已部分交付：飞书知识库同步框架（`SourceConnector` port + 飞书适配器 + Meta Scheduler）已落地，支持接入新的内容源 provider；详见 ROADMAP「飞书知识库内容源同步」与 `docs/ARCHITECTURE.md` 8.1。
 - 把 FTS / 向量读写从 `RetrievalRepository` 拆成 `adapters/index/` 下各自的 port + adapter。触发条件：真正出现可替换的全文检索后端（如 Elasticsearch / Meilisearch）或多向量库适配需求时再拆；否则保持当前合并实现，避免提前抽象。
