@@ -214,6 +214,33 @@ func (r *KnowledgeBaseRepository) UpdateNextSyncAt(ctx context.Context, workspac
 	})
 }
 
+// UpdateSyncCursor 写回增量同步游标 source_config.sync_cursor（RFC3339）。
+// 参照 UpdateNextSyncAt 的 jsonb_set 模式。cursor 为零值时清除字段。
+func (r *KnowledgeBaseRepository) UpdateSyncCursor(ctx context.Context, workspaceID, kbID uuid.UUID, cursor time.Time) error {
+	return NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+		var (
+			execSQL string
+			args    []any
+		)
+		now := time.Now().UTC()
+		if cursor.IsZero() {
+			execSQL = "UPDATE knowledge_bases SET source_config = source_config - 'sync_cursor', updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			args = []any{now, workspaceID, kbID}
+		} else {
+			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_cursor}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			args = []any{cursor.UTC(), now, workspaceID, kbID}
+		}
+		result := tx.WithContext(ctx).Exec(execSQL, args...)
+		if result.Error != nil {
+			return translateDBError(result.Error, "更新知识库 sync_cursor 失败")
+		}
+		if result.RowsAffected != 1 {
+			return domainerrors.ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *gorm.DB, workspaceID, modelID uuid.UUID, modelType value.ModelType) (*ModelRow, *ModelProviderRow, error) {
 	var item ModelRow
 	err := tx.WithContext(ctx).Table("models").Select("models.*").

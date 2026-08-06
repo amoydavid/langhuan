@@ -71,6 +71,27 @@ func (s *SourceSyncDBStore) CountActiveByConnection(ctx context.Context, workspa
 	return int(count), nil
 }
 
+// UpdateSyncCursor 写回增量同步游标 source_config.sync_cursor（RFC3339）。
+// 参照 UpdateNextSyncAt 的 jsonb_set 模式。
+func (s *SourceSyncDBStore) UpdateSyncCursor(ctx context.Context, workspaceID, kbID uuid.UUID, cursor time.Time) error {
+	if workspaceID == uuid.Nil || kbID == uuid.Nil || cursor.IsZero() {
+		return fmt.Errorf("%w: UpdateSyncCursor workspace/kb/cursor 不能为空", domainerrors.ErrValidation)
+	}
+	return NewWorkspaceTxRunner(s.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		execSQL := "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_cursor}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		args := []any{cursor.UTC(), now, workspaceID, kbID}
+		result := tx.WithContext(ctx).Exec(execSQL, args...)
+		if result.Error != nil {
+			return translateDBError(result.Error, "更新知识库 sync_cursor 失败")
+		}
+		if result.RowsAffected != 1 {
+			return domainerrors.ErrNotFound
+		}
+		return nil
+	})
+}
+
 // FailCreatedSync 把刚创建的同步 Document/Revision/Job 标记为失败（入队失败兜底）。
 func (s *SourceSyncDBStore) FailCreatedSync(
 	ctx context.Context,
@@ -199,6 +220,39 @@ func (tx *sourceSyncTx) CreateSyncedDocumentNodeRevisionAndJob(
 	}
 	if err := tx.db.WithContext(ctx).Create(jobV2ToRow(job)).Error; err != nil {
 		return translateDBError(err, "创建同步 parse Job 失败")
+	}
+	return nil
+}
+
+// ListDocumentsByKB 返回该 KB 下所有 external_id 非空的文档（含已软删的），
+// 供增量同步的删除检测计算存活集合差集。
+func (tx *sourceSyncTx) ListDocumentsByKB(ctx context.Context, kbID uuid.UUID) ([]*model.Document, error) {
+	var rows []DocumentRow
+	if err := tx.db.WithContext(ctx).
+		Where("workspace_id = ? AND knowledge_base_id = ? AND external_id IS NOT NULL AND external_id <> ''",
+			tx.workspaceID, kbID).
+		Find(&rows).Error; err != nil {
+		return nil, translateDBError(err, "读取 KB external 文档失败")
+	}
+	docs := make([]*model.Document, 0, len(rows))
+	for i := range rows {
+		docs = append(docs, documentV2FromRow(&rows[i]))
+	}
+	return docs, nil
+}
+
+// SoftDeleteDocument 软删一个文档（仅当 deleted_at IS NULL 时生效）。
+func (tx *sourceSyncTx) SoftDeleteDocument(ctx context.Context, documentID uuid.UUID) error {
+	now := time.Now().UTC()
+	result := tx.db.WithContext(ctx).Model(&DocumentRow{}).
+		Where("workspace_id = ? AND id = ? AND deleted_at IS NULL", tx.workspaceID, documentID).
+		Updates(map[string]any{
+			"status":     string(value.DocumentStatusDeleted),
+			"deleted_at": now,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return translateDBError(result.Error, "软删同步文档失败")
 	}
 	return nil
 }

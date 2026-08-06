@@ -567,7 +567,7 @@ git commit -m "feat(source): 按应用限流的定时同步与 KB 创建入队"
 
 > 本任务建立在 Task 5 全量逻辑之上，复用 ListTree 结果做差集。
 
-- [ ] **Step 1: 写增量与删除检测失败测试。**
+- [x] **Step 1: 写增量与删除检测失败测试。**
 
 ```go
 func TestIncrementalSyncSkipsUnchangedAndDeletesMissing(t *testing.T) {
@@ -585,23 +585,23 @@ func TestIncrementalSyncSkipsUnchangedAndDeletesMissing(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/application/service -run 'IncrementalSync|DeletesMissing' -count=1`
 
 Expected: FAIL，增量/软删未实现。
 
-- [ ] **Step 3: 实现增量 + 软删。**
+- [x] **Step 3: 实现增量 + 软删。**
 
 读 cursor → 跳过未变更 → 回写 cursor；ListTree 结果 set 与 DB external_id set 做差集，缺失的软删。
 
-- [ ] **Step 4: 运行测试。**
+- [x] **Step 4: 运行测试。**
 
 Run: `go test ./internal/application/service -run 'Sync|Incremental' -count=1`
 
 Expected: PASS；未变更跳过、删除软删、cursor 推进。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/application/service internal/infrastructure/db

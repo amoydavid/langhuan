@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -154,7 +155,9 @@ type sourceSyncTaskPayload struct {
 // feishuObjTypeDocx 是飞书侧可同步文档的类型标识。
 const feishuObjTypeDocx = "docx"
 
-// SyncKnowledgeBase 对单个飞书知识库执行一次全量同步。
+// SyncKnowledgeBase 对单个飞书知识库执行一次（增量）同步：
+// 列举外部目录树 → 按 sync_cursor 跳过未变更 docx → 拉取变更 docx → 写入 Document/Revision/Job → 入队；
+// 同步后做删除检测（软删飞书侧已删除的文档）并回写新的 sync_cursor。
 func (s *SourceSyncService) SyncKnowledgeBase(ctx context.Context, workspaceID, kbID uuid.UUID) error {
 	if workspaceID == uuid.Nil || kbID == uuid.Nil {
 		return fmt.Errorf("%w: workspace_id/knowledge_base_id 不能为空", domainerrors.ErrValidation)
@@ -177,6 +180,9 @@ func (s *SourceSyncService) SyncKnowledgeBase(ctx context.Context, workspaceID, 
 		return fmt.Errorf("%w: 知识库缺少 active IndexGeneration", domainerrors.ErrValidation)
 	}
 	generationID := *kb.ActiveIndexGenerationID
+
+	// 读 sync_cursor：KB.SourceConfig["sync_cursor"]（RFC3339 字符串）；无则零值=全量。
+	cursor := readSyncCursor(kb.SourceConfig)
 
 	selected, err := s.selector.Select(ctx, workspaceID, *kb.SourceConnectionID)
 	if err != nil {
@@ -205,12 +211,29 @@ func (s *SourceSyncService) SyncKnowledgeBase(ctx context.Context, workspaceID, 
 		return fmt.Errorf("列举飞书目录树失败: %w", err)
 	}
 
+	// 同步开始前，读出该 KB 下所有 external_id 非空的文档（含已软删的），用于删除检测。
+	existingDocs, err := s.listDocumentsForDeleteDetection(ctx, workspaceID, kbID)
+	if err != nil {
+		return fmt.Errorf("读取 KB 已有文档失败: %w", err)
+	}
+
 	// 飞书 token → 本地 FileTreeNode ID。根节点的父 = KB.FileTreeRootID。
 	tokenToNodeID := make(map[string]uuid.UUID)
+	// aliveSet 记录本次同步在飞书侧仍存活的 docx external_id，用于删除检测。
+	aliveSet := make(map[string]bool)
+	state := syncNodeState{cursor: cursor}
 	synced := 0
 	failed := 0
 	for _, external := range nodes {
-		if err := s.syncNode(ctx, kb, conn, generationID, external, tokenToNodeID); err != nil {
+		// 跟踪所有节点的 EditTime 最大值（含 folder 和被跳过的 docx）。
+		if !external.EditTime.IsZero() && external.EditTime.After(state.maxEditTime) {
+			state.maxEditTime = external.EditTime
+		}
+		// docx 节点无论是否跳过 Fetch，都视为存活（用于删除检测）。
+		if external.HasDocument && external.ObjType == feishuObjTypeDocx {
+			aliveSet[external.Token] = true
+		}
+		if err := s.syncNode(ctx, kb, conn, generationID, external, tokenToNodeID, &state); err != nil {
 			failed++
 			// 单个节点失败不中断整棵树；只记录错误（不含正文/凭证）。
 			s.logger.Error("同步飞书节点失败",
@@ -222,18 +245,117 @@ func (s *SourceSyncService) SyncKnowledgeBase(ctx context.Context, workspaceID, 
 			)
 			continue
 		}
-		if external.HasDocument && external.ObjType == feishuObjTypeDocx {
+		if external.HasDocument && external.ObjType == feishuObjTypeDocx && !state.lastSkipped {
 			synced++
 		}
 	}
+
+	// 删除检测：DB 里存在、飞书树里不存在、且当前未软删的文档，软删。
+	deleted, deleteErr := s.softDeleteMissingDocuments(ctx, workspaceID, existingDocs, aliveSet)
+	if deleteErr != nil {
+		// 删除检测失败不阻塞已成功的同步，只记录错误（不含正文/凭证）。
+		s.logger.Error("飞书知识库删除检测失败",
+			"workspace_id", workspaceID.String(),
+			"knowledge_base_id", kbID.String(),
+			"error", deleteErr.Error(),
+		)
+	}
+
+	// 回写 sync_cursor（仅在 maxEditTime 非零值时）。
+	if !state.maxEditTime.IsZero() {
+		if cursorErr := s.kbRepo.UpdateSyncCursor(ctx, workspaceID, kbID, state.maxEditTime); cursorErr != nil {
+			s.logger.Error("回写飞书同步游标失败",
+				"workspace_id", workspaceID.String(),
+				"knowledge_base_id", kbID.String(),
+				"error", cursorErr.Error(),
+			)
+		}
+	}
+
 	s.logger.Info("飞书知识库同步完成",
 		"workspace_id", workspaceID.String(),
 		"knowledge_base_id", kbID.String(),
 		"synced_documents", synced,
 		"failed_nodes", failed,
+		"deleted_documents", deleted,
 		"total_nodes", len(nodes),
 	)
 	return nil
+}
+
+// syncNodeState 是节点循环的可变状态：cursor 用于增量跳过判断，
+// maxEditTime 跟踪所有处理节点的 EditTime 最大值，lastSkipped 标记上一个节点是否被增量跳过。
+type syncNodeState struct {
+	cursor       time.Time
+	maxEditTime  time.Time
+	lastSkipped  bool
+	skippedCount int
+}
+
+// readSyncCursor 从 KB.SourceConfig["sync_cursor"]（RFC3339 字符串）解析出增量游标。
+// 无字段或解析失败时返回零值（全量同步）。
+func readSyncCursor(sourceConfig map[string]any) time.Time {
+	if sourceConfig == nil {
+		return time.Time{}
+	}
+	raw, _ := sourceConfig["sync_cursor"].(string)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// listDocumentsForDeleteDetection 读出该 KB 下所有 external_id 非空的文档（含已软删的）。
+func (s *SourceSyncService) listDocumentsForDeleteDetection(ctx context.Context, workspaceID, kbID uuid.UUID) ([]*model.Document, error) {
+	var docs []*model.Document
+	if err := s.store.WithinWorkspace(ctx, workspaceID, func(txCtx context.Context, tx SourceSyncTx) error {
+		var err error
+		docs, err = tx.ListDocumentsByKB(txCtx, kbID)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return docs, nil
+}
+
+// softDeleteMissingDocuments 把 DB 里存在、飞书树里不存在（不在 aliveSet）、且当前未软删的文档软删。
+// 返回实际软删的文档数。
+func (s *SourceSyncService) softDeleteMissingDocuments(
+	ctx context.Context,
+	workspaceID uuid.UUID,
+	existingDocs []*model.Document,
+	aliveSet map[string]bool,
+) (int, error) {
+	deleted := 0
+	for _, doc := range existingDocs {
+		if doc.ExternalID == "" {
+			continue
+		}
+		if aliveSet[doc.ExternalID] {
+			continue
+		}
+		if doc.DeletedAt != nil {
+			continue
+		}
+		docID := doc.ID
+		if err := s.store.WithinWorkspace(ctx, workspaceID, func(txCtx context.Context, tx SourceSyncTx) error {
+			return tx.SoftDeleteDocument(txCtx, docID)
+		}); err != nil {
+			return deleted, fmt.Errorf("软删文档 %s 失败: %w", docID, err)
+		}
+		deleted++
+		s.logger.Info("软删飞书侧已删除的文档",
+			"workspace_id", workspaceID.String(),
+			"document_id", docID.String(),
+			"external_id", doc.ExternalID,
+		)
+	}
+	return deleted, nil
 }
 
 // resolveSyncRoot 把 KB.SourceConfig 解析为同步根。
@@ -265,6 +387,7 @@ func (s *SourceSyncService) resolveSyncRoot(sourceConfig map[string]any) (model.
 }
 
 // syncNode 处理单个外部节点：folder 落库；docx 拉取+落库+入队；其它文档类型跳过。
+// state 跟踪增量游标与最大 EditTime；state.lastSkipped 在调用后被设置为该节点是否被增量跳过。
 func (s *SourceSyncService) syncNode(
 	ctx context.Context,
 	kb *model.KnowledgeBase,
@@ -272,7 +395,9 @@ func (s *SourceSyncService) syncNode(
 	generationID uuid.UUID,
 	external model.ExternalNode,
 	tokenToNodeID map[string]uuid.UUID,
+	state *syncNodeState,
 ) error {
+	state.lastSkipped = false
 	parentNodeID, ok := resolveParentNodeID(kb, external, tokenToNodeID)
 	if !ok {
 		return fmt.Errorf("父节点尚未建立: parent_token=%q", external.ParentToken)
@@ -300,6 +425,17 @@ func (s *SourceSyncService) syncNode(
 		return nil
 
 	case external.ObjType == feishuObjTypeDocx:
+		// 增量跳过：EditTime 非零值且不超过 cursor 时跳过 Fetch（仍视为存活，已在循环外收集）。
+		if !external.EditTime.IsZero() && !state.cursor.IsZero() && !external.EditTime.After(state.cursor) {
+			state.lastSkipped = true
+			state.skippedCount++
+			s.logger.Info("跳过未变更节点",
+				"workspace_id", kb.WorkspaceID.String(),
+				"knowledge_base_id", kb.ID.String(),
+				"external_token", external.Token,
+			)
+			return nil
+		}
 		return s.syncDocxNode(ctx, kb, conn, generationID, external, parentNodeID, tokenToNodeID)
 
 	default:

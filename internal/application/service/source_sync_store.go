@@ -26,6 +26,8 @@ type KnowledgeBaseSyncRepository interface {
 	ListDueFeishuKBs(ctx context.Context, now time.Time, connectionID uuid.UUID) ([]DueKnowledgeBase, error)
 	// UpdateNextSyncAt 更新某个知识库 source_config.next_sync_at；nextSyncAt 为零值时清除字段。
 	UpdateNextSyncAt(ctx context.Context, workspaceID, kbID uuid.UUID, nextSyncAt time.Time) error
+	// UpdateSyncCursor 写回增量同步游标 source_config.sync_cursor（RFC3339）。
+	UpdateSyncCursor(ctx context.Context, workspaceID, kbID uuid.UUID, cursor time.Time) error
 }
 
 // SourceSyncTx 是来源同步在单个 Workspace 事务内的最小持久化契约。
@@ -43,6 +45,12 @@ type SourceSyncTx interface {
 		revision *model.DocumentRevision,
 		job *model.Job,
 	) error
+	// ListDocumentsByKB 返回该 KB 下所有 external_id 非空的文档（含已软删的），
+	// 供增量同步的删除检测计算存活集合差集。
+	ListDocumentsByKB(ctx context.Context, kbID uuid.UUID) ([]*model.Document, error)
+	// SoftDeleteDocument 软删一个文档（仅当 deleted_at IS NULL 时生效），
+	// 用于飞书侧已删除的文档在本地软删。
+	SoftDeleteDocument(ctx context.Context, documentID uuid.UUID) error
 }
 
 // SourceSyncStore 进入一个 Workspace 级别的来源同步事务。

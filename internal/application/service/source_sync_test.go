@@ -23,11 +23,12 @@ import (
 // --- fakes -------------------------------------------------------------
 
 type fakeSourceConnector struct {
-	tree     []model.ExternalNode
-	fetched  map[string]model.FetchedDocument
-	fetchFn  func(externalID string) (model.FetchedDocument, error)
-	provider string
-	listErr  error
+	tree          []model.ExternalNode
+	fetched       map[string]model.FetchedDocument
+	fetchFn       func(externalID string) (model.FetchedDocument, error)
+	provider      string
+	listErr       error
+	fetchedTokens []string // 记录所有 Fetch 调用的 externalID（顺序）
 }
 
 func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnection, _ model.SyncRoot) ([]model.ExternalNode, error) {
@@ -38,6 +39,7 @@ func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnecti
 }
 
 func (c *fakeSourceConnector) Fetch(_ context.Context, _ model.SourceConnection, externalID string) (model.FetchedDocument, error) {
+	c.fetchedTokens = append(c.fetchedTokens, externalID)
 	if c.fetchFn != nil {
 		return c.fetchFn(externalID)
 	}
@@ -45,6 +47,14 @@ func (c *fakeSourceConnector) Fetch(_ context.Context, _ model.SourceConnection,
 		return doc, nil
 	}
 	return model.FetchedDocument{}, fmt.Errorf("fetch not stubbed for %s", externalID)
+}
+
+func (c *fakeSourceConnector) fetchedTokenCount() map[string]int {
+	counts := map[string]int{}
+	for _, token := range c.fetchedTokens {
+		counts[token]++
+	}
+	return counts
 }
 
 func (c *fakeSourceConnector) Provider() string {
@@ -75,6 +85,11 @@ type fakeSourceSyncStore struct {
 	failErr            error
 	activeCount        int
 	activeCountErr     error
+	// 增量同步 / 删除检测支持
+	existingDocuments []*model.Document // ListDocumentsByKB 返回的预置文档（含已软删的）
+	listDocsErr       error
+	softDeleted       []uuid.UUID // 记录被 SoftDeleteDocument 调用的 document id
+	softDeleteErr     error
 }
 
 func newFakeSourceSyncStore(kb *model.KnowledgeBase) *fakeSourceSyncStore {
@@ -138,6 +153,39 @@ func (s *fakeSourceSyncStore) CreateSyncedDocumentNodeRevisionAndJob(
 	s.createDocDoc, s.createDocNode, s.createDocRevision, s.createDocJob = document, node, revision, job
 	if document.ExternalID != "" {
 		s.docJobByExternal[document.ExternalID] = document.ID
+	}
+	return nil
+}
+
+// ListDocumentsByKB 返回预置的 existingDocuments（含已软删的）。
+func (s *fakeSourceSyncStore) ListDocumentsByKB(_ context.Context, _ uuid.UUID) ([]*model.Document, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listDocsErr != nil {
+		return nil, s.listDocsErr
+	}
+	return append([]*model.Document(nil), s.existingDocuments...), nil
+}
+
+// SoftDeleteDocument 把文档标记为已软删（设置 DeletedAt），并记录调用。
+func (s *fakeSourceSyncStore) SoftDeleteDocument(_ context.Context, documentID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.softDeleteErr != nil {
+		return s.softDeleteErr
+	}
+	s.softDeleted = append(s.softDeleted, documentID)
+	if doc, ok := s.documents[documentID]; ok && doc.DeletedAt == nil {
+		now := time.Now().UTC()
+		doc.DeletedAt = &now
+		doc.Status = value.DocumentStatusDeleted
+	}
+	// 同时更新预置 existingDocuments 中的副本状态。
+	for _, doc := range s.existingDocuments {
+		if doc.ID == documentID && doc.DeletedAt == nil {
+			now := time.Now().UTC()
+			doc.DeletedAt = &now
+		}
 	}
 	return nil
 }
@@ -389,12 +437,20 @@ type fakeKBSyncRepo struct {
 	dueByConnection map[uuid.UUID][]DueKnowledgeBase
 	nextSyncAtCalls []nextSyncAtCall
 	nextSyncAtErr   error
+	syncCursorCalls []syncCursorCall
+	syncCursorErr   error
 }
 
 type nextSyncAtCall struct {
 	WorkspaceID uuid.UUID
 	KBID        uuid.UUID
 	NextSyncAt  time.Time
+}
+
+type syncCursorCall struct {
+	WorkspaceID uuid.UUID
+	KBID        uuid.UUID
+	Cursor      time.Time
 }
 
 func (r *fakeKBSyncRepo) Get(_ context.Context, workspaceID, id uuid.UUID) (*model.KnowledgeBase, error) {
@@ -429,6 +485,11 @@ func (r *fakeKBSyncRepo) ListDueFeishuKBs(_ context.Context, _ time.Time, connec
 func (r *fakeKBSyncRepo) UpdateNextSyncAt(_ context.Context, workspaceID, kbID uuid.UUID, nextSyncAt time.Time) error {
 	r.nextSyncAtCalls = append(r.nextSyncAtCalls, nextSyncAtCall{WorkspaceID: workspaceID, KBID: kbID, NextSyncAt: nextSyncAt})
 	return r.nextSyncAtErr
+}
+
+func (r *fakeKBSyncRepo) UpdateSyncCursor(_ context.Context, workspaceID, kbID uuid.UUID, cursor time.Time) error {
+	r.syncCursorCalls = append(r.syncCursorCalls, syncCursorCall{WorkspaceID: workspaceID, KBID: kbID, Cursor: cursor})
+	return r.syncCursorErr
 }
 
 // fakeSyncConnRepo 满足 SourceConnectionRepository，但来源同步路径只用 Get。
@@ -729,3 +790,238 @@ func TestEnqueueSyncRejectsNonFeishuKB(t *testing.T) {
 
 // 确保未使用的 sourceport 导入在仅依赖常量时仍被引用（避免编译期未使用）。
 var _ = sourceport.SyncRootWikiNode
+
+// --- 增量同步 / 删除检测 helpers ---
+
+// docxNodeWithEdit 构造一个带 EditTime 的 docx 节点。
+func docxNodeWithEdit(token, parent, title string, editTime time.Time) model.ExternalNode {
+	return model.ExternalNode{Token: token, ParentToken: parent, Title: title, ObjType: "docx", HasDocument: true, EditTime: editTime}
+}
+
+// setKBSyncCursor 把 KB.SourceConfig["sync_cursor"] 设置为给定时间（RFC3339）。
+func setKBSyncCursor(kb *model.KnowledgeBase, cursor time.Time) {
+	if kb.SourceConfig == nil {
+		kb.SourceConfig = map[string]any{}
+	}
+	kb.SourceConfig["sync_cursor"] = cursor.UTC().Format(time.RFC3339)
+}
+
+// makeExistingExternalDoc 构造一个已存在的 Document（带 external_id），用于预置 fake store。
+func makeExistingExternalDoc(workspaceID, kbID uuid.UUID, externalID, title string) *model.Document {
+	doc, err := model.NewDocumentIdentityWithExternal(
+		workspaceID, kbID, value.DocumentKindFile, title, model.SourceProviderFeishu, "", externalID, nil,
+	)
+	if err != nil {
+		panic(err)
+	}
+	return doc
+}
+
+// --- 增量同步 / 删除检测 tests ---
+
+// TestIncrementalSyncSkipsUnchangedNodes 验证 cursor 之后未变更的 docx 节点跳过 Fetch，
+// 而变更的节点（EditTime 晚于 cursor）仍被 Fetch。
+func TestIncrementalSyncSkipsUnchangedNodes(t *testing.T) {
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(2 * time.Hour) // docA 晚于 cursor
+	tree := []model.ExternalNode{
+		docxNodeWithEdit("docA", "", "文档A", t2), // t2 > cursor(t1) → Fetch
+		docxNodeWithEdit("docB", "", "文档B", t1), // t1 == cursor → 跳过
+	}
+	h := newSourceSyncHarness(t, tree)
+	setKBSyncCursor(h.kb, t1)
+	raw := &fakeSyncRawStore{}
+	q := &fakeSyncQueue{}
+	fetched := map[string]model.FetchedDocument{
+		"docA": {Markdown: []byte("# A"), Title: "文档A", ObjType: "docx"},
+		"docB": {Markdown: []byte("# B"), Title: "文档B", ObjType: "docx"},
+	}
+	connector := &fakeSourceConnector{tree: tree, fetched: fetched}
+	h.rewire(raw, q, connector)
+
+	if err := h.svc.SyncKnowledgeBase(context.Background(), h.workspaceID, h.kb.ID); err != nil {
+		t.Fatalf("SyncKnowledgeBase error = %v", err)
+	}
+
+	fetchCounts := connector.fetchedTokenCount()
+	if fetchCounts["docA"] != 1 {
+		t.Fatalf("docA 应被 Fetch 一次，实际 %d", fetchCounts["docA"])
+	}
+	if fetchCounts["docB"] != 0 {
+		t.Fatalf("docB 应被跳过（EditTime == cursor），实际 Fetch %d 次", fetchCounts["docB"])
+	}
+	if got, want := len(q.requests), 1; got != want {
+		t.Fatalf("enqueued parse jobs = %d, want %d (only docA)", got, want)
+	}
+	if got, want := h.store.createDocCalls, 1; got != want {
+		t.Fatalf("created documents = %d, want %d (only docA)", got, want)
+	}
+}
+
+// TestIncrementalSyncSoftDeletesMissingDocuments 验证飞书树中不存在的已有文档被软删。
+func TestIncrementalSyncSoftDeletesMissingDocuments(t *testing.T) {
+	tree := []model.ExternalNode{
+		docxNode("docA", "", "文档A"),
+	}
+	h := newSourceSyncHarness(t, tree)
+	raw := &fakeSyncRawStore{}
+	q := &fakeSyncQueue{}
+	fetched := map[string]model.FetchedDocument{
+		"docA": {Markdown: []byte("# A"), Title: "文档A", ObjType: "docx"},
+	}
+	connector := &fakeSourceConnector{tree: tree, fetched: fetched}
+	h.rewire(raw, q, connector)
+
+	// 预置一个 DB 里已存在但飞书树中已不存在的文档 docD。
+	docD := makeExistingExternalDoc(h.workspaceID, h.kb.ID, "docD", "已删除文档")
+	h.store.existingDocuments = []*model.Document{docD}
+
+	if err := h.svc.SyncKnowledgeBase(context.Background(), h.workspaceID, h.kb.ID); err != nil {
+		t.Fatalf("SyncKnowledgeBase error = %v", err)
+	}
+
+	if len(h.store.softDeleted) != 1 || h.store.softDeleted[0] != docD.ID {
+		t.Fatalf("expected docD %s to be soft-deleted; got %v", docD.ID, h.store.softDeleted)
+	}
+}
+
+// TestIncrementalSyncDoesNotResoftDeleteAlreadyDeleted 验证已软删的文档不会被重复软删。
+func TestIncrementalSyncDoesNotResoftDeleteAlreadyDeleted(t *testing.T) {
+	tree := []model.ExternalNode{
+		docxNode("docA", "", "文档A"),
+	}
+	h := newSourceSyncHarness(t, tree)
+	raw := &fakeSyncRawStore{}
+	q := &fakeSyncQueue{}
+	fetched := map[string]model.FetchedDocument{
+		"docA": {Markdown: []byte("# A"), Title: "文档A", ObjType: "docx"},
+	}
+	connector := &fakeSourceConnector{tree: tree, fetched: fetched}
+	h.rewire(raw, q, connector)
+
+	// 预置一个已软删的文档 docD（DeletedAt 非空）。
+	docD := makeExistingExternalDoc(h.workspaceID, h.kb.ID, "docD", "已删除文档")
+	deletedAt := time.Now().UTC()
+	docD.DeletedAt = &deletedAt
+	h.store.existingDocuments = []*model.Document{docD}
+
+	if err := h.svc.SyncKnowledgeBase(context.Background(), h.workspaceID, h.kb.ID); err != nil {
+		t.Fatalf("SyncKnowledgeBase error = %v", err)
+	}
+
+	if len(h.store.softDeleted) != 0 {
+		t.Fatalf("已软删的 docD 不应被重复软删；soft-deleted = %v", h.store.softDeleted)
+	}
+}
+
+// TestIncrementalSyncAdvancesCursorValue 验证同步成功后 UpdateSyncCursor 被调用，
+// 值为所有节点 EditTime 的最大值（含 folder）。
+func TestIncrementalSyncAdvancesCursorValue(t *testing.T) {
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(2 * time.Hour)
+	t3 := t2.Add(1 * time.Hour) // 最大
+	tree := []model.ExternalNode{
+		folderNodeWithEdit("folderA", "", "目录A", t3),
+		docxNodeWithEdit("docA", "folderA", "文档A", t2),
+		docxNodeWithEdit("docB", "folderA", "文档B", t1),
+	}
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	store.nodes[kb.FileTreeRootID] = &model.FileTreeNode{
+		ID: kb.FileTreeRootID, WorkspaceID: workspaceID, KnowledgeBaseID: kb.ID,
+		NodeType: value.FileTreeNodeRoot,
+	}
+	kbRepo := &fakeKBSyncRepo{kb: kb}
+	connector := &fakeSourceConnector{tree: tree, fetched: map[string]model.FetchedDocument{
+		"docA": {Markdown: []byte("# A"), Title: "文档A", ObjType: "docx"},
+		"docB": {Markdown: []byte("# B"), Title: "文档B", ObjType: "docx"},
+	}}
+	selector := NewSourceConnectionSelector(&fakeSyncConnRepo{conn: buildSelectedConn(workspaceID, *kb.SourceConnectionID)}, passthroughCipher{})
+	svc := NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: kbRepo,
+		Selector:                selector,
+		Connector:               connector,
+		RawStore:                &fakeSyncRawStore{},
+		Store:                   store,
+		Queue:                   &fakeSyncQueue{},
+		Logger:                  &recordingLogger{},
+	})
+
+	if err := svc.SyncKnowledgeBase(context.Background(), workspaceID, kb.ID); err != nil {
+		t.Fatalf("SyncKnowledgeBase error = %v", err)
+	}
+
+	if len(kbRepo.syncCursorCalls) != 1 {
+		t.Fatalf("expected 1 UpdateSyncCursor call, got %d", len(kbRepo.syncCursorCalls))
+	}
+	got := kbRepo.syncCursorCalls[0].Cursor
+	want := t3.UTC()
+	if !got.Equal(want) {
+		t.Fatalf("sync_cursor = %v, want %v (maxEditTime)", got, want)
+	}
+}
+
+// folderNodeWithEdit 构造一个带 EditTime 的 folder 节点。
+func folderNodeWithEdit(token, parent, title string, editTime time.Time) model.ExternalNode {
+	return model.ExternalNode{Token: token, ParentToken: parent, Title: title, ObjType: "folder", HasDocument: false, EditTime: editTime}
+}
+
+// TestFirstSyncIsFullWhenNoCursor 验证无 cursor 时所有节点都被 Fetch（全量同步）。
+func TestFirstSyncIsFullWhenNoCursor(t *testing.T) {
+	t1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(2 * time.Hour)
+	tree := []model.ExternalNode{
+		docxNodeWithEdit("docA", "", "文档A", t2),
+		docxNodeWithEdit("docB", "", "文档B", t1),
+	}
+	h := newSourceSyncHarness(t, tree)
+	// 不设置 sync_cursor（KB.SourceConfig 无 sync_cursor 字段）。
+	raw := &fakeSyncRawStore{}
+	q := &fakeSyncQueue{}
+	fetched := map[string]model.FetchedDocument{
+		"docA": {Markdown: []byte("# A"), Title: "文档A", ObjType: "docx"},
+		"docB": {Markdown: []byte("# B"), Title: "文档B", ObjType: "docx"},
+	}
+	connector := &fakeSourceConnector{tree: tree, fetched: fetched}
+	h.rewire(raw, q, connector)
+
+	if err := h.svc.SyncKnowledgeBase(context.Background(), h.workspaceID, h.kb.ID); err != nil {
+		t.Fatalf("SyncKnowledgeBase error = %v", err)
+	}
+
+	fetchCounts := connector.fetchedTokenCount()
+	if fetchCounts["docA"] != 1 || fetchCounts["docB"] != 1 {
+		t.Fatalf("无 cursor 时应全量 Fetch docA 和 docB；got docA=%d docB=%d", fetchCounts["docA"], fetchCounts["docB"])
+	}
+	if got, want := h.store.createDocCalls, 2; got != want {
+		t.Fatalf("created documents = %d, want %d", got, want)
+	}
+}
+
+// TestIncrementalSyncFetchesZeroEditTimeNode 验证 EditTime 零值的节点（如 drive 文件）即使有 cursor 也总是 Fetch。
+func TestIncrementalSyncFetchesZeroEditTimeNode(t *testing.T) {
+	cursor := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tree := []model.ExternalNode{
+		// EditTime 零值（未设置）→ 无法判断变更 → 总是 Fetch。
+		docxNode("docZero", "", "零值文档"),
+	}
+	h := newSourceSyncHarness(t, tree)
+	setKBSyncCursor(h.kb, cursor)
+	raw := &fakeSyncRawStore{}
+	q := &fakeSyncQueue{}
+	fetched := map[string]model.FetchedDocument{
+		"docZero": {Markdown: []byte("# Zero"), Title: "零值文档", ObjType: "docx"},
+	}
+	connector := &fakeSourceConnector{tree: tree, fetched: fetched}
+	h.rewire(raw, q, connector)
+
+	if err := h.svc.SyncKnowledgeBase(context.Background(), h.workspaceID, h.kb.ID); err != nil {
+		t.Fatalf("SyncKnowledgeBase error = %v", err)
+	}
+
+	fetchCounts := connector.fetchedTokenCount()
+	if fetchCounts["docZero"] != 1 {
+		t.Fatalf("EditTime 零值的节点应总是 Fetch；got %d", fetchCounts["docZero"])
+	}
+}
