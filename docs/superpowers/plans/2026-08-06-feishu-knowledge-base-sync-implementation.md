@@ -107,7 +107,7 @@ export const sourceConnectionSchema = z.object({
 
 > 这是所有后续同步任务的前置关卡。已确认现有 `jobs_target_check`（`000005...up.sql:478-481`）严格二选一，`NewJob`（`job.go:46-52`）两 nil 直接报错。不先打通这两关，source_sync job 无法落库。
 
-- [ ] **Step 1: 写 NewJob 放宽的失败测试。**
+- [x] **Step 1: 写 NewJob 放宽的失败测试。**
 
 ```go
 func TestNewJobAllowsSourceSyncWithOnlyKnowledgeBase(t *testing.T) {
@@ -128,23 +128,23 @@ func TestNewJobStillRejectsUnknownTypeWithAllNilTargets(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行聚焦测试并确认 RED。**
+- [x] **Step 2: 运行聚焦测试并确认 RED。**
 
 Run: `go test ./internal/domain/model -run 'NewJobAllowsSourceSync|RejectsUnknownType' -count=1`
 
 Expected: FAIL，`NewJob` 仍对全 nil 报错。
 
-- [ ] **Step 3: 放宽 NewJob + 写迁移。**
+- [x] **Step 3: 放宽 NewJob + 写迁移。**
 
-`NewJob`：仅当 `Type=="source_sync"` 时允许三者全 nil。迁移 `000016` 第一批改动：`ALTER TABLE jobs DROP CONSTRAINT jobs_target_check`，重建带第三分支的 CHECK；并补 `jobs_status_check` 到 7 状态（queued/succeeded/cancelled）以防后续踩雷。
+`NewJob`：仅当 `Type=="source_sync"` 时允许三者全 nil。迁移 `000017`：`ALTER TABLE jobs DROP CONSTRAINT jobs_target_check`，重建带第三分支的 CHECK。
 
-- [ ] **Step 4: 运行领域测试 + 集成迁移测试。**
+- [x] **Step 4: 运行领域测试 + 集成迁移测试。**
 
-Run: `go test ./internal/domain/model -run NewJob -count=1 && make test-image && go test -tags=integration -p 1 ./internal/infrastructure/migrate -count=1`
+Run: `go test ./internal/domain/model -run NewJob -count=1 && go test -tags=integration -p 1 ./internal/infrastructure/migrate -run V017 -count=1`
 
 Expected: PASS；空库 up→down 全成功，source_sync job 可落库。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/domain/model internal/infrastructure/migrate

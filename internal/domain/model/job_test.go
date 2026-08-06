@@ -35,6 +35,33 @@ func TestNewJobValidatesInput(t *testing.T) {
 	}
 }
 
+func TestNewJobAllowsSourceSyncWithOnlyKnowledgeBase(t *testing.T) {
+	job, err := NewJob(NewJobInput{
+		WorkspaceID:     uuid.New(),
+		KnowledgeBaseID: uuid.New(),
+		Type:            "source_sync",
+		Status:          value.JobStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("expected nil err for source_sync with only knowledge_base_id, got %v", err)
+	}
+	if job.Type != "source_sync" {
+		t.Fatalf("type = %q, want source_sync", job.Type)
+	}
+}
+
+func TestNewJobStillRejectsNonSourceSyncWithAllNilTargets(t *testing.T) {
+	_, err := NewJob(NewJobInput{
+		WorkspaceID:     uuid.New(),
+		KnowledgeBaseID: uuid.New(),
+		Type:            "document_parse_start",
+		Status:          value.JobStatusPending,
+	})
+	if !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("expected ErrValidation for non-source_sync with all-nil targets, got %v", err)
+	}
+}
+
 func TestNewJobDefaultsAttemptsAndPayload(t *testing.T) {
 	job, err := NewJob(NewJobInput{
 		DocumentID: uuid.New(),
