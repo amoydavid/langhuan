@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,7 @@ func TestJinshuManagementAPIContractE2E(t *testing.T) {
 		"expiration": map[string]any{"type": "never"},
 	}, http.StatusCreated, &readOnly)
 	bearerREST(t, env, readOnly.APIKey, http.MethodPatch, path+"/knowledge-bases/"+kbID.String(), map[string]any{"description": "nope"}, http.StatusForbidden, nil)
+	bearerREST(t, env, readOnly.APIKey, http.MethodGet, path+"/knowledge-bases/"+kbID.String()+"/documents", nil, http.StatusForbidden, nil)
 
 	var textResult service.IngestDocumentResult
 	bearerREST(t, env, key.APIKey, http.MethodPost, path+"/knowledge-bases/"+kbID.String()+"/documents/text", map[string]any{
@@ -73,12 +75,19 @@ func TestJinshuManagementAPIContractE2E(t *testing.T) {
 	if textResult.Document == nil || textResult.Document.ID == uuid.Nil || textResult.Job == nil || textResult.Job.ID == uuid.Nil {
 		t.Fatalf("text ingest result = %#v", textResult)
 	}
+	bearerREST(t, env, key.APIKey, http.MethodPost, path+"/knowledge-bases/"+kbID.String()+"/documents/text", map[string]any{
+		"title": "空内容", "content": "   ", "content_type": "markdown",
+	}, http.StatusBadRequest, nil)
+	bearerREST(t, env, key.APIKey, http.MethodPost, path+"/knowledge-bases/"+kbID.String()+"/documents/text", map[string]any{
+		"title": "超限", "content": strings.Repeat("x", 8<<20+1), "content_type": "markdown",
+	}, http.StatusBadRequest, nil)
 	env.waitReady(textResult.Document.ID)
 	var files []*dto.Document
 	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/knowledge-bases/"+kbID.String()+"/documents?kind=file", nil, http.StatusOK, &files)
 	if len(files) == 0 || files[0].Kind != value.DocumentKindFile {
 		t.Fatalf("file kind list = %#v", files)
 	}
+	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/knowledge-bases/"+kbID.String()+"/documents?kind=invalid", nil, http.StatusBadRequest, nil)
 	var chunks dto.DocumentChunkPage
 	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/knowledge-bases/"+kbID.String()+"/documents/"+textResult.Document.ID.String()+"/chunks?limit=50", nil, http.StatusOK, &chunks)
 	if len(chunks.Items) == 0 {
@@ -95,6 +104,16 @@ func TestJinshuManagementAPIContractE2E(t *testing.T) {
 	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/knowledge-bases/"+kbID.String()+"/file-tree", nil, http.StatusOK, &tree)
 	if tree.Root == nil {
 		t.Fatal("file tree root is nil")
+	}
+	fileNode := findTreeDocument(tree.Root, textResult.Document.ID)
+	if fileNode == nil {
+		t.Fatalf("file tree does not contain document %s", textResult.Document.ID)
+	}
+	bearerREST(t, env, key.APIKey, http.MethodPatch, path+"/knowledge-bases/"+kbID.String()+"/file-tree/nodes/"+fileNode.ID.String(), map[string]any{"name": "在线排障-重命名"}, http.StatusNoContent, nil)
+	var renamed dto.Document
+	env.jsonRequest(http.MethodGet, "/api/v1/workspaces/"+env.workspace.Slug+"/documents/"+textResult.Document.ID.String(), nil, http.StatusOK, &renamed)
+	if renamed.Title != "在线排障-重命名" {
+		t.Fatalf("renamed document title = %q", renamed.Title)
 	}
 	var folder dto.FileTreeNode
 	bearerREST(t, env, key.APIKey, http.MethodPost, path+"/knowledge-bases/"+kbID.String()+"/file-tree/folders", map[string]any{"parent_id": tree.Root.ID, "name": "程序化目录"}, http.StatusCreated, &folder)
@@ -120,6 +139,9 @@ func TestJinshuManagementAPIContractE2E(t *testing.T) {
 		t.Fatalf("FAQ kind list = %#v", faqs)
 	}
 	bearerREST(t, env, key.APIKey, http.MethodPut, path+"/knowledge-bases/"+kbID.String()+"/documents/"+faq.Document.ID.String()+"/faq", map[string]any{
+		"questions": []string{"缺少基准版本"}, "answer": "无效",
+	}, http.StatusBadRequest, nil)
+	bearerREST(t, env, key.APIKey, http.MethodPut, path+"/knowledge-bases/"+kbID.String()+"/documents/"+faq.Document.ID.String()+"/faq", map[string]any{
 		"base_revision_id": faq.Revision.ID, "questions": []string{"退款怎么处理？"}, "answer": "请提交申请。",
 	}, http.StatusAccepted, nil)
 	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/knowledge-bases/"+unboundKB.ID.String()+"/documents/"+faq.Document.ID.String()+"/faq", nil, http.StatusNotFound, nil)
@@ -135,6 +157,13 @@ func TestJinshuManagementAPIContractE2E(t *testing.T) {
 		}
 	}
 	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/models?type=rerank&status=active&scope=platform", nil, http.StatusBadRequest, nil)
+	for _, query := range []string{
+		"type=embedding&status=disabled&scope=platform",
+		"type=embedding&status=active&scope=workspace",
+		"type=all&status=active&scope=platform",
+	} {
+		bearerREST(t, env, key.APIKey, http.MethodGet, path+"/models?"+query, nil, http.StatusBadRequest, nil)
+	}
 
 	// An invalid Bearer never falls back to the valid Session cookie installed in
 	// env.client's jar.
@@ -151,6 +180,21 @@ func TestJinshuManagementAPIContractE2E(t *testing.T) {
 
 	env.jsonRequest(http.MethodDelete, path+"/api-keys/"+key.Item.ID.String(), nil, http.StatusNoContent, nil)
 	bearerREST(t, env, key.APIKey, http.MethodGet, path+"/knowledge-bases", nil, http.StatusUnauthorized, nil)
+}
+
+func findTreeDocument(node *dto.FileTreeNode, documentID uuid.UUID) *dto.FileTreeNode {
+	if node == nil {
+		return nil
+	}
+	if node.DocumentID != nil && *node.DocumentID == documentID {
+		return node
+	}
+	for _, child := range node.Children {
+		if found := findTreeDocument(child, documentID); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func waitFAQ(t *testing.T, env *v030E2E, secret, path string, kbID, documentID uuid.UUID) dto.FAQDocument {

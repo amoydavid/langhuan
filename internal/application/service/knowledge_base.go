@@ -148,7 +148,10 @@ func (s *KnowledgeBaseService) List(ctx context.Context, access value.ResourceAc
 	}
 	var allowedIDs []uuid.UUID
 	if !access.Unrestricted {
-		allowedIDs = append([]uuid.UUID(nil), access.AllowedKnowledgeBaseIDs...)
+		// Keep a restricted empty binding as an explicit empty slice. A nil
+		// allowedIDs value means "no SQL restriction" to the repository and
+		// must never be produced for an API-key principal.
+		allowedIDs = append([]uuid.UUID{}, access.AllowedKnowledgeBaseIDs...)
 	}
 	items, err := s.binder.ListResolved(ctx, access.WorkspaceID, allowedIDs)
 	if err != nil {

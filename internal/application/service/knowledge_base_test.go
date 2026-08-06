@@ -279,6 +279,26 @@ func TestKnowledgeBaseServiceListAndGetRestrictAPIKeyToBoundKnowledgeBases(t *te
 	}
 }
 
+func TestKnowledgeBaseServiceListWithEmptyRestrictedBindingReturnsNoKnowledgeBases(t *testing.T) {
+	t.Parallel()
+	workspaceID := uuid.New()
+	repository := newFakeKnowledgeBaseRepository()
+	modelItem := fakeResolvedEmbeddingModel(t, value.ModelScopePlatform, nil, value.ModelStatusActive, value.ModelStatusActive)
+	repository.models[modelItem.Model.ID] = modelItem
+	kb := &model.KnowledgeBase{ID: uuid.New(), WorkspaceID: workspaceID, Name: "不可见", EmbeddingModelID: modelItem.Model.ID}
+	repository.items[kb.ID] = kb
+
+	service := NewKnowledgeBaseService(repository)
+	access := value.ResourceAccess{WorkspaceID: workspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{}}
+	items, err := service.List(context.Background(), access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("empty restricted list = %#v, want no knowledge bases", items)
+	}
+}
+
 func TestUpdateKnowledgeBaseBasicsRequiresAdminAndTypedFields(t *testing.T) {
 	t.Parallel()
 	workspaceID := uuid.New()

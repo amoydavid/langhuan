@@ -391,9 +391,9 @@ func (b *specBuilder) indexGenerationOps() []op {
 func (b *specBuilder) searchOps() []op {
 	return []op{
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/search", tag: "检索", summary: "单知识库检索",
-			reqBody: searchRequest{}, respBody: []*dto.SearchResult{}, status: http.StatusOK, sec: secBearerOrSession},
+			reqBody: searchRequest{}, respBody: []*dto.SearchResult{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeSearchRead}},
 		{method: http.MethodPost, path: wsBase + "/search", tag: "检索", summary: "多知识库检索",
-			reqBody: multiSearchRequest{}, respBody: multiSearchResponse{}, status: http.StatusOK, sec: secBearerOrSession},
+			reqBody: multiSearchRequest{}, respBody: multiSearchResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeSearchRead}},
 	}
 }
 

@@ -217,6 +217,41 @@ func TestJinshuRoutesExposeScopesAndLineageParameters(t *testing.T) {
 	}
 }
 
+func TestSearchRoutesExposeRequiredScope(t *testing.T) {
+	spec := buildSpec()
+	for _, path := range []string{
+		"/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/search",
+		"/api/v1/workspaces/{workspace_slug}/search",
+	} {
+		pi := spec.Paths.Find(path)
+		if pi == nil || pi.Post == nil {
+			t.Fatalf("检索路由未声明: %s", path)
+		}
+		got := pi.Post.Extensions["x-langhuan-required-scopes"]
+		scopes, ok := got.([]value.APIScope)
+		if !ok || len(scopes) != 1 || scopes[0] != value.ScopeSearchRead {
+			t.Fatalf("%s scopes = %#v, want search:read", path, got)
+		}
+	}
+}
+
+func TestEveryBearerOrSessionOperationDeclaresRequiredScope(t *testing.T) {
+	spec := buildSpec()
+	for pathName, pathItem := range spec.Paths.Map() {
+		for method, operation := range map[string]*openapi3.Operation{
+			http.MethodGet: pathItem.Get, http.MethodPost: pathItem.Post, http.MethodPut: pathItem.Put,
+			http.MethodPatch: pathItem.Patch, http.MethodDelete: pathItem.Delete,
+		} {
+			if operation == nil || operation.Security == nil || len(*operation.Security) != 2 {
+				continue
+			}
+			if operation.Extensions["x-langhuan-required-scopes"] == nil {
+				t.Errorf("%s %s 缺少 x-langhuan-required-scopes", method, pathName)
+			}
+		}
+	}
+}
+
 // TestMultipartUploadRoute 验证文件上传路由标记为 multipart/form-data。
 func TestMultipartUploadRoute(t *testing.T) {
 	spec := buildSpec()
