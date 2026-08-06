@@ -102,14 +102,15 @@ func TestChunkRevisionGetAndListExposeEditorDisplayName(t *testing.T) {
 	store.editorNickname = &nickname
 	service := NewChunkRevisionService(store, &fakeChunkRevisionQueue{})
 
-	chunk, err := service.Get(context.Background(), store.chunk.WorkspaceID, store.chunk.KnowledgeBaseID, store.chunk.ID)
+	access := value.ResourceAccess{WorkspaceID: store.chunk.WorkspaceID, Unrestricted: true}
+	chunk, err := service.GetWithAccess(context.Background(), access, store.chunk.KnowledgeBaseID, store.chunk.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if chunk.ActiveRevision == nil || chunk.ActiveRevision.EditorDisplayName != nickname {
 		t.Fatalf("chunk = %#v", chunk)
 	}
-	revisions, err := service.List(context.Background(), store.chunk.WorkspaceID, store.chunk.KnowledgeBaseID, store.chunk.ID)
+	revisions, err := service.ListWithAccess(context.Background(), access, store.chunk.KnowledgeBaseID, store.chunk.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

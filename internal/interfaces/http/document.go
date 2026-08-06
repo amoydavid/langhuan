@@ -113,7 +113,7 @@ func (h documentHandler) list(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
 		return
 	}
-	filter := service.DocumentListFilter{WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID}
+	filter := service.DocumentListFilter{WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Access: authCtx.ResourceAccess()}
 	if raw := strings.TrimSpace(c.Query("kind")); raw != "" {
 		kind := value.DocumentKind(raw)
 		if err := kind.Validate(); err != nil {

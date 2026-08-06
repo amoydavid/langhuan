@@ -56,7 +56,17 @@ func NewChunkRevisionService(store ChunkRevisionStore, jobQueue queue.JobQueue) 
 }
 
 // Get returns one Chunk and its active revision inside the requested KB lineage.
+
 func (s *ChunkRevisionService) Get(ctx context.Context, workspaceID, knowledgeBaseID, chunkID uuid.UUID) (*dto.Chunk, error) {
+	return s.GetWithAccess(ctx, value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, knowledgeBaseID, chunkID)
+}
+
+// GetWithAccess applies the caller's final workspace/KB boundary before reading a Chunk.
+func (s *ChunkRevisionService) GetWithAccess(ctx context.Context, access value.ResourceAccess, knowledgeBaseID, chunkID uuid.UUID) (*dto.Chunk, error) {
+	workspaceID := access.WorkspaceID
+	if err := validateResourceAccess(access, workspaceID, knowledgeBaseID); err != nil {
+		return nil, err
+	}
 	chunk, revision, err := s.store.GetChunk(ctx, workspaceID, knowledgeBaseID, chunkID)
 	if err != nil {
 		return nil, err
@@ -67,7 +77,17 @@ func (s *ChunkRevisionService) Get(ctx context.Context, workspaceID, knowledgeBa
 }
 
 // List returns immutable revisions ordered newest first.
+
 func (s *ChunkRevisionService) List(ctx context.Context, workspaceID, knowledgeBaseID, chunkID uuid.UUID) ([]*dto.ChunkRevision, error) {
+	return s.ListWithAccess(ctx, value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, knowledgeBaseID, chunkID)
+}
+
+// ListWithAccess applies the caller's final workspace/KB boundary before listing revisions.
+func (s *ChunkRevisionService) ListWithAccess(ctx context.Context, access value.ResourceAccess, knowledgeBaseID, chunkID uuid.UUID) ([]*dto.ChunkRevision, error) {
+	workspaceID := access.WorkspaceID
+	if err := validateResourceAccess(access, workspaceID, knowledgeBaseID); err != nil {
+		return nil, err
+	}
 	revisions, err := s.store.ListChunkRevisions(ctx, workspaceID, knowledgeBaseID, chunkID)
 	if err != nil {
 		return nil, err

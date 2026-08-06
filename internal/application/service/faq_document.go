@@ -35,6 +35,7 @@ type FAQDocumentService struct {
 type CreateFAQDocumentInput struct {
 	WorkspaceID     uuid.UUID
 	KnowledgeBaseID uuid.UUID
+	Access          value.ResourceAccess
 	Title           string
 	Questions       []string
 	Answer          string
@@ -45,6 +46,7 @@ type CreateFAQDocumentInput struct {
 type UpdateFAQDocumentInput struct {
 	WorkspaceID     uuid.UUID
 	KnowledgeBaseID uuid.UUID
+	Access          value.ResourceAccess
 	DocumentID      uuid.UUID
 	BaseRevisionID  uuid.UUID
 	Questions       []string
@@ -59,6 +61,9 @@ func NewFAQDocumentService(deps FAQDocumentServiceDeps) *FAQDocumentService {
 
 // Create atomically writes Document, ready FAQ Revision, questions, answer and index Job.
 func (s *FAQDocumentService) Create(ctx context.Context, input CreateFAQDocumentInput) (*dto.FAQDocument, error) {
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
 	if input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil {
 		return nil, fmt.Errorf("%w: Workspace/KnowledgeBase ID 不能为空", domainerrors.ErrValidation)
 	}
@@ -98,7 +103,10 @@ func (s *FAQDocumentService) Create(ctx context.Context, input CreateFAQDocument
 
 // Update appends one complete FAQ revision without switching the active Document pointer.
 func (s *FAQDocumentService) Update(ctx context.Context, input UpdateFAQDocumentInput) (*dto.FAQDocument, error) {
-	if input.WorkspaceID == uuid.Nil || input.DocumentID == uuid.Nil ||
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+	if input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil || input.DocumentID == uuid.Nil ||
 		input.BaseRevisionID == uuid.Nil {
 		return nil, fmt.Errorf("%w: FAQ update lineage/base 不能为空", domainerrors.ErrValidation)
 	}
@@ -159,8 +167,13 @@ func (s *FAQDocumentService) Update(ctx context.Context, input UpdateFAQDocument
 // Get returns the currently active complete FAQ revision.
 func (s *FAQDocumentService) Get(
 	ctx context.Context,
-	workspaceID, knowledgeBaseID, documentID uuid.UUID,
+	access value.ResourceAccess,
+	knowledgeBaseID, documentID uuid.UUID,
 ) (*dto.FAQDocument, error) {
+	if err := validateResourceAccess(access, access.WorkspaceID, knowledgeBaseID); err != nil {
+		return nil, err
+	}
+	workspaceID := access.WorkspaceID
 	if workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil || documentID == uuid.Nil {
 		return nil, fmt.Errorf("%w: FAQ lineage 无效", domainerrors.ErrValidation)
 	}

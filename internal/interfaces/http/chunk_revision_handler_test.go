@@ -101,11 +101,11 @@ type fakeChunkRevisionHTTPService struct {
 	createCalls  int
 }
 
-func (*fakeChunkRevisionHTTPService) Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*dto.Chunk, error) {
+func (*fakeChunkRevisionHTTPService) GetWithAccess(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) (*dto.Chunk, error) {
 	return nil, nil
 }
 
-func (*fakeChunkRevisionHTTPService) List(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]*dto.ChunkRevision, error) {
+func (*fakeChunkRevisionHTTPService) ListWithAccess(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) ([]*dto.ChunkRevision, error) {
 	return nil, nil
 }
 

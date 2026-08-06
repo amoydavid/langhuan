@@ -44,7 +44,7 @@ func TestFileTreeListGivesRootAReadableName(t *testing.T) {
 		},
 	}}
 
-	tree, err := NewFileTreeService(store).List(context.Background(), workspaceID, knowledgeBaseID)
+	tree, err := NewFileTreeService(store).List(context.Background(), value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, knowledgeBaseID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,16 @@ func TestFileTreeRenameFileUpdatesDocumentWithoutContentMutation(t *testing.T) {
 	}
 	if store.nodes[fileID].Name != name || store.documents[documentID].Title != name {
 		t.Fatalf("node/document = %#v / %#v", store.nodes[fileID], store.documents[documentID])
+	}
+}
+
+func TestFileTreeListRejectsUnboundKnowledgeBase(t *testing.T) {
+	workspaceID, allowedKB, otherKB := uuid.New(), uuid.New(), uuid.New()
+	store := &fakeFileTreeStore{}
+	access := value.ResourceAccess{WorkspaceID: workspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{allowedKB}}
+	_, err := NewFileTreeService(store).List(context.Background(), access, otherKB)
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("List() error = %v, want ErrNotFound", err)
 	}
 }
 

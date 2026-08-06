@@ -560,6 +560,9 @@ func newSlugResourceFixtures(t *testing.T, role value.WorkspaceRole, isPlatformA
 		Answer:    "回答",
 	}}
 	deps.FAQDocuments = faq
+	deps.FileTree = &fakeFileTreeHTTPService{}
+	deps.DocumentChunks = &fakeDocumentChunksHTTPService{}
+	deps.Models = &fakeModelHTTPService{}
 
 	return &slugResourceFixtures{
 		router:     NewRouter(deps),

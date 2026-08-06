@@ -10,14 +10,15 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // FileTreeHTTPService is the File-tree handler use-case contract.
 type FileTreeHTTPService interface {
-	List(context.Context, uuid.UUID, uuid.UUID) (*dto.FileTree, error)
+	List(context.Context, value.ResourceAccess, uuid.UUID) (*dto.FileTree, error)
 	CreateFolder(context.Context, service.CreateFileTreeFolderInput) (*dto.FileTreeNode, error)
 	Update(context.Context, service.UpdateFileTreeNodeInput) error
-	Delete(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
+	Delete(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) error
 }
 
 type fileTreeHandler struct{ service FileTreeHTTPService }
@@ -41,7 +42,7 @@ func (h fileTreeHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	tree, err := h.service.List(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID)
+	tree, err := h.service.List(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -64,7 +65,7 @@ func (h fileTreeHandler) createFolder(c *gin.Context) {
 		return
 	}
 	node, err := h.service.CreateFolder(c.Request.Context(), service.CreateFileTreeFolderInput{
-		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID,
+		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Access: authCtx.ResourceAccess(),
 		ParentID: request.ParentID, Name: request.Name,
 	})
 	if err != nil {
@@ -97,7 +98,7 @@ func (h fileTreeHandler) update(c *gin.Context) {
 		return
 	}
 	err := h.service.Update(c.Request.Context(), service.UpdateFileTreeNodeInput{
-		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID,
+		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Access: authCtx.ResourceAccess(),
 		NodeID: nodeID, Name: request.Name, ParentID: request.ParentID,
 	})
 	if err != nil {
@@ -120,7 +121,7 @@ func (h fileTreeHandler) delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.Delete(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, nodeID); err != nil {
+	if err := h.service.Delete(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID, nodeID); err != nil {
 		writeServiceError(c, err)
 		return
 	}

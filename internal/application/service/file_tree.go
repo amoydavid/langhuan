@@ -25,20 +25,30 @@ func NewFileTreeService(store FileTreeStore) *FileTreeService { return &FileTree
 
 type CreateFileTreeFolderInput struct {
 	WorkspaceID, KnowledgeBaseID, ParentID uuid.UUID
+	Access                                 value.ResourceAccess
 	Name                                   string
 }
 
 type UpdateFileTreeNodeInput struct {
 	WorkspaceID, KnowledgeBaseID, NodeID uuid.UUID
+	Access                               value.ResourceAccess
 	Name                                 *string
 	ParentID                             *uuid.UUID
 }
 
 type MoveFileTreeNodeInput struct {
 	WorkspaceID, KnowledgeBaseID, NodeID, NewParentID uuid.UUID
+	Access                                            value.ResourceAccess
 }
 
-func (s *FileTreeService) List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) (*dto.FileTree, error) {
+func (s *FileTreeService) List(ctx context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID) (*dto.FileTree, error) {
+	workspaceID := access.WorkspaceID
+	if workspaceID == uuid.Nil {
+		return nil, fmt.Errorf("%w: FileTree workspace 不能为空", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(access, workspaceID, knowledgeBaseID); err != nil {
+		return nil, err
+	}
 	var nodes []*model.FileTreeNode
 	err := s.store.WithinWorkspace(ctx, workspaceID, func(txCtx context.Context, tx FileTreeTx) error {
 		var err error
@@ -52,6 +62,9 @@ func (s *FileTreeService) List(ctx context.Context, workspaceID, knowledgeBaseID
 }
 
 func (s *FileTreeService) CreateFolder(ctx context.Context, input CreateFileTreeFolderInput) (*dto.FileTreeNode, error) {
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
 	name, err := normalizeFileTreeName(input.Name)
 	if err != nil {
 		return nil, err
@@ -77,7 +90,11 @@ func (s *FileTreeService) CreateFolder(ctx context.Context, input CreateFileTree
 	if err != nil {
 		return nil, err
 	}
-	tree, err := s.List(ctx, input.WorkspaceID, input.KnowledgeBaseID)
+	access := input.Access
+	if access.WorkspaceID == uuid.Nil {
+		access = value.ResourceAccess{WorkspaceID: input.WorkspaceID, Unrestricted: true}
+	}
+	tree, err := s.List(ctx, access, input.KnowledgeBaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +107,14 @@ func (s *FileTreeService) CreateFolder(ctx context.Context, input CreateFileTree
 func (s *FileTreeService) Move(ctx context.Context, input MoveFileTreeNodeInput) error {
 	return s.Update(ctx, UpdateFileTreeNodeInput{
 		WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
-		NodeID: input.NodeID, ParentID: &input.NewParentID,
+		Access: input.Access, NodeID: input.NodeID, ParentID: &input.NewParentID,
 	})
 }
 
 func (s *FileTreeService) Update(ctx context.Context, input UpdateFileTreeNodeInput) error {
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
+		return err
+	}
 	if input.Name == nil && input.ParentID == nil {
 		return fmt.Errorf("%w: name 与 parent_id 至少提供一个", domainerrors.ErrValidation)
 	}
@@ -163,7 +183,14 @@ func (s *FileTreeService) Update(ctx context.Context, input UpdateFileTreeNodeIn
 	})
 }
 
-func (s *FileTreeService) Delete(ctx context.Context, workspaceID, knowledgeBaseID, nodeID uuid.UUID) error {
+func (s *FileTreeService) Delete(ctx context.Context, access value.ResourceAccess, knowledgeBaseID, nodeID uuid.UUID) error {
+	workspaceID := access.WorkspaceID
+	if workspaceID == uuid.Nil {
+		return fmt.Errorf("%w: FileTree workspace 不能为空", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(access, workspaceID, knowledgeBaseID); err != nil {
+		return err
+	}
 	return s.store.WithinWorkspace(ctx, workspaceID, func(txCtx context.Context, tx FileTreeTx) error {
 		node, err := tx.GetFileTreeNodeForUpdate(txCtx, nodeID)
 		if err != nil {

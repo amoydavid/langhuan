@@ -44,6 +44,7 @@ type openapiParam struct {
 	typeName              string
 	format                string
 	enum                  []string
+	defaultValue          any
 }
 
 // registerRoutes 把全部 REST 路由注册进 spec。按资源组织，便于定位。
@@ -111,6 +112,9 @@ func (b *specBuilder) add(o op) {
 	}
 	for _, p := range params {
 		param := &openapi3.Parameter{Name: p.name, In: p.in, Description: p.description, Required: p.required, Schema: &openapi3.SchemaRef{Value: &openapi3.Schema{Type: &openapi3.Types{p.typeName}, Format: p.format}}}
+		if p.defaultValue != nil {
+			param.Schema.Value.Default = p.defaultValue
+		}
 		if len(p.enum) > 0 {
 			param.Schema.Value.Enum = make([]interface{}, len(p.enum))
 			for i := range p.enum {
@@ -308,7 +312,7 @@ func (b *specBuilder) knowledgeBaseOps() []op {
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/summary", tag: "知识库", summary: "查询知识库汇总",
 			respBody: dto.KnowledgeBaseSummary{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/jobs", tag: "知识库", summary: "查询知识库任务列表",
-			respBody: dto.JobSummaryPage{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "document_id", in: "query", typeName: "string", format: "uuid"}, {name: "status", in: "query", typeName: "string"}, {name: "cursor", in: "query", typeName: "string"}, {name: "limit", in: "query", typeName: "integer"}}},
+			respBody: dto.JobSummaryPage{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "document_id", in: "query", typeName: "string", format: "uuid"}, {name: "status", in: "query", typeName: "string", enum: []string{"pending", "queued", "running", "completed", "succeeded", "failed", "cancelled"}}, {name: "cursor", in: "query", typeName: "string"}, {name: "limit", in: "query", typeName: "integer", defaultValue: 20}}},
 	}
 }
 
@@ -317,7 +321,7 @@ func (b *specBuilder) documentOps() []op {
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/documents", tag: "文档", summary: "上传并导入文档（multipart）",
 			reqMultipart: true, reqBody: documentIngestForm{}, respBody: service.IngestDocumentResult{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/documents/text", tag: "文档", summary: "导入 Markdown 文本",
-			reqBody: ingestTextDocumentRequest{}, respBody: service.IngestDocumentResult{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
+			reqBody: ingestTextDocumentRequest{}, respBody: service.IngestDocumentResult{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}, description: "Session 或 Bearer API Key 均可调用；content_type 必须为 markdown。"},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents", tag: "文档", summary: "列出知识库文档",
 			respBody: []*dto.Document{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "kind", in: "query", typeName: "string", enum: []string{"file", "faq", "web"}}}},
 		{method: http.MethodGet, path: wsBase + "/documents/:document_id", tag: "文档", summary: "查询文档状态",
@@ -363,7 +367,7 @@ func (b *specBuilder) fileTreeOps() []op {
 func (b *specBuilder) chunkOps() []op {
 	return []op{
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents/:document_id/chunks", tag: "分块", summary: "查询文档分块列表",
-			respBody: dto.DocumentChunkPage{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "enabled", in: "query", typeName: "boolean"}, {name: "cursor", in: "query", typeName: "string"}, {name: "limit", in: "query", typeName: "integer"}}},
+			respBody: dto.DocumentChunkPage{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "enabled", in: "query", typeName: "boolean"}, {name: "cursor", in: "query", typeName: "string"}, {name: "limit", in: "query", typeName: "integer", defaultValue: 50}}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/chunks/:chunk_id", tag: "分块", summary: "查询单个分块",
 			respBody: dto.Chunk{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/chunks/:chunk_id/revisions", tag: "分块", summary: "查询分块修订历史",
@@ -442,7 +446,7 @@ func (b *specBuilder) modelOps() []op {
 		{method: http.MethodGet, path: wsBase + "/model-providers/:provider_id/models", tag: "模型", summary: "列出供应商模型",
 			respBody: []*dto.Model{}, status: http.StatusOK, sec: secSessionMember},
 		{method: http.MethodGet, path: wsBase + "/models", tag: "模型", summary: "列出可选模型",
-			respBody: []*dto.Model{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}, params: []openapiParam{{name: "type", in: "query", typeName: "string", enum: []string{"embedding", "rerank", "all"}}, {name: "status", in: "query", typeName: "string", enum: []string{"active", "disabled", "all"}}, {name: "scope", in: "query", typeName: "string", enum: []string{"platform", "workspace", "all"}}}},
+			respBody: []*dto.Model{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}, description: "Bearer 请求必须精确使用 type=embedding、status=active、scope=platform；Session 兼容既有 selectable/management 合同。", params: []openapiParam{{name: "type", in: "query", typeName: "string", enum: []string{"embedding", "rerank", "all"}}, {name: "status", in: "query", typeName: "string", enum: []string{"active", "disabled", "all"}}, {name: "scope", in: "query", typeName: "string", enum: []string{"platform", "workspace", "all"}}}},
 		{method: http.MethodGet, path: wsBase + "/models/:model_id", tag: "模型", summary: "查询模型详情",
 			respBody: dto.Model{}, status: http.StatusOK, sec: secSessionMember},
 		{method: http.MethodPost, path: wsBase + "/model-providers/:provider_id/models", tag: "模型", summary: "创建 workspace 模型",

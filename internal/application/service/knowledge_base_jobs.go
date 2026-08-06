@@ -58,9 +58,13 @@ type JobListFilter struct {
 }
 
 // ListJobs returns a stable seek page with readable actions and targets.
-func (s *KnowledgeBaseSummaryService) ListJobs(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID, filter JobListFilter) (*dto.JobSummaryPage, error) {
-	if s.store == nil || workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil {
+func (s *KnowledgeBaseSummaryService) ListJobs(ctx context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID, filter JobListFilter) (*dto.JobSummaryPage, error) {
+	workspaceID := access.WorkspaceID
+	if s.store == nil {
 		return nil, fmt.Errorf("%w: KnowledgeBase Job list 参数无效", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(access, workspaceID, knowledgeBaseID); err != nil {
+		return nil, err
 	}
 	limit := filter.Limit
 	if limit == 0 {

@@ -21,6 +21,7 @@ type ModelHTTPService interface {
 	ListWorkspace(context.Context, uuid.UUID, uuid.UUID) ([]*dto.Model, error)
 	ListPlatform(context.Context, uuid.UUID) ([]*dto.Model, error)
 	ListSelectableWorkspace(context.Context, uuid.UUID, value.ModelType, bool) ([]*dto.Model, error)
+	ListSelectableForAPIKey(context.Context, uuid.UUID, service.ModelListFilter) ([]*dto.Model, error)
 	ListWorkspaceModels(context.Context, uuid.UUID, service.ModelListFilter) ([]*dto.Model, error)
 	ListPlatformModels(context.Context, service.ModelListFilter) ([]*dto.Model, error)
 	GetWorkspace(context.Context, uuid.UUID, uuid.UUID) (*dto.Model, error)
@@ -143,7 +144,7 @@ func (h modelHandler) listSelectable(c *gin.Context) {
 			return
 		}
 		embedding, active, platform := value.ModelTypeEmbedding, value.ModelStatusActive, value.ModelScopePlatform
-		items, err := h.models.ListPlatformModels(c.Request.Context(), service.ModelListFilter{
+		items, err := h.models.ListSelectableForAPIKey(c.Request.Context(), authCtx.WorkspaceID, service.ModelListFilter{
 			Type: &embedding, Status: &active, Scope: &platform,
 		})
 		writeModelList(c, items, err)

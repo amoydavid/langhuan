@@ -277,6 +277,24 @@ POST   /api/v1/workspaces/:workspace_slug/search
 GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/index-generations
 ```
 
+程序化管理面使用同一 Workspace 路由前缀，并由 Bearer API Key scope 与知识库绑定集合做二次约束：
+
+```text
+GET    /api/v1/workspaces/:workspace_slug/knowledge-bases                         # knowledge_bases:read
+PATCH  /api/v1/workspaces/:workspace_slug/knowledge-bases/:id                    # knowledge_bases:write
+GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/summary            # knowledge_bases:read
+GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/jobs               # documents:read
+GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents?kind=...  # documents:read
+POST   /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/text     # documents:write
+POST   /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/faq      # documents:write
+GET/PUT /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/:document_id/faq
+GET/POST/PATCH/DELETE /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/file-tree/...
+GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/:document_id/chunks
+GET    /api/v1/workspaces/:workspace_slug/models?type=embedding&status=active&scope=platform
+```
+
+Bearer 越界统一返回 `404 not_found`，缺 scope 返回 `403 insufficient_scope`，无效、过期或吊销凭证返回 `401 unauthorized`；Authorization 存在时不会回退 Session cookie。FAQ 旧的无 KnowledgeBase 路径已移除。
+
 member 可以读、上传、创建/更新 FAQ、操作允许的文件树、删除 Document 和 search；Chunk 编辑/启停、Generation 创建/激活要求 admin/owner。授权表和现有角色语义未改变。
 
 ## 11. 配置

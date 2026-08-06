@@ -48,6 +48,7 @@ type DocumentChunkFactsFilter struct {
 // DocumentChunksInput is the protocol-neutral effective Chunk list request.
 type DocumentChunksInput struct {
 	WorkspaceID, KnowledgeBaseID, DocumentID uuid.UUID
+	Access                                   value.ResourceAccess
 	Enabled                                  *bool
 	Cursor                                   string
 	Limit                                    int
@@ -78,6 +79,9 @@ func NewDocumentChunksService(store DocumentChunksStore) *DocumentChunksService 
 func (s *DocumentChunksService) List(ctx context.Context, input DocumentChunksInput) (*dto.DocumentChunkPage, error) {
 	if s.store == nil || input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil || input.DocumentID == uuid.Nil {
 		return nil, fmt.Errorf("%w: Document Chunk lineage 无效", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
+		return nil, err
 	}
 	limit := input.Limit
 	if limit == 0 {

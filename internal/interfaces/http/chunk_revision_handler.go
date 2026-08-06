@@ -14,8 +14,8 @@ import (
 
 // ChunkRevisionHTTPService is the Chunk query and edit use-case contract.
 type ChunkRevisionHTTPService interface {
-	Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*dto.Chunk, error)
-	List(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) ([]*dto.ChunkRevision, error)
+	GetWithAccess(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) (*dto.Chunk, error)
+	ListWithAccess(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) ([]*dto.ChunkRevision, error)
 	Create(context.Context, service.CreateChunkRevisionInput) (*dto.ChunkRevision, error)
 }
 
@@ -33,7 +33,7 @@ func (h chunkRevisionHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.Get(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, chunkID)
+	result, err := h.service.GetWithAccess(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID, chunkID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -46,7 +46,7 @@ func (h chunkRevisionHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, chunkID)
+	result, err := h.service.ListWithAccess(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID, chunkID)
 	if err != nil {
 		writeServiceError(c, err)
 		return

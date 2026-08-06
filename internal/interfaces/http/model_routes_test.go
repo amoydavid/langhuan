@@ -182,6 +182,11 @@ func (s *fakeModelHTTPService) ListSelectableWorkspace(_ context.Context, _ uuid
 	return []*dto.Model{s.item()}, s.err
 }
 
+func (s *fakeModelHTTPService) ListSelectableForAPIKey(_ context.Context, _ uuid.UUID, filter service.ModelListFilter) ([]*dto.Model, error) {
+	s.listFilter = filter
+	return []*dto.Model{s.item()}, s.err
+}
+
 func (s *fakeModelHTTPService) ListWorkspaceModels(_ context.Context, _ uuid.UUID, filter service.ModelListFilter) ([]*dto.Model, error) {
 	s.listManaged, s.listFilter = true, filter
 	return []*dto.Model{s.item()}, s.err
@@ -487,6 +492,38 @@ func TestListSelectableModelsFiltersByType(t *testing.T) {
 	bad := admin.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/models?type=llm", "")
 	if bad.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("bad type status = %d, body = %s", bad.Code, bad.Body.String())
+	}
+}
+
+func TestListSelectableModelsBearerRequiresExactPlatformEmbeddingFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	workspaceID := uuid.New()
+	fake := &fakeModelHTTPService{}
+	router := gin.New()
+	router.GET("/models", func(c *gin.Context) {
+		c.Set(authContextKey, value.NewAPIKeyAuthContext(uuid.New(), workspaceID, []value.APIScope{value.ScopeKnowledgeBasesWrite}, []uuid.UUID{uuid.New()}))
+		modelHandler{models: fake}.listSelectable(c)
+	})
+	for _, query := range []string{
+		"?type=embedding&status=active&scope=platform",
+		"?type=rerank&status=active&scope=platform",
+		"?type=embedding&status=disabled&scope=platform",
+		"?type=embedding&status=active&scope=workspace",
+		"?type=all&status=active&scope=platform",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(stdhttp.MethodGet, "/models"+query, nil)
+		router.ServeHTTP(rec, req)
+		if strings.Contains(query, "type=embedding&status=active&scope=platform") && rec.Code != stdhttp.StatusOK {
+			t.Fatalf("valid query %s status=%d body=%s", query, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(query, "type=embedding&status=active&scope=platform") && rec.Code != stdhttp.StatusBadRequest {
+			t.Fatalf("invalid query %s status=%d body=%s", query, rec.Code, rec.Body.String())
+		}
+	}
+	embedding, active, platform := value.ModelTypeEmbedding, value.ModelStatusActive, value.ModelScopePlatform
+	if fake.listFilter.Type == nil || *fake.listFilter.Type != embedding || fake.listFilter.Status == nil || *fake.listFilter.Status != active || fake.listFilter.Scope == nil || *fake.listFilter.Scope != platform {
+		t.Fatalf("Bearer filter = %#v", fake.listFilter)
 	}
 }
 

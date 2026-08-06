@@ -45,7 +45,7 @@ FAQ 查询和更新的 URL 从现有的：
 | Search Settings 写入 | 仍限 Session owner/admin |
 | HTML 文本解析 | 当前在线编辑合同只支持 Markdown；jinshu 负责 HTML→Markdown 转换 |
 | jinshu 代码或跨仓库联调 | 本 worktree 只包含 langhuan 代码合同、测试和文档 |
-| 数据库迁移 | 本次只增加查询过滤、鉴权和 HTTP 能力，不改变 schema |
+| 业务数据 schema 迁移 | 不改变业务表结构；仅增加 API Key scope check constraint 迁移，使 `knowledge_bases:read` 可持久化 |
 
 ## 3. 统一访问模型
 

@@ -41,6 +41,7 @@ func (h documentChunksHandler) list(c *gin.Context) {
 	filter.WorkspaceID = authCtx.WorkspaceID
 	filter.KnowledgeBaseID = knowledgeBaseID
 	filter.DocumentID = documentID
+	filter.Access = authCtx.ResourceAccess()
 	result, err := h.service.List(c.Request.Context(), filter)
 	if err != nil {
 		writeServiceError(c, err)

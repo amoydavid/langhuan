@@ -115,6 +115,19 @@ func TestDocumentChunksRejectsCrossWorkspaceLineage(t *testing.T) {
 	}
 }
 
+func TestDocumentChunksRejectsUnboundKnowledgeBaseBeforeStore(t *testing.T) {
+	input := validDocumentChunksInput()
+	input.Access = value.ResourceAccess{WorkspaceID: input.WorkspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{uuid.New()}}
+	store := &fakeDocumentChunksStore{page: &DocumentChunkFactsPage{}}
+	_, err := NewDocumentChunksService(store).List(context.Background(), input)
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+	if store.filter.Limit != 0 {
+		t.Fatalf("store was called with filter %#v", store.filter)
+	}
+}
+
 func TestDocumentChunksRejectsInvalidCursorAndLimit(t *testing.T) {
 	service := NewDocumentChunksService(&fakeDocumentChunksStore{})
 	for _, input := range []DocumentChunksInput{

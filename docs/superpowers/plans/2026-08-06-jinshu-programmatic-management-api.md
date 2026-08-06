@@ -17,7 +17,7 @@
 - API Key 不继承创建者 role；知识库更新由 service 明确区分 Session admin 与 API Key knowledge_bases:write。
 - 文本导入只支持 Markdown，使用 ingest.max_file_size_bytes，必须复用 DocumentIngestService.Ingest，HTTP 不等待解析完成。
 - 数据库集成/E2E 测试只能使用测试运行期临时 Docker PostgreSQL（pgvector + zhparser）和 Redis；未设置 LANGHUAN_TEST_DATABASE_DSN 时不得回退到 config.yaml。
-- 不新增数据库迁移，不实现 KnowledgeBase 删除、Chunk 写、Generation 写或 search-settings 写。
+- 不改变业务数据 schema，不实现 KnowledgeBase 删除、Chunk 写、Generation 写或 search-settings 写；新增 scope 的数据库 check constraint 需通过独立幂等迁移发布。
 - 每条对外 REST 路由必须同步维护 internal/interfaces/http/openapi_routes.go；OpenAPI 的 security、required scope extension、path/query 参数、request/response schema 与 Gin 路由保持一致。
 
 ---
@@ -245,5 +245,5 @@ Files:
 - [ ] Step 1: Run gofmt -w internal cmd, go vet ./... and git diff --check. Expected: exit 0.
 - [ ] Step 2: Run go test ./... -count=1. Expected: PASS.
 - [ ] Step 3: Run make test-integration. Expected: it builds langhuan-test-postgres:pg17, injects LANGHUAN_TEST_DATABASE_DSN, starts disposable PostgreSQL, and all integration tests including TestJinshuManagementAPI pass; Redis is cleaned up by test support.
-- [ ] Step 4: Run git status --short, git diff --stat and rg -n 'TODO|TBD' on both docs. Expected: no placeholders.
+- [ ] Step 4: Run git status --short, git diff --stat and scan both docs for unfinished placeholders. Expected: no placeholders.
 - [ ] Step 5: Commit any final verification-only changes with: chore: 完成 jinshu 管理 API 规格验证.

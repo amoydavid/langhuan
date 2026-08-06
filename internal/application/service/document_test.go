@@ -224,3 +224,38 @@ func TestDocumentServiceListRejectsKnowledgeBaseFromAnotherWorkspaceBeforeQuery(
 		t.Fatalf("document List called %d times before knowledge-base ownership validation", docRepo.listCalls)
 	}
 }
+
+func TestDocumentServiceListFiltersKindAndAccess(t *testing.T) {
+	workspaceID, kbID := uuid.New(), uuid.New()
+	kbRepo := newFakeKnowledgeBaseRepository()
+	kb, err := model.NewKnowledgeBase(workspaceID, "docs", "", uuid.New(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kb.ID = kbID
+	kbRepo.items[kbID] = kb
+	docRepo := newFakeDocumentQueryRepository()
+	for _, kind := range []value.DocumentKind{value.DocumentKindFile, value.DocumentKindFAQ} {
+		doc, err := model.NewDocumentIdentity(workspaceID, kbID, kind, string(kind), "api", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		docRepo.items[doc.ID], docRepo.workspaceIDs[doc.ID] = doc, workspaceID
+	}
+	faqKind := value.DocumentKindFAQ
+	got, err := NewDocumentService(docRepo, kbRepo).List(context.Background(), DocumentListFilter{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID, Kind: &faqKind,
+		Access: value.ResourceAccess{WorkspaceID: workspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{kbID}},
+	})
+	if err != nil || len(got) != 1 || got[0].Kind != value.DocumentKindFAQ {
+		t.Fatalf("filtered documents = %#v, error = %v", got, err)
+	}
+	other := uuid.New()
+	_, err = NewDocumentService(docRepo, kbRepo).List(context.Background(), DocumentListFilter{
+		WorkspaceID: workspaceID, KnowledgeBaseID: other,
+		Access: value.ResourceAccess{WorkspaceID: workspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{kbID}},
+	})
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("unbound list error = %v, want ErrNotFound", err)
+	}
+}

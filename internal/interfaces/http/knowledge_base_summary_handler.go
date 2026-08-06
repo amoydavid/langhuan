@@ -16,8 +16,8 @@ import (
 
 // KnowledgeBaseSummaryHTTPService is the workbench summary and activity query contract.
 type KnowledgeBaseSummaryHTTPService interface {
-	GetSummary(context.Context, uuid.UUID, uuid.UUID) (*dto.KnowledgeBaseSummary, error)
-	ListJobs(context.Context, uuid.UUID, uuid.UUID, service.JobListFilter) (*dto.JobSummaryPage, error)
+	GetSummary(context.Context, value.ResourceAccess, uuid.UUID) (*dto.KnowledgeBaseSummary, error)
+	ListJobs(context.Context, value.ResourceAccess, uuid.UUID, service.JobListFilter) (*dto.JobSummaryPage, error)
 }
 
 type knowledgeBaseSummaryHandler struct {
@@ -29,7 +29,7 @@ func (h knowledgeBaseSummaryHandler) getSummary(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.GetSummary(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID)
+	result, err := h.service.GetSummary(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -46,7 +46,7 @@ func (h knowledgeBaseSummaryHandler) listJobs(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.ListJobs(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, filter)
+	result, err := h.service.ListJobs(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID, filter)
 	if err != nil {
 		writeServiceError(c, err)
 		return

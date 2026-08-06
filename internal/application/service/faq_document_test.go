@@ -149,6 +149,20 @@ func TestUpdateFAQRejectsStaleBaseWithoutWrite(t *testing.T) {
 	}
 }
 
+func TestFAQAccessRejectsUnboundKnowledgeBaseBeforeStore(t *testing.T) {
+	workspaceID, allowedKB, otherKB := uuid.New(), uuid.New(), uuid.New()
+	store := newFakeFAQRevisionStore(&model.KnowledgeBase{ID: allowedKB, WorkspaceID: workspaceID, ActiveIndexGenerationID: pointerUUID(uuid.New())})
+	svc := NewFAQDocumentService(FAQDocumentServiceDeps{Store: store, Queue: &faqTestQueue{store: store}})
+	access := value.ResourceAccess{WorkspaceID: workspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{allowedKB}}
+	_, err := svc.Create(context.Background(), CreateFAQDocumentInput{WorkspaceID: workspaceID, KnowledgeBaseID: otherKB, Access: access, Title: "x", Questions: []string{"q"}, Answer: "a"})
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("Create() error = %v, want ErrNotFound", err)
+	}
+	if store.withinCalls != 0 {
+		t.Fatalf("store calls = %d, want 0", store.withinCalls)
+	}
+}
+
 type fakeFAQRevisionStore struct {
 	kb            *model.KnowledgeBase
 	document      *model.Document

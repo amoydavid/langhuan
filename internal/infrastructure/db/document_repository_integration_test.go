@@ -284,14 +284,14 @@ func TestDocumentRepositoryListScopesAndOrders(t *testing.T) {
 	createDocument(uuid.MustParse("60000000-0000-0000-0000-000000000003"), workspaceB, kbB, "other")
 
 	docRepo := NewDocumentRepository(tx)
-	got, err := docRepo.List(ctx, workspaceA, kbA)
+	got, err := docRepo.List(ctx, appservice.DocumentListFilter{WorkspaceID: workspaceA, KnowledgeBaseID: kbA})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].ID != id2 || got[1].ID != id1 || got[0].Kind != value.DocumentKindFile {
 		t.Fatalf("List() = %#v, want workspace/KB scoped DESC order", got)
 	}
-	crossWorkspace, err := docRepo.List(ctx, workspaceB, kbA)
+	crossWorkspace, err := docRepo.List(ctx, appservice.DocumentListFilter{WorkspaceID: workspaceB, KnowledgeBaseID: kbA})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestDocumentRepositoryGetAndListAttachActiveRevisionSummary(t *testing.T) {
 	if got.ActiveRevision == nil || got.ActiveRevision.ID != revision.ID || got.ActiveRevision.FileType != "pdf" {
 		t.Fatalf("Get active revision = %#v", got.ActiveRevision)
 	}
-	items, err := repository.List(ctx, seed.workspaceID, seed.kbID)
+	items, err := repository.List(ctx, appservice.DocumentListFilter{WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestDocumentRepositoryListAttachesActiveFAQQuestionCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := NewDocumentRepository(database).List(ctx, seed.workspaceID, seed.kbID)
+	items, err := NewDocumentRepository(database).List(ctx, appservice.DocumentListFilter{WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,13 +9,14 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // FAQDocumentHTTPService is the complete FAQ revision use-case contract.
 type FAQDocumentHTTPService interface {
 	Create(context.Context, service.CreateFAQDocumentInput) (*dto.FAQDocument, error)
 	Update(context.Context, service.UpdateFAQDocumentInput) (*dto.FAQDocument, error)
-	Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*dto.FAQDocument, error)
+	Get(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) (*dto.FAQDocument, error)
 }
 
 type faqDocumentHandler struct {
@@ -59,7 +60,8 @@ func (h faqDocumentHandler) create(c *gin.Context) {
 	}
 	result, err := h.service.Create(c.Request.Context(), service.CreateFAQDocumentInput{
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID,
-		Title: request.Title, Questions: request.Questions, Answer: request.Answer, CreatedBy: createdBy,
+		Access: authCtx.ResourceAccess(),
+		Title:  request.Title, Questions: request.Questions, Answer: request.Answer, CreatedBy: createdBy,
 	})
 	if err != nil {
 		writeServiceError(c, err)
@@ -84,7 +86,7 @@ func (h faqDocumentHandler) get(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
 		return
 	}
-	result, err := h.service.Get(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, documentID)
+	result, err := h.service.Get(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID, documentID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -119,7 +121,7 @@ func (h faqDocumentHandler) update(c *gin.Context) {
 		createdBy = &id
 	}
 	result, err := h.service.Update(c.Request.Context(), service.UpdateFAQDocumentInput{
-		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, DocumentID: documentID, BaseRevisionID: request.BaseRevisionID,
+		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Access: authCtx.ResourceAccess(), DocumentID: documentID, BaseRevisionID: request.BaseRevisionID,
 		Questions: request.Questions, Answer: request.Answer, CreatedBy: createdBy,
 	})
 	if err != nil {

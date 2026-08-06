@@ -219,6 +219,19 @@ func (s *ModelService) ListPlatformModels(ctx context.Context, filter ModelListF
 	return s.resolvedModelList(ctx, items, err)
 }
 
+// ListSelectableForAPIKey exposes the deliberately narrow model contract used
+// by programmatic management clients. The service re-validates the exact
+// server-side filter instead of trusting query parameters or handler routing.
+func (s *ModelService) ListSelectableForAPIKey(ctx context.Context, workspaceID uuid.UUID, filter ModelListFilter) ([]*dto.Model, error) {
+	if workspaceID == uuid.Nil || filter.Type == nil || *filter.Type != value.ModelTypeEmbedding ||
+		filter.Status == nil || *filter.Status != value.ModelStatusActive ||
+		filter.Scope == nil || *filter.Scope != value.ModelScopePlatform ||
+		strings.TrimSpace(filter.Query) != "" || filter.ProviderID != nil {
+		return nil, fmt.Errorf("%w: Bearer 模型过滤条件必须为 embedding/active/platform", domainerrors.ErrValidation)
+	}
+	return s.ListPlatformModels(ctx, ModelListFilter{Type: filter.Type, Status: filter.Status, Scope: filter.Scope})
+}
+
 func normalizeModelListFilter(filter ModelListFilter) (ModelListFilter, error) {
 	if filter.Type != nil && *filter.Type != value.ModelTypeEmbedding && *filter.Type != value.ModelTypeRerank {
 		return ModelListFilter{}, domainerrors.ErrUnsupportedModelType

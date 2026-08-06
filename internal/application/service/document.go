@@ -23,6 +23,7 @@ type DocumentListFilter struct {
 	WorkspaceID     uuid.UUID
 	KnowledgeBaseID uuid.UUID
 	Kind            *value.DocumentKind
+	Access          value.ResourceAccess
 }
 
 // Delete soft-deletes a Document and atomically removes it from retrieval and the File Tree.
@@ -58,8 +59,8 @@ func NewDocumentService(repo DocumentRepository, knowledgeBases KnowledgeBaseRea
 }
 
 func (s *DocumentService) List(ctx context.Context, filter DocumentListFilter) ([]*dto.Document, error) {
-	if filter.WorkspaceID == uuid.Nil || filter.KnowledgeBaseID == uuid.Nil {
-		return nil, fmt.Errorf("%w: 文档列表 lineage 无效", domainerrors.ErrValidation)
+	if err := validateResourceAccess(filter.Access, filter.WorkspaceID, filter.KnowledgeBaseID); err != nil {
+		return nil, err
 	}
 	if filter.Kind != nil {
 		if err := filter.Kind.Validate(); err != nil {

@@ -115,12 +115,12 @@ type fakeKnowledgeBaseSummaryHTTPService struct {
 	filter                       service.JobListFilter
 }
 
-func (s *fakeKnowledgeBaseSummaryHTTPService) GetSummary(_ context.Context, workspaceID, knowledgeBaseID uuid.UUID) (*dto.KnowledgeBaseSummary, error) {
-	s.workspaceID, s.knowledgeBaseID = workspaceID, knowledgeBaseID
+func (s *fakeKnowledgeBaseSummaryHTTPService) GetSummary(_ context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID) (*dto.KnowledgeBaseSummary, error) {
+	s.workspaceID, s.knowledgeBaseID = access.WorkspaceID, knowledgeBaseID
 	return s.summary, s.err
 }
 
-func (s *fakeKnowledgeBaseSummaryHTTPService) ListJobs(_ context.Context, workspaceID, knowledgeBaseID uuid.UUID, filter service.JobListFilter) (*dto.JobSummaryPage, error) {
-	s.workspaceID, s.knowledgeBaseID, s.filter = workspaceID, knowledgeBaseID, filter
+func (s *fakeKnowledgeBaseSummaryHTTPService) ListJobs(_ context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID, filter service.JobListFilter) (*dto.JobSummaryPage, error) {
+	s.workspaceID, s.knowledgeBaseID, s.filter = access.WorkspaceID, knowledgeBaseID, filter
 	return s.jobs, s.err
 }

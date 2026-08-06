@@ -46,7 +46,7 @@ type fakeFileTreeHTTPService struct {
 	updateErr   error
 }
 
-func (s *fakeFileTreeHTTPService) List(context.Context, uuid.UUID, uuid.UUID) (*dto.FileTree, error) {
+func (s *fakeFileTreeHTTPService) List(context.Context, value.ResourceAccess, uuid.UUID) (*dto.FileTree, error) {
 	return nil, nil
 }
 
@@ -59,6 +59,6 @@ func (s *fakeFileTreeHTTPService) Update(_ context.Context, input service.Update
 	return s.updateErr
 }
 
-func (s *fakeFileTreeHTTPService) Delete(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+func (s *fakeFileTreeHTTPService) Delete(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) error {
 	return nil
 }

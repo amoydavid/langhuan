@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/application/dto"
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -53,7 +55,7 @@ func TestKnowledgeBaseSummarySyncPriority(t *testing.T) {
 			facts.KnowledgeBaseID = knowledgeBaseID
 			facts.KnowledgeBaseName = "产品文档"
 			store := &fakeKnowledgeBaseSummaryStore{summary: &facts}
-			result, err := NewKnowledgeBaseSummaryService(store).GetSummary(context.Background(), workspaceID, knowledgeBaseID)
+			result, err := NewKnowledgeBaseSummaryService(store).GetSummary(context.Background(), value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, knowledgeBaseID)
 			if err != nil {
 				t.Fatalf("GetSummary() error = %v", err)
 			}
@@ -94,7 +96,7 @@ func TestKnowledgeBaseSummaryBuildsReadableSafeProjection(t *testing.T) {
 		}},
 	}}
 
-	result, err := NewKnowledgeBaseSummaryService(store).GetSummary(context.Background(), workspaceID, knowledgeBaseID)
+	result, err := NewKnowledgeBaseSummaryService(store).GetSummary(context.Background(), value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, knowledgeBaseID)
 	if err != nil {
 		t.Fatalf("GetSummary() error = %v", err)
 	}
@@ -126,7 +128,8 @@ func TestKnowledgeBaseJobSummaryCursorAndLimit(t *testing.T) {
 	store := &fakeKnowledgeBaseSummaryStore{jobs: items}
 	service := NewKnowledgeBaseSummaryService(store)
 
-	first, err := service.ListJobs(context.Background(), workspaceID, knowledgeBaseID, JobListFilter{Limit: 2})
+	access := value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}
+	first, err := service.ListJobs(context.Background(), access, knowledgeBaseID, JobListFilter{Limit: 2})
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
@@ -138,7 +141,7 @@ func TestKnowledgeBaseJobSummaryCursorAndLimit(t *testing.T) {
 	}
 
 	store.jobs = nil
-	second, err := service.ListJobs(context.Background(), workspaceID, knowledgeBaseID, JobListFilter{Limit: 2, Cursor: *first.NextCursor})
+	second, err := service.ListJobs(context.Background(), access, knowledgeBaseID, JobListFilter{Limit: 2, Cursor: *first.NextCursor})
 	if err != nil {
 		t.Fatalf("ListJobs(cursor) error = %v", err)
 	}
@@ -156,9 +159,21 @@ func TestKnowledgeBaseJobSummaryRejectsInvalidFilter(t *testing.T) {
 		{Status: value.JobStatus("unknown")},
 		{Cursor: "not-a-cursor"},
 	} {
-		if _, err := service.ListJobs(context.Background(), workspaceID, knowledgeBaseID, filter); err == nil {
+		if _, err := service.ListJobs(context.Background(), value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, knowledgeBaseID, filter); err == nil {
 			t.Fatalf("ListJobs(%#v) error = nil", filter)
 		}
+	}
+}
+
+func TestKnowledgeBaseSummaryRejectsUnboundKnowledgeBase(t *testing.T) {
+	workspaceID, allowedKB, otherKB := uuid.New(), uuid.New(), uuid.New()
+	store := &fakeKnowledgeBaseSummaryStore{}
+	access := value.ResourceAccess{WorkspaceID: workspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{allowedKB}}
+	if _, err := NewKnowledgeBaseSummaryService(store).GetSummary(context.Background(), access, otherKB); !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("GetSummary() error = %v, want ErrNotFound", err)
+	}
+	if _, err := NewKnowledgeBaseSummaryService(store).ListJobs(context.Background(), access, otherKB, JobListFilter{}); !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("ListJobs() error = %v, want ErrNotFound", err)
 	}
 }
 

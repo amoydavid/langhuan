@@ -52,7 +52,8 @@ func TestFileTreeRepositoryMoveRenameAndDeleteRules(t *testing.T) {
 	}); !errors.Is(err, domainerrors.ErrFileTreeCycle) {
 		t.Fatalf("move into descendant error = %v", err)
 	}
-	if err := service.Delete(ctx, workspaceID, kb.ID, parent.ID); !errors.Is(err, domainerrors.ErrFileTreeNotEmpty) {
+	access := value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}
+	if err := service.Delete(ctx, access, kb.ID, parent.ID); !errors.Is(err, domainerrors.ErrFileTreeNotEmpty) {
 		t.Fatalf("delete non-empty folder error = %v", err)
 	}
 	if _, err := service.CreateFolder(ctx, appservice.CreateFileTreeFolderInput{
@@ -89,7 +90,7 @@ func TestFileTreeRepositoryMoveRenameAndDeleteRules(t *testing.T) {
 	if beforeKB.ContentVersion != afterKB.ContentVersion || !sameUUIDPointer(beforeKB.ActiveIndexGenerationID, afterKB.ActiveIndexGenerationID) {
 		t.Fatalf("tree mutation changed content/generation: before=%#v after=%#v", beforeKB, afterKB)
 	}
-	tree, err := service.List(ctx, workspaceID, kb.ID)
+	tree, err := service.List(ctx, access, kb.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

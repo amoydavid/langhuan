@@ -9,6 +9,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 
+	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 )
 
@@ -180,6 +181,14 @@ func TestJinshuRoutesExposeScopesAndLineageParameters(t *testing.T) {
 	}
 	if got := path.Get.Extensions["x-langhuan-required-scopes"]; got == nil {
 		t.Fatal("FAQ GET 缺少 required scopes extension")
+	} else {
+		scopes, ok := got.([]value.APIScope)
+		if !ok || len(scopes) != 1 || scopes[0] != value.ScopeDocumentsRead {
+			t.Fatalf("FAQ GET scopes = %#v, want documents:read", got)
+		}
+	}
+	if path.Get.Security == nil || len(*path.Get.Security) != 2 {
+		t.Fatalf("FAQ GET security = %#v, want Session/Bearer OR", path.Get.Security)
 	}
 	seen := map[string]bool{}
 	for _, p := range path.Get.Parameters {
@@ -196,6 +205,15 @@ func TestJinshuRoutesExposeScopesAndLineageParameters(t *testing.T) {
 	}
 	if len(docs.Get.Parameters) == 0 {
 		t.Fatal("文档列表缺少 kind/query 或 path 参数")
+	}
+	var kindEnum []interface{}
+	for _, parameter := range docs.Get.Parameters {
+		if parameter.Value.Name == "kind" {
+			kindEnum = parameter.Value.Schema.Value.Enum
+		}
+	}
+	if len(kindEnum) != 3 {
+		t.Fatalf("kind enum = %#v", kindEnum)
 	}
 }
 

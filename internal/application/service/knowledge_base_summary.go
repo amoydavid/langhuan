@@ -81,9 +81,13 @@ func NewKnowledgeBaseSummaryService(store KnowledgeBaseSummaryStore) *KnowledgeB
 }
 
 // GetSummary returns current content, index, blocker and recent activity facts.
-func (s *KnowledgeBaseSummaryService) GetSummary(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) (*dto.KnowledgeBaseSummary, error) {
-	if s.store == nil || workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil {
+func (s *KnowledgeBaseSummaryService) GetSummary(ctx context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID) (*dto.KnowledgeBaseSummary, error) {
+	workspaceID := access.WorkspaceID
+	if s.store == nil {
 		return nil, fmt.Errorf("%w: KnowledgeBase summary 参数无效", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(access, workspaceID, knowledgeBaseID); err != nil {
+		return nil, err
 	}
 	facts, err := s.store.GetKnowledgeBaseSummaryFacts(ctx, workspaceID, knowledgeBaseID)
 	if err != nil {

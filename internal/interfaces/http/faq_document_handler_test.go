@@ -153,8 +153,8 @@ func (s *fakeFAQDocumentHTTPService) Update(_ context.Context, input service.Upd
 	return s.result, s.updateErr
 }
 
-func (s *fakeFAQDocumentHTTPService) Get(_ context.Context, workspaceID, _ uuid.UUID, documentID uuid.UUID) (*dto.FAQDocument, error) {
-	s.getWorkspaceID = workspaceID
+func (s *fakeFAQDocumentHTTPService) Get(_ context.Context, access value.ResourceAccess, _ uuid.UUID, documentID uuid.UUID) (*dto.FAQDocument, error) {
+	s.getWorkspaceID = access.WorkspaceID
 	s.getDocumentID = documentID
 	return s.result, nil
 }
