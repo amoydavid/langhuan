@@ -129,6 +129,21 @@ export const routes = {
       },
     },
 
+    // Integrations (integrations)
+    integrations: {
+      breadcrumb: 'Integrations',
+      new: {
+        breadcrumb: 'Add Feishu App',
+        eyebrow: 'Workspace / Integrations',
+        title: 'Add Feishu App',
+        description:
+          'Enter the app credentials from the Feishu developer console to use it in this workspace.',
+        cardTitle: 'App Credentials',
+        cardDescription:
+          'The App Secret is only used to call Feishu APIs on the backend and is never echoed on the page.',
+      },
+    },
+
     // Knowledge bases (kb)
     kb: {
       breadcrumb: 'Knowledge Bases',

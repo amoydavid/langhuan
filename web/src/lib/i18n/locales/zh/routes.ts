@@ -112,6 +112,20 @@ export const routes = {
       },
     },
 
+    // 集成应用（integrations）
+    integrations: {
+      breadcrumb: '集成',
+      new: {
+        breadcrumb: '添加飞书应用',
+        eyebrow: '工作区 / 集成',
+        title: '添加飞书应用',
+        description: '填入飞书开放平台的应用凭证，保存后即可在工作区中调用。',
+        cardTitle: '应用凭证',
+        cardDescription:
+          'App Secret 仅用于后端调用飞书 API，不会在页面上回显。',
+      },
+    },
+
     // 知识库（kb）
     kb: {
       breadcrumb: '知识库',

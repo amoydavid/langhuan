@@ -3,7 +3,7 @@ import {
   Boxes,
   KeyRound,
   LayoutDashboard,
-  MailPlus,
+  Plug,
   SlidersHorizontal,
   Users,
 } from 'lucide-react'
@@ -42,12 +42,12 @@ export function buildWorkspaceNavigation(
     },
   ]
   if (role === 'owner' || role === 'admin') {
-    items.push({
-      title: i18n.t('common.layout.navInvitations'),
-      url: `${base}/invitations`,
-      icon: MailPlus,
-    })
     items.push({ title: 'API Key', url: `${base}/api-keys`, icon: KeyRound })
+    items.push({
+      title: i18n.t('common.layout.navIntegrations'),
+      url: `${base}/integrations`,
+      icon: Plug,
+    })
     items.push({
       title: i18n.t('common.layout.navSearchSettings'),
       url: `${base}/search-settings`,

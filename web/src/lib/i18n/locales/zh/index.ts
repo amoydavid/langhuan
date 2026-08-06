@@ -7,6 +7,7 @@ import { contentFaq } from './contentFaq'
 import { documents } from './documents'
 import { errors } from './errors'
 import { indexGenerations } from './indexGenerations'
+import { integrations } from './integrations'
 import { invitations } from './invitations'
 import { jobs } from './jobs'
 import { knowledgeBases } from './knowledgeBases'
@@ -34,6 +35,7 @@ export const zh = {
   documents,
   errors,
   indexGenerations,
+  integrations,
   invitations,
   jobs,
   knowledgeBases,

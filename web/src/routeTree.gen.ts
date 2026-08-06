@@ -36,10 +36,12 @@ import { Route as AuthenticatedAdminModelsProviderIdRouteImport } from './routes
 import { Route as AuthenticatedWorkspacesWorkspaceSlugApiKeysRouteRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/api-keys/route'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugModelsIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/models/index'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/index'
+import { Route as AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/integrations/index'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugApiKeysIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/api-keys/index'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/models/$providerId'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbNewRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/new'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/jobs/$jobId'
+import { Route as AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/integrations/new'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/documents/$documentId'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugApiKeysNewRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/api-keys/new'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugApiKeysApiKeyIdRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/api-keys/$apiKeyId'
@@ -213,6 +215,12 @@ const AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute =
     path: '/kb/',
     getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugRouteRoute,
   } as any)
+const AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute =
+  AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRouteImport.update({
+    id: '/integrations/',
+    path: '/integrations/',
+    getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugRouteRoute,
+  } as any)
 const AuthenticatedWorkspacesWorkspaceSlugApiKeysIndexRoute =
   AuthenticatedWorkspacesWorkspaceSlugApiKeysIndexRouteImport.update({
     id: '/',
@@ -235,6 +243,12 @@ const AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute =
   AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRouteImport.update({
     id: '/jobs/$jobId',
     path: '/jobs/$jobId',
+    getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugRouteRoute,
+  } as any)
+const AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute =
+  AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRouteImport.update({
+    id: '/integrations/new',
+    path: '/integrations/new',
     getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugRouteRoute,
   } as any)
 const AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute =
@@ -425,10 +439,12 @@ export interface FileRoutesByFullPath {
   '/workspaces/$workspaceSlug/api-keys/$apiKeyId': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysApiKeyIdRoute
   '/workspaces/$workspaceSlug/api-keys/new': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysNewRoute
   '/workspaces/$workspaceSlug/documents/$documentId': typeof AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute
+  '/workspaces/$workspaceSlug/integrations/new': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute
   '/workspaces/$workspaceSlug/jobs/$jobId': typeof AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute
   '/workspaces/$workspaceSlug/kb/new': typeof AuthenticatedWorkspacesWorkspaceSlugKbNewRoute
   '/workspaces/$workspaceSlug/models/$providerId': typeof AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute
   '/workspaces/$workspaceSlug/api-keys/': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysIndexRoute
+  '/workspaces/$workspaceSlug/integrations/': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute
   '/workspaces/$workspaceSlug/kb/': typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   '/workspaces/$workspaceSlug/models/': typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren
@@ -475,10 +491,12 @@ export interface FileRoutesByTo {
   '/workspaces/$workspaceSlug/api-keys/$apiKeyId': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysApiKeyIdRoute
   '/workspaces/$workspaceSlug/api-keys/new': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysNewRoute
   '/workspaces/$workspaceSlug/documents/$documentId': typeof AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute
+  '/workspaces/$workspaceSlug/integrations/new': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute
   '/workspaces/$workspaceSlug/jobs/$jobId': typeof AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute
   '/workspaces/$workspaceSlug/kb/new': typeof AuthenticatedWorkspacesWorkspaceSlugKbNewRoute
   '/workspaces/$workspaceSlug/models/$providerId': typeof AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute
   '/workspaces/$workspaceSlug/api-keys': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysIndexRoute
+  '/workspaces/$workspaceSlug/integrations': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute
   '/workspaces/$workspaceSlug/kb': typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   '/workspaces/$workspaceSlug/models': typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/indexes': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute
@@ -529,10 +547,12 @@ export interface FileRoutesById {
   '/_authenticated/workspaces/$workspaceSlug/api-keys/$apiKeyId': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysApiKeyIdRoute
   '/_authenticated/workspaces/$workspaceSlug/api-keys/new': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysNewRoute
   '/_authenticated/workspaces/$workspaceSlug/documents/$documentId': typeof AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute
+  '/_authenticated/workspaces/$workspaceSlug/integrations/new': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute
   '/_authenticated/workspaces/$workspaceSlug/jobs/$jobId': typeof AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/new': typeof AuthenticatedWorkspacesWorkspaceSlugKbNewRoute
   '/_authenticated/workspaces/$workspaceSlug/models/$providerId': typeof AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute
   '/_authenticated/workspaces/$workspaceSlug/api-keys/': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysIndexRoute
+  '/_authenticated/workspaces/$workspaceSlug/integrations/': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/': typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/models/': typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren
@@ -585,10 +605,12 @@ export interface FileRouteTypes {
     | '/workspaces/$workspaceSlug/api-keys/$apiKeyId'
     | '/workspaces/$workspaceSlug/api-keys/new'
     | '/workspaces/$workspaceSlug/documents/$documentId'
+    | '/workspaces/$workspaceSlug/integrations/new'
     | '/workspaces/$workspaceSlug/jobs/$jobId'
     | '/workspaces/$workspaceSlug/kb/new'
     | '/workspaces/$workspaceSlug/models/$providerId'
     | '/workspaces/$workspaceSlug/api-keys/'
+    | '/workspaces/$workspaceSlug/integrations/'
     | '/workspaces/$workspaceSlug/kb/'
     | '/workspaces/$workspaceSlug/models/'
     | '/workspaces/$workspaceSlug/kb/$kbId/content'
@@ -635,10 +657,12 @@ export interface FileRouteTypes {
     | '/workspaces/$workspaceSlug/api-keys/$apiKeyId'
     | '/workspaces/$workspaceSlug/api-keys/new'
     | '/workspaces/$workspaceSlug/documents/$documentId'
+    | '/workspaces/$workspaceSlug/integrations/new'
     | '/workspaces/$workspaceSlug/jobs/$jobId'
     | '/workspaces/$workspaceSlug/kb/new'
     | '/workspaces/$workspaceSlug/models/$providerId'
     | '/workspaces/$workspaceSlug/api-keys'
+    | '/workspaces/$workspaceSlug/integrations'
     | '/workspaces/$workspaceSlug/kb'
     | '/workspaces/$workspaceSlug/models'
     | '/workspaces/$workspaceSlug/kb/$kbId/indexes'
@@ -688,10 +712,12 @@ export interface FileRouteTypes {
     | '/_authenticated/workspaces/$workspaceSlug/api-keys/$apiKeyId'
     | '/_authenticated/workspaces/$workspaceSlug/api-keys/new'
     | '/_authenticated/workspaces/$workspaceSlug/documents/$documentId'
+    | '/_authenticated/workspaces/$workspaceSlug/integrations/new'
     | '/_authenticated/workspaces/$workspaceSlug/jobs/$jobId'
     | '/_authenticated/workspaces/$workspaceSlug/kb/new'
     | '/_authenticated/workspaces/$workspaceSlug/models/$providerId'
     | '/_authenticated/workspaces/$workspaceSlug/api-keys/'
+    | '/_authenticated/workspaces/$workspaceSlug/integrations/'
     | '/_authenticated/workspaces/$workspaceSlug/kb/'
     | '/_authenticated/workspaces/$workspaceSlug/models/'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content'
@@ -918,6 +944,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRouteImport
       parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugRouteRoute
     }
+    '/_authenticated/workspaces/$workspaceSlug/integrations/': {
+      id: '/_authenticated/workspaces/$workspaceSlug/integrations/'
+      path: '/integrations'
+      fullPath: '/workspaces/$workspaceSlug/integrations/'
+      preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRouteImport
+      parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugRouteRoute
+    }
     '/_authenticated/workspaces/$workspaceSlug/api-keys/': {
       id: '/_authenticated/workspaces/$workspaceSlug/api-keys/'
       path: '/'
@@ -944,6 +977,13 @@ declare module '@tanstack/react-router' {
       path: '/jobs/$jobId'
       fullPath: '/workspaces/$workspaceSlug/jobs/$jobId'
       preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRouteImport
+      parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugRouteRoute
+    }
+    '/_authenticated/workspaces/$workspaceSlug/integrations/new': {
+      id: '/_authenticated/workspaces/$workspaceSlug/integrations/new'
+      path: '/integrations/new'
+      fullPath: '/workspaces/$workspaceSlug/integrations/new'
+      preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRouteImport
       parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugRouteRoute
     }
     '/_authenticated/workspaces/$workspaceSlug/documents/$documentId': {
@@ -1257,9 +1297,11 @@ interface AuthenticatedWorkspacesWorkspaceSlugRouteRouteChildren {
   AuthenticatedWorkspacesWorkspaceSlugIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugIndexRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteWithChildren
   AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute: typeof AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute
+  AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute: typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute
   AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute: typeof AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute
   AuthenticatedWorkspacesWorkspaceSlugKbNewRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbNewRoute
   AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute: typeof AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute
+  AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute
   AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
 }
@@ -1280,12 +1322,16 @@ const AuthenticatedWorkspacesWorkspaceSlugRouteRouteChildren: AuthenticatedWorks
       AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteWithChildren,
     AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute:
       AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute,
+    AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute:
+      AuthenticatedWorkspacesWorkspaceSlugIntegrationsNewRoute,
     AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute:
       AuthenticatedWorkspacesWorkspaceSlugJobsJobIdRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbNewRoute:
       AuthenticatedWorkspacesWorkspaceSlugKbNewRoute,
     AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute:
       AuthenticatedWorkspacesWorkspaceSlugModelsProviderIdRoute,
+    AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute:
+      AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute:
       AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute,
     AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute:

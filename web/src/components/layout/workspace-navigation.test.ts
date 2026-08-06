@@ -46,6 +46,35 @@ describe('buildWorkspaceNavigation', () => {
     }
   })
 
+  it('exposes the Integrations entry to owner/admin only', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const groups = buildWorkspaceNavigation('acme', role, false)
+      expect(groups[0]?.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: '集成',
+            url: '/workspaces/acme/integrations',
+          }),
+        ])
+      )
+    }
+  })
+
+  it('keeps invitations out of the workspace sidebar', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const groups = buildWorkspaceNavigation('acme', role, false)
+
+      expect(groups[0]?.items).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            title: '邀请',
+            url: '/workspaces/acme/invitations',
+          }),
+        ])
+      )
+    }
+  })
+
   it('hides configuration entries from workspace members', () => {
     const groups = buildWorkspaceNavigation('acme', 'member', false)
     expect(groups[0]?.items).not.toEqual(
@@ -53,6 +82,9 @@ describe('buildWorkspaceNavigation', () => {
     )
     expect(groups[0]?.items).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ title: '检索策略' })])
+    )
+    expect(groups[0]?.items).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ title: '集成' })])
     )
   })
 })

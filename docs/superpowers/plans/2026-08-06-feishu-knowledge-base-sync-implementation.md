@@ -675,7 +675,7 @@ git commit -m "feat(http): 飞书应用管理 API"
 - 列表卡片网格（`resource-card`），显示 name/app_id/status/绑定 KB 数；空态 `border-dashed` Card。
 - 表单窄页单 Card（max-w-3xl，RHF+Zod），「测试并保存」先调验证再 mutation；secret 不回显。
 
-- [ ] **Step 1: 写 API/schema/组件失败测试。**
+- [x] **Step 1: 写 API/schema/组件失败测试。**
 
 ```tsx
 it('hides secret on list and shows app_id', async () => {
@@ -688,23 +688,23 @@ it('requires name, app_id, app_secret', () => {
 })
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `pnpm --dir web test -- integrations`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 feature + 路由 + 导航。**
+- [x] **Step 3: 实现 feature + 路由 + 导航。**
 
 走 `apiClient`（HttpOnly cookie）；queryKey `['source-connections', ws]`；mutation 后 invalidate；表单错误用 FormMessage；加载 Skeleton、错误 Alert、空态 Card。
 
-- [ ] **Step 4: 验证组件、路由、build。**
+- [x] **Step 4: 验证组件、路由、build。**
 
 Run: `pnpm --dir web test -- integrations && pnpm --dir web check && pnpm --dir web build`
 
 Expected: PASS；secret 不在 DOM、权限入口对 member 隐藏、空/加载/错误态齐全。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add web/src/features/integrations web/src/routes web/src/components/layout web/src/lib/i18n

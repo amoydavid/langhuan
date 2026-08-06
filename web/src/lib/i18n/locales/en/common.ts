@@ -45,6 +45,7 @@ export const common = {
     navModels: 'Models',
     navMembers: 'Members',
     navSearchSettings: 'Search settings',
+    navIntegrations: 'Integrations',
     navInvitations: 'Invitations',
     navWorkspace: 'Workspace',
     navPlatformAdmin: 'Platform admin',
