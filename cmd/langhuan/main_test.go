@@ -15,6 +15,11 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
+	embeddingadapter "github.com/dajee/langhuan/internal/adapters/embedding"
+	ollamaembedding "github.com/dajee/langhuan/internal/adapters/embedding/ollama"
+	openaembedding "github.com/dajee/langhuan/internal/adapters/embedding/openai"
+	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
+	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
@@ -125,6 +130,26 @@ func TestBuildProviderDescriptorRegistryExposesSiliconFlowCapabilities(t *testin
 		descriptor.Capabilities[0] != value.CapabilityEmbedding ||
 		descriptor.Capabilities[1] != value.CapabilityRerank {
 		t.Fatalf("capabilities = %#v", descriptor.Capabilities)
+	}
+}
+
+func TestBuildProviderDescriptorRegistryUsesOnlyRegisteredFactories(t *testing.T) {
+	embeddingRegistry, err := embeddingadapter.NewRegistry(openaembedding.NewFactory(), ollamaembedding.NewFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerankRegistry, err := rerankadapter.NewRegistry(rerankcompatible.NewFactory())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	descriptors, err := buildProviderDescriptorRegistry(embeddingRegistry, rerankRegistry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := descriptors.Options()
+	if len(options) != 3 || options[0].Key != "ollama" || options[1].Key != "openai" || options[2].Key != "rerank_compatible" {
+		t.Fatalf("provider options = %#v", options)
 	}
 }
 

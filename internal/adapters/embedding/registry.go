@@ -53,6 +53,15 @@ func (r *Registry) Factory(modelType value.ModelType, provider string) (embeddin
 	return factory, nil
 }
 
+// Factories 返回已注册的全部 Embedding Factory，供装配层枚举可用 provider。
+func (r *Registry) Factories() []embeddingport.Factory {
+	result := make([]embeddingport.Factory, 0, len(r.factories))
+	for _, factory := range r.factories {
+		result = append(result, factory)
+	}
+	return result
+}
+
 func factoryIsNil(factory embeddingport.Factory) bool {
 	if factory == nil {
 		return true

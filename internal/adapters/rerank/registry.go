@@ -46,6 +46,15 @@ func (r *Registry) Factory(provider string) (rerankport.Factory, error) {
 	return factory, nil
 }
 
+// Factories 返回已注册的全部 Rerank Factory，供装配层枚举可用 provider。
+func (r *Registry) Factories() []rerankport.Factory {
+	result := make([]rerankport.Factory, 0, len(r.factories))
+	for _, factory := range r.factories {
+		result = append(result, factory)
+	}
+	return result
+}
+
 func normalizeProvider(provider string) string {
 	return strings.ToLower(strings.TrimSpace(provider))
 }

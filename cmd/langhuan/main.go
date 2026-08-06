@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -141,6 +142,16 @@ type runtimeServices struct {
 	maxFileSize            int64
 	apiKeys                *service.APIKeyService
 	mcpInlineLimit         int64
+}
+
+type embeddingFactoryCatalog interface {
+	embeddingport.FactoryRegistry
+	Factories() []embeddingport.Factory
+}
+
+type rerankFactoryCatalog interface {
+	rerankport.FactoryRegistry
+	Factories() []rerankport.Factory
 }
 
 // mcpDocumentStatusReader 组合 DocumentService 与 JobService，满足
@@ -322,7 +333,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	return app, nil
 }
 
-func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserProviderRegistry *parserprovideradapter.Registry, log *slog.Logger) (*runtimeServices, error) {
+func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingFactoryCatalog, rerankRegistry rerankFactoryCatalog, parserProviderRegistry *parserprovideradapter.Registry, log *slog.Logger) (*runtimeServices, error) {
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
@@ -543,7 +554,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	}, nil
 }
 
-func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
+func buildRuntimeEmbeddingRegistry() (embeddingFactoryCatalog, error) {
 	return embeddingadapter.NewRegistry(
 		openaembedding.NewFactory(),
 		arkembedding.NewFactory(),
@@ -556,7 +567,7 @@ func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
 
 // buildRuntimeRerankRegistry 构建 Rerank Factory 注册表。
 // 当前注册 rerank_compatible 一个 Provider；后续原生 adapter 出现真实需求时在此追加。
-func buildRuntimeRerankRegistry() (rerankport.FactoryRegistry, error) {
+func buildRuntimeRerankRegistry() (rerankFactoryCatalog, error) {
 	return rerankadapter.NewRegistry(
 		rerankcompatible.NewFactory(),
 		siliconflowadapter.NewRerankFactory(),
@@ -575,41 +586,38 @@ func buildRuntimeParserProviderRegistry(cfg *config.Config) (*parserprovideradap
 }
 
 // buildProviderDescriptorRegistry 从已装配的能力 Factory 构建显式 Provider 描述符。
-func buildProviderDescriptorRegistry(embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserRegistry *parserprovideradapter.Registry) (*service.ProviderDescriptorRegistry, error) {
-	descriptors := make([]service.ProviderDescriptor, 0, 7)
-	for _, provider := range []string{"openai", "ark", "ollama", "dashscope", "tencentcloud"} {
-		factory, err := embeddingRegistry.Factory(value.ModelTypeEmbedding, provider)
-		if err != nil {
-			return nil, err
+func buildProviderDescriptorRegistry(embeddingRegistry embeddingFactoryCatalog, rerankRegistry rerankFactoryCatalog, parserRegistry *parserprovideradapter.Registry) (*service.ProviderDescriptorRegistry, error) {
+	byKey := make(map[string]service.ProviderDescriptor)
+	add := func(descriptor service.ProviderDescriptor) {
+		key := strings.ToLower(strings.TrimSpace(descriptor.Key))
+		if existing, ok := byKey[key]; ok {
+			existing.Capabilities = append(existing.Capabilities, descriptor.Capabilities...)
+			byKey[key] = existing
+			return
 		}
-		descriptors = append(descriptors, service.EmbeddingProviderDescriptor(factory))
+		byKey[key] = descriptor
+	}
+	for _, factory := range embeddingRegistry.Factories() {
+		add(service.EmbeddingProviderDescriptor(factory))
 	}
 	if rerankRegistry != nil {
-		factory, err := rerankRegistry.Factory("rerank_compatible")
-		if err != nil {
-			return nil, err
+		for _, factory := range rerankRegistry.Factories() {
+			add(service.RerankProviderDescriptor(factory))
 		}
-		descriptors = append(descriptors, service.RerankProviderDescriptor(factory))
-
-		siliconFlowRerank, err := rerankRegistry.Factory(siliconflowadapter.ProviderKey)
-		if err != nil {
-			return nil, err
-		}
-		siliconFlowEmbedding, err := embeddingRegistry.Factory(value.ModelTypeEmbedding, siliconflowadapter.ProviderKey)
-		if err != nil {
-			return nil, err
-		}
-		if siliconFlowEmbedding.Provider() != siliconFlowRerank.Provider() {
-			return nil, fmt.Errorf("SiliconFlow capability Factory 的 provider key 不一致")
-		}
-		descriptor := service.EmbeddingProviderDescriptor(siliconFlowEmbedding)
-		descriptor.Capabilities = []value.ProviderCapability{value.CapabilityEmbedding, value.CapabilityRerank}
-		descriptors = append(descriptors, descriptor)
 	}
 	if parserRegistry != nil {
 		for _, factory := range parserRegistry.Factories() {
-			descriptors = append(descriptors, service.ParserProviderDescriptor(factory))
+			add(service.ParserProviderDescriptor(factory))
 		}
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	descriptors := make([]service.ProviderDescriptor, 0, len(keys))
+	for _, key := range keys {
+		descriptors = append(descriptors, byKey[key])
 	}
 	return service.NewProviderDescriptorRegistry(descriptors...)
 }
