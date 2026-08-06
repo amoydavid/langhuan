@@ -253,6 +253,8 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 - 平台共享、自有模型、跨 Workspace 404、角色权限、AES 密文、引用冲突和知识库显式绑定均通过真实 PostgreSQL/Gin/Auth E2E。
 - 数据库不为 `provider` 增加枚举 CHECK，未来新增 Provider 不要求修改数据库枚举。
+
+补充交付：模型连接已升级为显式多能力 Provider descriptor；同一连接可承载多个 Embedding/Rerank 模型。SiliconFlow 已接入共享 API Key、双 Endpoint、模型能力/数量聚合和 Web Console 的“全部模型 / 连接管理”双视图；Workspace 与平台管理目录支持 type/status/scope/provider/q 筛选，Generation selectable 接口合同保持不变。
 - v0.4.0 已把已解析的 Embedder 接入按 Revision/Generation 驱动的索引流水线。
 
 ### v0.4.0 - 知识事实模型 v2、Embedding 与混合检索（已完成）

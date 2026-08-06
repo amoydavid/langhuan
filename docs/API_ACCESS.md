@@ -163,6 +163,17 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 
 MCP 业务错误以 `isError=true` 的结构化结果返回同一份 `{"error":{"code","message","retryable"}}`，不泄漏底层驱动或 Provider 细节。
 
+## 8.1 模型连接与全局模型目录
+
+模型连接管理接口：
+
+- `GET /api/v1/admin/model-providers`：平台连接；`GET /api/v1/workspaces/:workspace_slug/model-providers`：当前工作区可见连接。
+- Provider 响应包含 `capabilities`（由服务端 descriptor 生成）和 `model_counts.total/active/embedding/rerank`；不返回凭证明文。
+- `GET /api/v1/admin/models?type=all|embedding|rerank&status=all|active|disabled&scope=...&q=...` 返回平台模型目录。
+- `GET /api/v1/workspaces/:workspace_slug/models?management=true&type=...&status=...&scope=...&q=...` 返回管理目录；不带 `management=true` 且使用 `type=embedding|rerank` 时仍是 Generation 的精确 selectable 合同。
+
+SiliconFlow 使用一个 `provider=siliconflow` 连接，同时承载 Embedding 与 Rerank 模型：默认路径为 `/v1/embeddings` 与 `/v1/rerank`，凭证只保存一份。
+
 ## 9. 安全须知
 
 - 生产环境必须使用 HTTPS。

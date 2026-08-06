@@ -13,7 +13,7 @@ flowchart LR
     Redis[("Redis / asynq")]
     Raw["RawDocumentStore"]
     Parser["Parser Registry"]
-    Embed["Embedding Providers"]
+    Embed["Provider connections<br/>Embedding / Rerank"]
 
     Browser -->|"HttpOnly session /api/v1"| Langhuan
     Client -->|"REST"| Langhuan
@@ -25,6 +25,19 @@ flowchart LR
 ```
 
 同一个二进制承载 REST、MCP HTTP 挂载点和 worker。Redis 只承载任务队列；Document、Revision、Job、Generation 和检索投影状态以 PostgreSQL 为准。
+
+### Provider 连接与模型
+
+`model_providers` 表示共享连接（Endpoint、加密凭证、scope、status），`models` 表示连接下的具体模型实例。服务启动时由显式 `ProviderDescriptorRegistry` 声明每个 provider key 的能力；应用服务按 `model.type` 精确路由 Factory，不再按 embedding/rerank registry 的 first-hit 顺序推断。一个连接可以声明多个能力，例如 `siliconflow` 同时声明 `embedding` 与 `rerank`，两类模型共享同一 API Key 与 Base URL。
+
+```text
+ProviderDescriptor(siliconflow)
+├── shared config/credentials codec
+├── Embedding Factory -> /v1/embeddings
+└── Rerank Factory    -> /v1/rerank
+```
+
+Provider API 返回服务端 descriptor 的 `capabilities` 与按模型 status/type 聚合的 `model_counts`；管理型模型目录支持 `type/status/scope/provider_id/q` 筛选。Generation 选择接口仍只接受精确的 `type=embedding|rerank`，保持原合同。
 
 ## 2. 边界与分层
 
