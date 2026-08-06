@@ -36,13 +36,24 @@ type ModelParameters struct {
 	BatchSize int `json:"batch_size"`
 }
 
-// Factory builds OpenAI Embedding clients.
-type Factory struct{}
+// Factory builds OpenAI-compatible Embedding clients.
+type Factory struct {
+	provider string
+}
 
 // NewFactory creates an OpenAI factory.
-func NewFactory() *Factory { return &Factory{} }
+func NewFactory() *Factory { return NewFactoryWithProvider("openai") }
 
-func (f *Factory) Provider() string { return "openai" }
+// NewFactoryWithProvider 创建复用 OpenAI wire contract、但保留独立 provider key 的 Factory。
+func NewFactoryWithProvider(provider string) *Factory {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = "openai"
+	}
+	return &Factory{provider: provider}
+}
+
+func (f *Factory) Provider() string { return f.provider }
 
 func (f *Factory) CredentialFields() []string { return []string{"api_key", "custom_headers"} }
 

@@ -24,6 +24,13 @@ func TestFactoryProviderAndCredentialFields(t *testing.T) {
 	}
 }
 
+func TestFactorySupportsExplicitProviderKey(t *testing.T) {
+	t.Parallel()
+	if got := compatible.NewFactoryWithProvider("siliconflow").Provider(); got != "siliconflow" {
+		t.Fatalf("provider = %q", got)
+	}
+}
+
 func TestFactoryDecodesProviderAndModel(t *testing.T) {
 	t.Parallel()
 	factory := compatible.NewFactory()

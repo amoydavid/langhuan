@@ -89,18 +89,42 @@ func TestRuntimeNeedsQueueClientWhenHTTPOrWorkerEnabled(t *testing.T) {
 	}
 }
 
-func TestBuildRuntimeEmbeddingRegistrySupportsExactlyV031Providers(t *testing.T) {
+func TestBuildRuntimeEmbeddingRegistrySupportsConfiguredProviders(t *testing.T) {
 	registry, err := buildRuntimeEmbeddingRegistry()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, provider := range []string{"openai", "ark", "ollama", "dashscope", "tencentcloud"} {
+	for _, provider := range []string{"openai", "ark", "ollama", "dashscope", "tencentcloud", "siliconflow"} {
 		if _, err := registry.Factory(value.ModelTypeEmbedding, provider); err != nil {
 			t.Fatalf("provider %s: %v", provider, err)
 		}
 	}
 	if _, err := registry.Factory(value.ModelTypeEmbedding, "qianfan"); !errors.Is(err, domainerrors.ErrUnsupportedProvider) {
 		t.Fatalf("qianfan error = %v", err)
+	}
+}
+
+func TestBuildProviderDescriptorRegistryExposesSiliconFlowCapabilities(t *testing.T) {
+	embeddingRegistry, err := buildRuntimeEmbeddingRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerankRegistry, err := buildRuntimeRerankRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptors, err := buildProviderDescriptorRegistry(embeddingRegistry, rerankRegistry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := descriptors.Descriptor("siliconflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(descriptor.Capabilities) != 2 ||
+		descriptor.Capabilities[0] != value.CapabilityEmbedding ||
+		descriptor.Capabilities[1] != value.CapabilityRerank {
+		t.Fatalf("capabilities = %#v", descriptor.Capabilities)
 	}
 }
 

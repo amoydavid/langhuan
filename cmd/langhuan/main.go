@@ -38,6 +38,7 @@ import (
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
 	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
+	siliconflowadapter "github.com/dajee/langhuan/internal/adapters/siliconflow"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
 	s3storage "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	"github.com/dajee/langhuan/internal/application/dto"
@@ -549,13 +550,17 @@ func buildRuntimeEmbeddingRegistry() (embeddingport.FactoryRegistry, error) {
 		ollamaembedding.NewFactory(),
 		dashscopeembedding.NewFactory(),
 		tencentcloudembedding.NewFactory(),
+		siliconflowadapter.NewEmbeddingFactory(),
 	)
 }
 
 // buildRuntimeRerankRegistry 构建 Rerank Factory 注册表。
 // 当前注册 rerank_compatible 一个 Provider；后续原生 adapter 出现真实需求时在此追加。
 func buildRuntimeRerankRegistry() (rerankport.FactoryRegistry, error) {
-	return rerankadapter.NewRegistry(rerankcompatible.NewFactory())
+	return rerankadapter.NewRegistry(
+		rerankcompatible.NewFactory(),
+		siliconflowadapter.NewRerankFactory(),
+	)
 }
 
 // buildRuntimeParserProviderRegistry 构建解析器 Provider Factory 注册表。
@@ -585,6 +590,21 @@ func buildProviderDescriptorRegistry(embeddingRegistry embeddingport.FactoryRegi
 			return nil, err
 		}
 		descriptors = append(descriptors, service.RerankProviderDescriptor(factory))
+
+		siliconFlowRerank, err := rerankRegistry.Factory(siliconflowadapter.ProviderKey)
+		if err != nil {
+			return nil, err
+		}
+		siliconFlowEmbedding, err := embeddingRegistry.Factory(value.ModelTypeEmbedding, siliconflowadapter.ProviderKey)
+		if err != nil {
+			return nil, err
+		}
+		if siliconFlowEmbedding.Provider() != siliconFlowRerank.Provider() {
+			return nil, fmt.Errorf("SiliconFlow capability Factory 的 provider key 不一致")
+		}
+		descriptor := service.EmbeddingProviderDescriptor(siliconFlowEmbedding)
+		descriptor.Capabilities = []value.ProviderCapability{value.CapabilityEmbedding, value.CapabilityRerank}
+		descriptors = append(descriptors, descriptor)
 	}
 	if parserRegistry != nil {
 		for _, factory := range parserRegistry.Factories() {

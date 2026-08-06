@@ -31,6 +31,7 @@ type client struct {
 	httpClient *http.Client
 	endpoint   string
 	apiKey     string
+	provider   string
 	modelName  string
 	retryTimes int
 	parameters ModelParameters
@@ -87,12 +88,12 @@ func (c *client) Rerank(ctx context.Context, input rerankport.RerankInput) (*rer
 	if lastErr == nil {
 		lastErr = fmt.Errorf("重排请求失败")
 	}
-	return nil, sanitizeLastError(lastErr)
+	return nil, sanitizeLastError(c.provider, lastErr)
 }
 
 // sanitizeLastError 仅清洗上游协议/网络错误。已经是领域哨兵错误或 context
 // 取消的错误不再二次包装，保持 errors.Is 判定的精确性。
-func sanitizeLastError(err error) error {
+func sanitizeLastError(provider string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -104,7 +105,10 @@ func sanitizeLastError(err error) error {
 			return err
 		}
 	}
-	return rerankadapter.SanitizeProviderError(providerKey, err)
+	if strings.TrimSpace(provider) == "" {
+		provider = providerKey
+	}
+	return rerankadapter.SanitizeProviderError(provider, err)
 }
 
 // rerankDomainSentinels 列出已经在 client 内部确定化的领域哨兵错误，

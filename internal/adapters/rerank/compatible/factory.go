@@ -64,13 +64,24 @@ type ModelParameters struct {
 	MaxDocumentChars int `json:"max_document_chars"`
 }
 
-// Factory 构建 rerank_compatible 客户端。
-type Factory struct{}
+// Factory 构建 rerank_compatible wire contract 客户端。
+type Factory struct {
+	provider string
+}
 
 // NewFactory 创建 rerank_compatible factory。
-func NewFactory() *Factory { return &Factory{} }
+func NewFactory() *Factory { return NewFactoryWithProvider(providerKey) }
 
-func (f *Factory) Provider() string           { return providerKey }
+// NewFactoryWithProvider 创建复用 compatible wire contract、但保留独立 provider key 的 Factory。
+func NewFactoryWithProvider(provider string) *Factory {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = providerKey
+	}
+	return &Factory{provider: provider}
+}
+
+func (f *Factory) Provider() string           { return f.provider }
 func (f *Factory) CredentialFields() []string { return []string{"api_key", "custom_headers"} }
 
 func (f *Factory) DecodeProvider(input rerankport.ProviderDecodeInput) (map[string]any, []byte, error) {
@@ -171,6 +182,7 @@ func (f *Factory) NewClient(ctx context.Context, input rerankport.ClientInput) (
 		httpClient: httpClient,
 		endpoint:   endpoint,
 		apiKey:     credentials.APIKey,
+		provider:   f.Provider(),
 		modelName:  strings.TrimSpace(input.ModelName),
 		retryTimes: config.RetryTimes,
 		parameters: parameters,

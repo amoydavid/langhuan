@@ -28,6 +28,13 @@ func TestOpenAIProviderModesAndCredentials(t *testing.T) {
 	}
 }
 
+func TestOpenAIFactorySupportsExplicitProviderKey(t *testing.T) {
+	t.Parallel()
+	if got := NewFactoryWithProvider("siliconflow").Provider(); got != "siliconflow" {
+		t.Fatalf("provider = %q", got)
+	}
+}
+
 func TestOpenAINewClientBuildsNativeEmbedder(t *testing.T) {
 	t.Parallel()
 	factory := NewFactory()
