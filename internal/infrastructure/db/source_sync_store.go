@@ -53,6 +53,24 @@ func (s *SourceSyncDBStore) CreateSourceSyncJob(ctx context.Context, job *model.
 	})
 }
 
+// CountActiveByConnection 统计某 connection 下进行中的 source_sync 任务数（pending/running）。
+// 供 Meta Scheduler 按应用限流使用。workspaceID/connectionID 为空时返回校验错误。
+func (s *SourceSyncDBStore) CountActiveByConnection(ctx context.Context, workspaceID, connectionID uuid.UUID) (int, error) {
+	if workspaceID == uuid.Nil || connectionID == uuid.Nil {
+		return 0, fmt.Errorf("%w: CountActiveByConnection workspace/connection 不能为空", domainerrors.ErrValidation)
+	}
+	var count int64
+	err := s.db.WithContext(ctx).Model(&JobRow{}).
+		Where("workspace_id = ? AND source_connection_id = ? AND type = ? AND status IN ?",
+			workspaceID, connectionID, model.SourceSyncJobType,
+			[]string{string(value.JobStatusPending), string(value.JobStatusRunning)},
+		).Count(&count).Error
+	if err != nil {
+		return 0, translateDBError(err, "统计 connection 进行中任务失败")
+	}
+	return int(count), nil
+}
+
 // FailCreatedSync 把刚创建的同步 Document/Revision/Job 标记为失败（入队失败兜底）。
 func (s *SourceSyncDBStore) FailCreatedSync(
 	ctx context.Context,

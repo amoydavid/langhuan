@@ -32,20 +32,23 @@ type ChunkingConfig struct {
 
 // KnowledgeBase is the API representation of a resolved KnowledgeBase.
 type KnowledgeBase struct {
-	ID                      uuid.UUID             `json:"id"`
-	WorkspaceID             uuid.UUID             `json:"workspace_id"`
-	Name                    string                `json:"name"`
-	Description             string                `json:"description"`
-	EmbeddingModelID        uuid.UUID             `json:"embedding_model_id"`
-	EmbeddingModel          EmbeddingModelSummary `json:"embedding_model"`
-	ChunkingConfig          ChunkingConfig        `json:"chunking_config"`
-	RetrievalConfig         map[string]any        `json:"retrieval_config"`
-	ContentVersion          int64                 `json:"content_version"`
-	ActiveIndexGenerationID *uuid.UUID            `json:"active_index_generation_id"`
-	FileTreeRootID          uuid.UUID             `json:"file_tree_root_id"`
-	Metadata                map[string]any        `json:"metadata"`
-	CreatedAt               time.Time             `json:"created_at"`
-	UpdatedAt               time.Time             `json:"updated_at"`
+	ID                      uuid.UUID                     `json:"id"`
+	WorkspaceID             uuid.UUID                     `json:"workspace_id"`
+	Name                    string                        `json:"name"`
+	Description             string                        `json:"description"`
+	EmbeddingModelID        uuid.UUID                     `json:"embedding_model_id"`
+	EmbeddingModel          EmbeddingModelSummary         `json:"embedding_model"`
+	ChunkingConfig          ChunkingConfig                `json:"chunking_config"`
+	RetrievalConfig         map[string]any                `json:"retrieval_config"`
+	ContentVersion          int64                         `json:"content_version"`
+	ActiveIndexGenerationID *uuid.UUID                    `json:"active_index_generation_id"`
+	FileTreeRootID          uuid.UUID                     `json:"file_tree_root_id"`
+	Metadata                map[string]any                `json:"metadata"`
+	SourceType              value.KnowledgeBaseSourceType `json:"source_type"`
+	SourceConfig            map[string]any                `json:"source_config"`
+	SourceConnectionID      *uuid.UUID                    `json:"source_connection_id"`
+	CreatedAt               time.Time                     `json:"created_at"`
+	UpdatedAt               time.Time                     `json:"updated_at"`
 }
 
 // KnowledgeBaseFromResolved builds an API DTO including current availability.
@@ -77,6 +80,7 @@ func KnowledgeBaseFromResolved(resolved *model.ResolvedKnowledgeBase) *Knowledge
 		RetrievalConfig:         cloneDTOMap(resolved.RetrievalConfig),
 		ContentVersion:          kb.ContentVersion,
 		ActiveIndexGenerationID: kb.ActiveIndexGenerationID, FileTreeRootID: kb.FileTreeRootID, Metadata: metadata,
+		SourceType: kb.SourceType, SourceConfig: cloneDTOMap(kb.SourceConfig), SourceConnectionID: kb.SourceConnectionID,
 		CreatedAt: kb.CreatedAt, UpdatedAt: kb.UpdatedAt,
 	}
 }

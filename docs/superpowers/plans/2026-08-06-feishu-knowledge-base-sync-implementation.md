@@ -498,7 +498,7 @@ git commit -m "feat(source): source_sync worker 与手动触发 API"
 
 > 限流前置：`source_sync` job 写入时填 `source_connection_id`（Task 2 已加列）。`CountActiveByConnection` 查 `status IN ('pending','running')`，命中 Task 1 加的部分索引。
 
-- [ ] **Step 1: 写限流与 KB 创建入队失败测试。**
+- [x] **Step 1: 写限流与 KB 创建入队失败测试。**
 
 ```go
 func TestSchedulerRespectsPerConnectionConcurrency(t *testing.T) {
@@ -529,23 +529,23 @@ func TestCreateFeishuKbEnqueuesFirstSyncAfterCommit(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/application/service ./internal/interfaces/http -run 'Scheduler|TryDispatch|CreateFeishuKb' -count=1`
 
 Expected: FAIL，scheduler/CountActive/KB 创建来源字段不存在。
 
-- [ ] **Step 3: 实现 scheduler + CountActive + KB 创建扩展。**
+- [x] **Step 3: 实现 scheduler + CountActive + KB 创建扩展。**
 
 Scheduler 用 `time.Ticker` 单 goroutine（context 受控，随 worker server 启停）；`cron.Next(now)` 算 next_sync_at（用 `robfig/cron/v3`）。KB 创建：`WithinWorkspace` 提交后（参照 `index_generation.go:188` 事务后入队先例）入队；`KnowledgeBaseService` 加 `sourceSyncEnqueuer` 依赖。`createKnowledgeBaseRequest` 加 source_type/source_config/source_connection_id。
 
-- [ ] **Step 4: 运行聚焦测试 + go vet。**
+- [x] **Step 4: 运行聚焦测试 + go vet。**
 
 Run: `go test ./internal/application/service ./internal/interfaces/http -run 'Scheduler|TryDispatch|CreateFeishu|SourceSync' -count=1 && go vet ./internal/application/service/...`
 
 Expected: PASS；限流 cap 生效、续跑填空、KB 创建后入队、cron 推进。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/application/service internal/interfaces/http internal/infrastructure/db internal/infrastructure/config cmd/langhuan config.example.yaml

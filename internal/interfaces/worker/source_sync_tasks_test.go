@@ -138,6 +138,75 @@ func TestSourceSyncHandleHandlesNilStoreGracefully(t *testing.T) {
 	}
 }
 
+// TestSourceSyncHandleDispatchesNextOnSuccess 验证任务成功后若 payload 带 connection_id，
+// 则触发 Dispatcher.TryDispatchConnection 续跑同 connection 的到期 KB。
+func TestSourceSyncHandleDispatchesNextOnSuccess(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{}
+	store := &sourceSyncTaskStoreSpy{}
+	dispatcher := &sourceSyncDispatcherSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store, Dispatcher: dispatcher}
+	connID := uuid.New()
+	payload := SourceSyncTaskPayload{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New(), ConnectionID: connID,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err != nil {
+		t.Fatalf("Handle err = %v", err)
+	}
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1", len(dispatcher.calls))
+	}
+	if dispatcher.calls[0].ConnectionID != connID {
+		t.Fatalf("dispatch connection = %s, want %s", dispatcher.calls[0].ConnectionID, connID)
+	}
+	if dispatcher.calls[0].WorkspaceID != payload.WorkspaceID {
+		t.Fatalf("dispatch workspace = %s, want %s", dispatcher.calls[0].WorkspaceID, payload.WorkspaceID)
+	}
+}
+
+// TestSourceSyncHandleDispatchesNextOnPermanentFailure 验证永久失败（SkipRetry）后也触发续跑。
+func TestSourceSyncHandleDispatchesNextOnPermanentFailure(t *testing.T) {
+	perm := fmt.Errorf("%w: 知识库未绑定来源连接", domainerrors.ErrValidation)
+	runner := &sourceSyncRunnerSpy{err: perm}
+	store := &sourceSyncTaskStoreSpy{}
+	dispatcher := &sourceSyncDispatcherSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store, Dispatcher: dispatcher}
+	connID := uuid.New()
+	payload := SourceSyncTaskPayload{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New(), ConnectionID: connID,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded))
+	if len(dispatcher.calls) != 1 {
+		t.Fatalf("dispatcher calls = %d, want 1 (permanent failure releases slot)", len(dispatcher.calls))
+	}
+}
+
+// TestSourceSyncHandleDoesNotDispatchWithoutConnectionID 验证无 connection_id 时不触发续跑。
+func TestSourceSyncHandleDoesNotDispatchWithoutConnectionID(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{}
+	store := &sourceSyncTaskStoreSpy{}
+	dispatcher := &sourceSyncDispatcherSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store, Dispatcher: dispatcher}
+	payload := SourceSyncTaskPayload{WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New()}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err != nil {
+		t.Fatalf("Handle err = %v", err)
+	}
+	if len(dispatcher.calls) != 0 {
+		t.Fatalf("dispatcher calls = %d, want 0 (no connection_id)", len(dispatcher.calls))
+	}
+}
+
 func TestIsPermanentSourceSyncTaskError(t *testing.T) {
 	if !isPermanentSourceSyncTaskError(fmt.Errorf("%w: x", domainerrors.ErrValidation)) {
 		t.Fatal("ErrValidation should be permanent")
@@ -207,4 +276,20 @@ func (s *sourceSyncTaskStoreSpy) ensure() {
 	if s.failed == nil {
 		s.failed = map[uuid.UUID]string{}
 	}
+}
+
+// sourceSyncDispatcherSpy 记录 TryDispatchConnection 调用。
+type sourceSyncDispatcherSpy struct {
+	calls []sourceSyncDispatchCall
+	err   error
+}
+
+type sourceSyncDispatchCall struct {
+	WorkspaceID  uuid.UUID
+	ConnectionID uuid.UUID
+}
+
+func (d *sourceSyncDispatcherSpy) TryDispatchConnection(_ context.Context, workspaceID, connectionID uuid.UUID) error {
+	d.calls = append(d.calls, sourceSyncDispatchCall{WorkspaceID: workspaceID, ConnectionID: connectionID})
+	return d.err
 }

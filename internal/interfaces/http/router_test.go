@@ -32,6 +32,7 @@ import (
 type fakeKnowledgeBaseService struct {
 	items       map[uuid.UUID]*dto.KnowledgeBase
 	updateInput service.UpdateKnowledgeBaseBasicsInput
+	createInput *service.CreateKnowledgeBaseInput
 }
 
 type fakeWorkspaceService struct {
@@ -78,6 +79,8 @@ func (s *fakeKnowledgeBaseService) Create(_ context.Context, input service.Creat
 	if input.Name == "" || input.EmbeddingModelID == uuid.Nil {
 		return nil, domainerrors.ErrValidation
 	}
+	record := input
+	s.createInput = &record
 	now := time.Date(2026, 6, 17, 8, 0, 0, 0, time.UTC)
 	kb := &dto.KnowledgeBase{
 		ID: uuid.New(), WorkspaceID: input.WorkspaceID,
@@ -85,6 +88,7 @@ func (s *fakeKnowledgeBaseService) Create(_ context.Context, input service.Creat
 		EmbeddingModelID: input.EmbeddingModelID,
 		EmbeddingModel:   dto.EmbeddingModelSummary{ID: input.EmbeddingModelID, Name: "embed", DisplayName: "Embedding", Provider: "openai", ProviderDisplayName: "OpenAI", Dimensions: 1024, Available: true},
 		ChunkingConfig:   dto.ChunkingConfig{ChunkSize: 512, ChunkOverlap: 80}, Metadata: map[string]any{},
+		SourceType: input.SourceType, SourceConfig: input.SourceConfig, SourceConnectionID: input.SourceConnectionID,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if kb.Metadata == nil {

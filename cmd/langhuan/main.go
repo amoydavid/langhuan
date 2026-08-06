@@ -135,6 +135,7 @@ type runtimeServices struct {
 	indexGenerations        *service.IndexGenerationService
 	indexGenerationBuilder  *service.IndexGenerationBuildService
 	sourceSync              *service.SourceSyncService
+	sourceSyncScheduler     *service.SourceSyncScheduler
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
 	retrievalCleanup        *service.RetrievalCleanupService
@@ -346,9 +347,10 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			Logger:  log,
 		})
 		worker.RegisterSourceSyncHandler(app.workerMux, worker.SourceSyncHandler{
-			Runner: app.services.sourceSync,
-			Store:  app.services.documentTaskStore,
-			Logger: log,
+			Runner:     app.services.sourceSync,
+			Store:      app.services.documentTaskStore,
+			Dispatcher: app.services.sourceSyncScheduler,
+			Logger:     log,
 		})
 	}
 
@@ -538,6 +540,16 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		RootResolver:            feishu.ParseURL,
 	})
 
+	// Meta Scheduler：周期扫描到期飞书 KB，按来源连接限流入队。
+	sourceSyncScheduler := service.NewSourceSyncScheduler(service.SourceSyncSchedulerDeps{
+		KBRepo:                     kbRepo,
+		Store:                      sourceSyncStore,
+		SyncService:                sourceSync,
+		MaxConcurrentPerConnection: cfg.SourceSync.MaxConcurrentPerConnection,
+		Interval:                   time.Duration(cfg.SourceSync.SchedulerIntervalSeconds) * time.Second,
+		Logger:                     log,
+	})
+
 	return &runtimeServices{
 		userRepo:       userRepo,
 		sessionRepo:    sessionRepo,
@@ -564,7 +576,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		workspaceReadiness:      service.NewWorkspaceReadinessService(workspaceReadinessRepo),
 		workspaceSearchSettings: workspaceSearchSettings,
 		knowledgeBaseSummary:    service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
-		knowledgeBases:          service.NewKnowledgeBaseService(kbRepo, kbRepo),
+		knowledgeBases:          service.NewKnowledgeBaseService(kbRepo, kbRepo).WithSyncEnqueuer(sourceSync, log),
 		modelProviders:          service.NewModelProviderService(modelProviderRepo, credentialCipher, providerResolver),
 		models:                  service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry, rerankRegistry, providerDescriptors),
 		modelConnectionTests:    service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry, rerankRegistry),
@@ -589,6 +601,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		indexGenerations:       indexGenerations,
 		indexGenerationBuilder: indexGenerationBuilder,
 		sourceSync:             sourceSync,
+		sourceSyncScheduler:    sourceSyncScheduler,
 		search:                 search,
 		multiSearch:            multiSearch,
 		retrievalCleanup:       retrievalCleanup,
@@ -820,6 +833,10 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 		// 拉起全部子组件）；退出时由 app.shutdown 调用 workerServer.Shutdown 优雅关闭。
 		if err := a.workerServer.Start(a.workerMux); err != nil {
 			return fmt.Errorf("启动 asynq worker 失败: %w", err)
+		}
+		// 来源同步 Meta Scheduler：随 worker 生命周期运行，ctx 取消即停（随 shutdown 取消）。
+		if a.services != nil && a.services.sourceSyncScheduler != nil {
+			go func() { _ = a.services.sourceSyncScheduler.Run(ctx) }()
 		}
 		readyCh <- struct{}{}
 	}

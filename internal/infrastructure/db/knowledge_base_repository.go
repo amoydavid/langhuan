@@ -156,6 +156,64 @@ func (r *KnowledgeBaseRepository) UpdateBasics(ctx context.Context, input appser
 	})
 }
 
+// ListDueFeishuKBs 返回所有飞书来源（feishu_drive/feishu_wiki）且 source_config.next_sync_at <= now
+// 的知识库。connectionID 非零值时仅返回绑定该 connection 的 KB。next_sync_at 字段缺失的 KB 视为
+// 立即到期（首次同步）。结果按 workspace_id 排序以保证 Tick 分组稳定。
+func (r *KnowledgeBaseRepository) ListDueFeishuKBs(ctx context.Context, now time.Time, connectionID uuid.UUID) ([]appservice.DueKnowledgeBase, error) {
+	type dueRow struct {
+		WorkspaceID        uuid.UUID `gorm:"column:workspace_id"`
+		ID                 uuid.UUID `gorm:"column:id"`
+		SourceConnectionID uuid.UUID `gorm:"column:source_connection_id"`
+	}
+	var rows []dueRow
+	query := r.db.WithContext(ctx).Table("knowledge_bases").
+		Select("workspace_id, id, source_connection_id").
+		Where("deleted_at IS NULL").
+		Where("source_type IN ?", []string{string(value.SourceTypeFeishuDrive), string(value.SourceTypeFeishuWiki)}).
+		Where("source_connection_id IS NOT NULL").
+		Where("(source_config->>'next_sync_at')::timestamptz <= ?", now.UTC())
+	if connectionID != uuid.Nil {
+		query = query.Where("source_connection_id = ?", connectionID)
+	}
+	if err := query.Order("workspace_id, id").Scan(&rows).Error; err != nil {
+		return nil, translateDBError(err, "列出到期飞书知识库失败")
+	}
+	result := make([]appservice.DueKnowledgeBase, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, appservice.DueKnowledgeBase{
+			WorkspaceID: row.WorkspaceID, ID: row.ID, SourceConnectionID: row.SourceConnectionID,
+		})
+	}
+	return result, nil
+}
+
+// UpdateNextSyncAt 更新某个知识库 source_config.next_sync_at 字段。
+// nextSyncAt 为零值时从 source_config 中删除 next_sync_at 字段（停止定时同步）。
+func (r *KnowledgeBaseRepository) UpdateNextSyncAt(ctx context.Context, workspaceID, kbID uuid.UUID, nextSyncAt time.Time) error {
+	return NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+		var (
+			execSQL string
+			args    []any
+		)
+		now := time.Now().UTC()
+		if nextSyncAt.IsZero() {
+			execSQL = "UPDATE knowledge_bases SET source_config = source_config - 'next_sync_at', updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			args = []any{now, workspaceID, kbID}
+		} else {
+			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{next_sync_at}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			args = []any{nextSyncAt.UTC(), now, workspaceID, kbID}
+		}
+		result := tx.WithContext(ctx).Exec(execSQL, args...)
+		if result.Error != nil {
+			return translateDBError(result.Error, "更新知识库 next_sync_at 失败")
+		}
+		if result.RowsAffected != 1 {
+			return domainerrors.ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *gorm.DB, workspaceID, modelID uuid.UUID, modelType value.ModelType) (*ModelRow, *ModelProviderRow, error) {
 	var item ModelRow
 	err := tx.WithContext(ctx).Table("models").Select("models.*").

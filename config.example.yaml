@@ -107,3 +107,8 @@ search:
   multi_knowledge_base_limit: 20 # knowledge_search 最多查询的知识库数
   multi_concurrency: 4           # 多库检索默认并发
   multi_merge_rrf_k: 60          # 跨库 RRF 合并参数
+
+# 来源同步 Meta Scheduler 运行参数（飞书知识库定时/首次同步）
+source_sync:
+  scheduler_interval_seconds: 60   # Meta Scheduler 扫描到期 KB 的周期（秒）
+  max_concurrent_per_connection: 2 # 每个来源连接（飞书应用）的最大并发同步任务数

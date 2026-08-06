@@ -26,6 +26,15 @@ type Config struct {
 	APIKey      APIKeyConfig      `yaml:"api_key"`
 	MCP         MCPConfig         `yaml:"mcp"`
 	Search      SearchConfig      `yaml:"search"`
+	SourceSync  SourceSyncConfig  `yaml:"source_sync"`
+}
+
+// SourceSyncConfig 描述来源同步 Meta Scheduler 的非敏感运行参数。
+type SourceSyncConfig struct {
+	// SchedulerIntervalSeconds 是 Meta Scheduler Tick 周期（秒）。
+	SchedulerIntervalSeconds int `yaml:"scheduler_interval_seconds"`
+	// MaxConcurrentPerConnection 是每个来源连接的最大并发同步任务数（按应用限流）。
+	MaxConcurrentPerConnection int `yaml:"max_concurrent_per_connection"`
 }
 
 type ServerConfig struct {
@@ -234,7 +243,16 @@ func defaultConfig() Config {
 		MCP: MCPConfig{
 			InlineIngestMaxFileSizeBytes: 8 * 1024 * 1024,
 		},
-		Search: defaultSearchConfig(),
+		Search:     defaultSearchConfig(),
+		SourceSync: defaultSourceSyncConfig(),
+	}
+}
+
+// defaultSourceSyncConfig 返回来源同步 Meta Scheduler 的默认运行参数。
+func defaultSourceSyncConfig() SourceSyncConfig {
+	return SourceSyncConfig{
+		SchedulerIntervalSeconds:   60,
+		MaxConcurrentPerConnection: 2,
 	}
 }
 
@@ -353,6 +371,12 @@ func (c *Config) applyDefaults() {
 	if c.MCP.InlineIngestMaxFileSizeBytes == 0 || c.MCP.InlineIngestMaxFileSizeBytes > c.Ingest.MaxFileSizeBytes {
 		c.MCP.InlineIngestMaxFileSizeBytes = c.Ingest.MaxFileSizeBytes
 	}
+	if c.SourceSync.SchedulerIntervalSeconds <= 0 {
+		c.SourceSync.SchedulerIntervalSeconds = 60
+	}
+	if c.SourceSync.MaxConcurrentPerConnection <= 0 {
+		c.SourceSync.MaxConcurrentPerConnection = 2
+	}
 }
 
 // 注：认证默认值在 defaultConfig() 中提供。yaml.Unmarshal 在 auth 块缺失时
@@ -401,8 +425,22 @@ func (c *Config) validate() error {
 	if err := c.validateMCP(); err != nil {
 		return err
 	}
+	if err := c.validateSourceSync(); err != nil {
+		return err
+	}
 	if _, err := c.Credentials.DecodeEncryptionKey(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateSourceSync 校验来源同步 Meta Scheduler 参数。
+func (c *Config) validateSourceSync() error {
+	if c.SourceSync.SchedulerIntervalSeconds <= 0 {
+		return errors.New("source_sync.scheduler_interval_seconds 必须大于 0")
+	}
+	if c.SourceSync.MaxConcurrentPerConnection <= 0 {
+		return errors.New("source_sync.max_concurrent_per_connection 必须大于 0")
 	}
 	return nil
 }

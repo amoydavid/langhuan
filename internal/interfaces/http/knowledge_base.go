@@ -21,10 +21,13 @@ type KnowledgeBaseService interface {
 }
 
 type createKnowledgeBaseRequest struct {
-	Name             string                 `json:"name"`
-	Description      string                 `json:"description"`
-	EmbeddingModelID uuid.UUID              `json:"embedding_model_id"`
-	ChunkingConfig   *chunkingConfigRequest `json:"chunking_config"`
+	Name               string                 `json:"name"`
+	Description        string                 `json:"description"`
+	EmbeddingModelID   uuid.UUID              `json:"embedding_model_id"`
+	ChunkingConfig     *chunkingConfigRequest `json:"chunking_config"`
+	SourceType         string                 `json:"source_type"`
+	SourceConfig       map[string]any         `json:"source_config"`
+	SourceConnectionID *uuid.UUID             `json:"source_connection_id"`
 }
 
 type chunkingConfigRequest struct {
@@ -74,6 +77,21 @@ func (h knowledgeBaseHandler) create(c *gin.Context) {
 	if authCtx.IsAPIKey() {
 		apiKeyID := authCtx.PrincipalID
 		input.CallerAPIKeyID = &apiKeyID
+	}
+	// 来源字段透传：飞书来源需要 source_type/source_connection_id（及可选 source_config）。
+	if strings.TrimSpace(req.SourceType) != "" {
+		sourceType := value.KnowledgeBaseSourceType(strings.TrimSpace(req.SourceType))
+		if !sourceType.IsValid() {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "source_type 必须是 upload/feishu_drive/feishu_wiki")
+			return
+		}
+		if sourceType.IsFeishu() && (req.SourceConnectionID == nil || *req.SourceConnectionID == uuid.Nil) {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "飞书来源必须提供 source_connection_id")
+			return
+		}
+		input.SourceType = sourceType
+		input.SourceConfig = req.SourceConfig
+		input.SourceConnectionID = req.SourceConnectionID
 	}
 	if req.ChunkingConfig != nil {
 		chunking := value.ChunkingConfig{

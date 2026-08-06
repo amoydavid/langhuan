@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -72,6 +73,8 @@ type fakeSourceSyncStore struct {
 	lastFailErrorClass string
 	lastFailMessage    string
 	failErr            error
+	activeCount        int
+	activeCountErr     error
 }
 
 func newFakeSourceSyncStore(kb *model.KnowledgeBase) *fakeSourceSyncStore {
@@ -171,6 +174,16 @@ func (s *fakeSourceSyncStore) CreateSourceSyncJob(_ context.Context, job *model.
 	defer s.mu.Unlock()
 	s.jobs[job.ID] = job
 	return nil
+}
+
+// CountActiveByConnection 供 Meta Scheduler 限流；fake 返回可注入的固定值。
+func (s *fakeSourceSyncStore) CountActiveByConnection(_ context.Context, _ uuid.UUID, _ uuid.UUID) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeCountErr != nil {
+		return 0, s.activeCountErr
+	}
+	return s.activeCount, nil
 }
 
 // fakeSyncRawStore 返回基于 document id 的固定 key，记录 put/delete。
@@ -369,14 +382,53 @@ func (h *sourceSyncHarness) rewire(raw *fakeSyncRawStore, q *fakeSyncQueue, conn
 }
 
 type fakeKBSyncRepo struct {
-	kb *model.KnowledgeBase
+	kb              *model.KnowledgeBase
+	items           map[uuid.UUID]*model.KnowledgeBase
+	dueList         []DueKnowledgeBase
+	dueErr          error
+	dueByConnection map[uuid.UUID][]DueKnowledgeBase
+	nextSyncAtCalls []nextSyncAtCall
+	nextSyncAtErr   error
+}
+
+type nextSyncAtCall struct {
+	WorkspaceID uuid.UUID
+	KBID        uuid.UUID
+	NextSyncAt  time.Time
 }
 
 func (r *fakeKBSyncRepo) Get(_ context.Context, workspaceID, id uuid.UUID) (*model.KnowledgeBase, error) {
-	if r.kb == nil || r.kb.WorkspaceID != workspaceID || r.kb.ID != id {
-		return nil, domainerrors.ErrNotFound
+	if r.kb != nil && r.kb.WorkspaceID == workspaceID && r.kb.ID == id {
+		return r.kb, nil
 	}
-	return r.kb, nil
+	if kb, ok := r.items[id]; ok && kb.WorkspaceID == workspaceID {
+		return kb, nil
+	}
+	return nil, domainerrors.ErrNotFound
+}
+
+func (r *fakeKBSyncRepo) ListDueFeishuKBs(_ context.Context, _ time.Time, connectionID uuid.UUID) ([]DueKnowledgeBase, error) {
+	if r.dueErr != nil {
+		return nil, r.dueErr
+	}
+	if connectionID != uuid.Nil {
+		if r.dueByConnection != nil {
+			return append([]DueKnowledgeBase(nil), r.dueByConnection[connectionID]...), nil
+		}
+		var filtered []DueKnowledgeBase
+		for _, item := range r.dueList {
+			if item.SourceConnectionID == connectionID {
+				filtered = append(filtered, item)
+			}
+		}
+		return filtered, nil
+	}
+	return append([]DueKnowledgeBase(nil), r.dueList...), nil
+}
+
+func (r *fakeKBSyncRepo) UpdateNextSyncAt(_ context.Context, workspaceID, kbID uuid.UUID, nextSyncAt time.Time) error {
+	r.nextSyncAtCalls = append(r.nextSyncAtCalls, nextSyncAtCall{WorkspaceID: workspaceID, KBID: kbID, NextSyncAt: nextSyncAt})
+	return r.nextSyncAtErr
 }
 
 // fakeSyncConnRepo 满足 SourceConnectionRepository，但来源同步路径只用 Get。
