@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import type { Model } from '../types'
+import type { ConnectionTestResult, Model } from '../types'
 
 type ModelCardProps = {
   model: Model
@@ -20,6 +20,7 @@ type ModelCardProps = {
   onTest?: () => void
   onToggle?: () => void
   onDelete?: () => void
+  testResult?: ConnectionTestResult
 }
 
 export function ModelCard({
@@ -30,6 +31,7 @@ export function ModelCard({
   onTest,
   onToggle,
   onDelete,
+  testResult,
 }: ModelCardProps) {
   const { t } = useTranslation()
   return (
@@ -74,6 +76,21 @@ export function ModelCard({
         </div>
         {model.description && (
           <p className='text-muted-foreground text-sm'>{model.description}</p>
+        )}
+        {testResult && (
+          <div
+            className='rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm'
+            aria-live='polite'
+          >
+            <span className='font-medium text-emerald-700 dark:text-emerald-400'>
+              连接测试通过
+            </span>
+            <span className='ml-2 text-muted-foreground'>
+              {model.type === 'embedding'
+                ? `${testResult.dimensions} 维 · ${testResult.duration_ms} ms`
+                : `${testResult.result_count} 条结果 · ${testResult.duration_ms} ms`}
+            </span>
+          </div>
         )}
         {canManage && (
           <div className='flex flex-wrap gap-2 border-t pt-4'>

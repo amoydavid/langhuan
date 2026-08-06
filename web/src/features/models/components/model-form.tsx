@@ -26,11 +26,12 @@ type ModelFormProps = {
   scope: ModelScope
   workspaceSlug?: string
   model?: Model
+  type?: 'embedding' | 'rerank'
   onSaved?: (model: Model) => void
 }
 
 export function ModelForm(props: ModelFormProps) {
-  if (props.provider.provider === 'rerank_compatible') {
+  if ((props.model?.type ?? props.type) === 'rerank') {
     return <RerankModelForm {...props} />
   }
   return <EmbeddingModelForm {...props} />

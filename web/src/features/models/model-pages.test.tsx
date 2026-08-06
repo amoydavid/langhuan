@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import { ModelProviderDetailContent } from './model-provider-detail-page'
 import type { ModelProvider } from './types'
@@ -43,5 +44,20 @@ describe('ModelProviderDetailContent', () => {
     await expect
       .element(screen.getByRole('button', { name: '添加模型' }))
       .not.toBeInTheDocument()
+  })
+
+  it('opens on models and keeps connection settings behind its tab', async () => {
+    const screen = await render(
+      <ModelProviderDetailContent
+        provider={provider}
+        models={[]}
+        routeScope='platform'
+        canManage
+      />
+    )
+    await expect.element(screen.getByText('此连接下还没有模型。')).toBeVisible()
+    await expect.element(screen.getByText('连接配置')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '连接设置' }))
+    await expect.element(screen.getByText('连接配置')).toBeVisible()
   })
 })

@@ -44,10 +44,9 @@ export function ModelProviderDetailPage({
   const modelsQuery = useQuery(
     modelsQueryOptions(scope, providerId, workspaceSlug)
   )
-  const [testResult, setTestResult] = useState<{
-    modelId: string
-    result: ConnectionTestResult
-  }>()
+  const [testResults, setTestResults] = useState<
+    Record<string, ConnectionTestResult>
+  >({})
 
   const refresh = async () => {
     await Promise.all([
@@ -110,7 +109,8 @@ export function ModelProviderDetailPage({
       modelId: model.id,
       result: await testModel(scope, model.id, workspaceSlug),
     }),
-    onSuccess: (result) => setTestResult(result),
+    onSuccess: ({ modelId, result }) =>
+      setTestResults((current) => ({ ...current, [modelId]: result })),
   })
 
   if (!providerQuery.data || modelsQuery.data === undefined) {
@@ -126,7 +126,7 @@ export function ModelProviderDetailPage({
     providerDeleteMutation.isPending ||
     modelStatusMutation.isPending ||
     modelDeleteMutation.isPending ||
-    testMutation.isPending
+    false
   const error =
     providerStatusMutation.error ??
     providerDeleteMutation.error ??
@@ -143,7 +143,10 @@ export function ModelProviderDetailPage({
       canManage={canManage}
       busy={busy}
       error={error}
-      testResult={testResult}
+      testResults={testResults}
+      testPendingModelId={
+        testMutation.isPending ? testMutation.variables?.id : undefined
+      }
       onProviderStatusToggle={() =>
         providerStatusMutation.mutate(providerQuery.data)
       }
