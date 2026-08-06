@@ -16,6 +16,9 @@ type KnowledgeBaseRow struct {
 	ContentVersion          int64
 	ActiveIndexGenerationID *uuid.UUID `gorm:"type:uuid"`
 	FileTreeRootID          uuid.UUID  `gorm:"type:uuid;not null"`
+	SourceType              string
+	SourceConfig            JSONMap    `gorm:"type:jsonb"`
+	SourceConnectionID      *uuid.UUID `gorm:"type:uuid"`
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 	DeletedAt               *time.Time

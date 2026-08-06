@@ -15,6 +15,7 @@ type DocumentRow struct {
 	Title            string
 	SourceType       string
 	SourceURI        *string
+	ExternalID       *string
 	Status           string
 	ActiveRevisionID *uuid.UUID `gorm:"type:uuid"`
 	Metadata         JSONMap    `gorm:"type:jsonb"`

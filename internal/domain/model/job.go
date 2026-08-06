@@ -18,6 +18,7 @@ type NewJobInput struct {
 	DocumentID         uuid.UUID
 	DocumentRevisionID uuid.UUID
 	IndexGenerationID  uuid.UUID
+	SourceConnectionID uuid.UUID
 	Type               string
 	Status             value.JobStatus
 	ExternalJobID      string
@@ -32,6 +33,7 @@ type Job struct {
 	DocumentID         uuid.UUID
 	DocumentRevisionID uuid.UUID
 	IndexGenerationID  uuid.UUID
+	SourceConnectionID uuid.UUID
 	Type               string
 	Status             value.JobStatus
 	Attempts           int
@@ -74,6 +76,7 @@ func NewJob(input NewJobInput) (*Job, error) {
 		DocumentID:         input.DocumentID,
 		DocumentRevisionID: input.DocumentRevisionID,
 		IndexGenerationID:  input.IndexGenerationID,
+		SourceConnectionID: input.SourceConnectionID,
 		Type:               jobType,
 		Status:             input.Status,
 		Attempts:           0,

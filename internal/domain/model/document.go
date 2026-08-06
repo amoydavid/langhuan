@@ -32,6 +32,7 @@ type NewDocumentInput struct {
 	Metadata           map[string]any
 	ErrorMessage       string
 	SourceURI          string
+	ExternalID         string
 }
 
 type Document struct {
@@ -56,6 +57,7 @@ type Document struct {
 	Metadata           map[string]any
 	FAQQuestionCount   int
 	ErrorMessage       string
+	ExternalID         string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	DeletedAt          *time.Time
@@ -161,6 +163,7 @@ func NewDocument(input NewDocumentInput) (*Document, error) {
 		ParseManifest:      input.ParseManifest,
 		Metadata:           metadata,
 		ErrorMessage:       input.ErrorMessage,
+		ExternalID:         strings.TrimSpace(input.ExternalID),
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}, nil

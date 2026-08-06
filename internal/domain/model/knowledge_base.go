@@ -23,6 +23,9 @@ type KnowledgeBase struct {
 	ContentVersion          int64
 	ActiveIndexGenerationID *uuid.UUID
 	FileTreeRootID          uuid.UUID
+	SourceType              value.KnowledgeBaseSourceType
+	SourceConfig            map[string]any
+	SourceConnectionID      *uuid.UUID
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 	DeletedAt               *time.Time
@@ -62,6 +65,46 @@ func NewKnowledgeBase(workspaceID uuid.UUID, name, description string, embedding
 	return &KnowledgeBase{
 		ID: id.New(), WorkspaceID: workspaceID, EmbeddingModelID: embeddingModelID,
 		Name: name, Description: description, ChunkingConfig: cfg,
-		Metadata: metadata, CreatedAt: now, UpdatedAt: now,
+		Metadata: metadata, SourceType: value.SourceTypeUpload, SourceConfig: map[string]any{},
+		CreatedAt: now, UpdatedAt: now,
 	}, nil
+}
+
+// NewKnowledgeBaseWithSource 创建一个带外部内容来源的知识库。
+// 飞书来源（feishu_drive / feishu_wiki）必须绑定 sourceConnectionID，并提供 sourceConfig。
+func NewKnowledgeBaseWithSource(
+	workspaceID uuid.UUID,
+	name, description string,
+	embeddingModelID uuid.UUID,
+	chunking *value.ChunkingConfig,
+	metadata map[string]any,
+	sourceType value.KnowledgeBaseSourceType,
+	sourceConfig map[string]any,
+	sourceConnectionID *uuid.UUID,
+) (*KnowledgeBase, error) {
+	kb, err := NewKnowledgeBase(workspaceID, name, description, embeddingModelID, chunking, metadata)
+	if err != nil {
+		return nil, err
+	}
+	if !sourceType.IsValid() {
+		return nil, fmt.Errorf("%w: 未知的来源类型", domainerrors.ErrValidation)
+	}
+	if sourceType.IsFeishu() {
+		if sourceConnectionID == nil || *sourceConnectionID == uuid.Nil {
+			return nil, fmt.Errorf("%w: 飞书来源必须绑定 source_connection_id", domainerrors.ErrValidation)
+		}
+		if sourceConfig == nil {
+			sourceConfig = map[string]any{}
+		}
+		if _, ok := sourceConfig["root_token"].(string); ok {
+			// root_token 在 service 层进一步校验非空，这里只保证 map 存在。
+		}
+	}
+	kb.SourceType = sourceType
+	if sourceConfig == nil {
+		sourceConfig = map[string]any{}
+	}
+	kb.SourceConfig = sourceConfig
+	kb.SourceConnectionID = sourceConnectionID
+	return kb, nil
 }

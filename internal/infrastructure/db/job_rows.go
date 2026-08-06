@@ -14,6 +14,7 @@ type JobRow struct {
 	DocumentID         *uuid.UUID
 	DocumentRevisionID *uuid.UUID
 	IndexGenerationID  *uuid.UUID
+	SourceConnectionID *uuid.UUID
 	Type               string
 	Status             string
 	Attempts           int

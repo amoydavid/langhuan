@@ -16,7 +16,9 @@ func knowledgeBaseV2ToRow(kb *model.KnowledgeBase) *KnowledgeBaseRow {
 		ID: kb.ID, WorkspaceID: kb.WorkspaceID, Name: kb.Name, Description: kb.Description,
 		Metadata: normalizedJSONMap(kb.Metadata), ContentVersion: kb.ContentVersion,
 		ActiveIndexGenerationID: kb.ActiveIndexGenerationID, FileTreeRootID: kb.FileTreeRootID,
-		CreatedAt: kb.CreatedAt, UpdatedAt: kb.UpdatedAt, DeletedAt: kb.DeletedAt,
+		SourceType: string(kb.SourceType), SourceConfig: normalizedJSONMap(kb.SourceConfig),
+		SourceConnectionID: kb.SourceConnectionID,
+		CreatedAt:          kb.CreatedAt, UpdatedAt: kb.UpdatedAt, DeletedAt: kb.DeletedAt,
 	}
 }
 
@@ -25,7 +27,9 @@ func knowledgeBaseV2FromRow(row *KnowledgeBaseRow) *model.KnowledgeBase {
 		ID: row.ID, WorkspaceID: row.WorkspaceID, Name: row.Name, Description: row.Description,
 		Metadata: normalizedDomainMap(row.Metadata), ContentVersion: row.ContentVersion,
 		ActiveIndexGenerationID: row.ActiveIndexGenerationID, FileTreeRootID: row.FileTreeRootID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
+		SourceType: value.KnowledgeBaseSourceType(row.SourceType), SourceConfig: normalizedDomainMap(row.SourceConfig),
+		SourceConnectionID: row.SourceConnectionID,
+		CreatedAt:          row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
 }
 
@@ -33,7 +37,8 @@ func documentV2ToRow(document *model.Document) *DocumentRow {
 	return &DocumentRow{
 		ID: document.ID, WorkspaceID: document.WorkspaceID, KnowledgeBaseID: document.KnowledgeBaseID,
 		Kind: string(document.Kind), Title: document.Title, SourceType: document.SourceType,
-		SourceURI: nullableString(document.SourceURI), Status: string(document.Status),
+		SourceURI: nullableString(document.SourceURI), ExternalID: nullableString(document.ExternalID),
+		Status:           string(document.Status),
 		ActiveRevisionID: document.ActiveRevisionID, Metadata: normalizedJSONMap(document.Metadata),
 		CreatedAt: document.CreatedAt, UpdatedAt: document.UpdatedAt, DeletedAt: document.DeletedAt,
 	}
@@ -43,7 +48,8 @@ func documentV2FromRow(row *DocumentRow) *model.Document {
 	return &model.Document{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		Kind: value.DocumentKind(row.Kind), Title: row.Title, SourceType: row.SourceType,
-		SourceURI: dereferenceString(row.SourceURI), Status: value.DocumentStatus(row.Status),
+		SourceURI: dereferenceString(row.SourceURI), ExternalID: dereferenceString(row.ExternalID),
+		Status:           value.DocumentStatus(row.Status),
 		ActiveRevisionID: row.ActiveRevisionID, Metadata: normalizedDomainMap(row.Metadata),
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
@@ -355,7 +361,8 @@ func jobV2ToRow(job *model.Job) *JobRow {
 	return &JobRow{
 		ID: job.ID, WorkspaceID: job.WorkspaceID, KnowledgeBaseID: job.KnowledgeBaseID,
 		DocumentID: nullableUUID(job.DocumentID), DocumentRevisionID: nullableUUID(job.DocumentRevisionID),
-		IndexGenerationID: nullableUUID(job.IndexGenerationID), Type: job.Type, Status: string(job.Status),
+		IndexGenerationID: nullableUUID(job.IndexGenerationID), SourceConnectionID: nullableUUID(job.SourceConnectionID),
+		Type: job.Type, Status: string(job.Status),
 		Attempts: job.Attempts, ExternalJobID: job.ExternalJobID, Payload: normalizedJSONMap(job.Payload),
 		ErrorClass: job.ErrorClass, ErrorMessage: job.ErrorMessage,
 		CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
@@ -366,7 +373,8 @@ func jobV2FromRow(row *JobRow) *model.Job {
 	return &model.Job{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		DocumentID: dereferenceUUID(row.DocumentID), DocumentRevisionID: dereferenceUUID(row.DocumentRevisionID),
-		IndexGenerationID: dereferenceUUID(row.IndexGenerationID), Type: row.Type,
+		IndexGenerationID: dereferenceUUID(row.IndexGenerationID), SourceConnectionID: dereferenceUUID(row.SourceConnectionID),
+		Type:   row.Type,
 		Status: value.JobStatus(row.Status), Attempts: row.Attempts, ExternalJobID: row.ExternalJobID,
 		Payload: normalizedDomainMap(row.Payload), ErrorClass: row.ErrorClass, ErrorMessage: row.ErrorMessage,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

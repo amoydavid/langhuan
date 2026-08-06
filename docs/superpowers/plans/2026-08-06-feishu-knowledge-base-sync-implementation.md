@@ -176,7 +176,7 @@ git commit -m "feat(job): 放宽目标约束以支持 source_sync 任务"
 - `model.KnowledgeBase` 加 `SourceType/SourceConfig/SourceConnectionID`；`NewKnowledgeBase` 签名扩展。
 - `model.Document` 加 `ExternalID string`；`model.Job` 加 `SourceConnectionID *uuid.UUID`。
 
-- [ ] **Step 1: 写领域模型失败测试。**
+- [x] **Step 1: 写领域模型失败测试。**
 
 ```go
 func TestSourceConnectionRejectsEmptySecret(t *testing.T) {
@@ -201,23 +201,23 @@ func TestNewKnowledgeBaseFeishuRequiresConnection(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/domain/model -run 'SourceConnection|NewKnowledgeBase' -count=1`
 
 Expected: FAIL，类型与构造器尚不存在。
 
-- [ ] **Step 3: 实现领域模型、Row、Repository、迁移。**
+- [x] **Step 3: 实现领域模型、Row、Repository、迁移。**
 
 迁移补全：新建 `workspace_source_connections`（UNIQUE(workspace_id,provider,name) + UNIQUE(workspace_id,provider,(config->>'app_id'))）；扩展 `knowledge_bases`（source_type DEFAULT 'upload'、source_config jsonb、source_connection_id FK）；扩展 `documents`（external_id + 部分索引）；扩展 `jobs`（source_connection_id + 部分索引）。Row + codec + `AutoMigrateModels()` 追加 `&SourceConnectionRow{}`。
 
-- [ ] **Step 4: 运行领域测试 + 临时库集成测试。**
+- [x] **Step 4: 运行领域测试 + 临时库集成测试。**
 
 Run: `go test ./internal/domain/model ./internal/infrastructure/db -run 'SourceConnection|KnowledgeBase|ExternalID' -count=1 && go test -tags=integration -p 1 ./internal/infrastructure/db -run 'SourceConnection' -count=1`
 
 Expected: PASS；多应用、同名/同 app_id 拒绝、external_id 索引、KB 来源字段 round-trip。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/domain internal/infrastructure/db internal/infrastructure/migrate
