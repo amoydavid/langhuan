@@ -622,7 +622,7 @@ git commit -m "feat(source): 飞书增量同步与删除检测"
 - `POST/GET/PATCH/DELETE /api/v1/workspaces/:slug/source-connections`，admin/owner 写、member 读、API Key 不可访问。
 - GET 不回显 secret；PATCH 可更新凭证或启停。
 
-- [ ] **Step 1: 写 handler 失败测试。**
+- [x] **Step 1: 写 handler 失败测试。**
 
 ```go
 func TestCreateSourceConnectionRejectsMember(t *testing.T) { /* 403 */ }
@@ -631,23 +631,23 @@ func TestPatchSourceConnectionRotatesSecret(t *testing.T) { /* 更新后旧密�
 func TestApiKeyCannotAccessSourceConnections(t *testing.T) { /* 401/403 */ }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/interfaces/http -run SourceConnection -count=1`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 handler + 路由 + DTO。**
+- [x] **Step 3: 实现 handler + 路由 + DTO。**
 
 严格 JSON 解码；DTO 不含 secret 字段；PATCH 区分 config 更新与凭证轮换。
 
-- [ ] **Step 4: 运行测试。**
+- [x] **Step 4: 运行测试。**
 
 Run: `go test ./internal/interfaces/http ./cmd/langhuan -run SourceConnection -count=1`
 
 Expected: PASS；权限、secret 隐藏、轮换正确。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/interfaces/http internal/application/dto

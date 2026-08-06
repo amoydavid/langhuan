@@ -48,6 +48,7 @@ type Dependencies struct {
 	Search                  SearchHTTPService
 	MultiSearch             MultiSearchHTTPService
 	Jobs                    JobQueryService
+	SourceConnections       SourceConnectionService
 	MCPHandler              stdhttp.Handler
 	SPA                     fs.FS
 	MaxFileSizeBytes        int64
@@ -420,6 +421,21 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				adminGroup.PATCH("/api-keys/:api_key_id", keyH.update)
 				adminGroup.POST("/api-keys/:api_key_id/reveal", keyH.reveal)
 				adminGroup.DELETE("/api-keys/:api_key_id", keyH.revoke)
+			}
+		}
+
+		// admin+ 来源连接管理（飞书应用 CRUD，Session-only）。
+		// 不注册到 progGroup，因此 API Key 主体不可达（凭证管理不对外开）。
+		if deps.SourceConnections != nil {
+			connectionH := sourceConnectionHandler{svc: deps.SourceConnections}
+			adminGroup := wsGroup.Group("")
+			adminGroup.Use(RequireWorkspaceRole(value.RoleAdmin))
+			{
+				adminGroup.POST("/source-connections", connectionH.create)
+				adminGroup.GET("/source-connections", connectionH.list)
+				adminGroup.GET("/source-connections/:connection_id", connectionH.get)
+				adminGroup.PATCH("/source-connections/:connection_id", connectionH.update)
+				adminGroup.DELETE("/source-connections/:connection_id", connectionH.delete)
 			}
 		}
 

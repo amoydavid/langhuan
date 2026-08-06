@@ -136,6 +136,7 @@ type runtimeServices struct {
 	indexGenerationBuilder  *service.IndexGenerationBuildService
 	sourceSync              *service.SourceSyncService
 	sourceSyncScheduler     *service.SourceSyncScheduler
+	sourceConnections       *service.SourceConnectionService
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
 	retrievalCleanup        *service.RetrievalCleanupService
@@ -524,8 +525,13 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	if err != nil {
 		return nil, fmt.Errorf("构造来源连接凭证加密器失败: %w", err)
 	}
+	// 同一 repository 同时供 CRUD service 与同步 selector 复用。
+	sourceConnectionRepo := db.NewSourceConnectionRepository(gormDB)
+	sourceConnectionService := service.NewSourceConnectionService(service.SourceConnectionServiceDeps{
+		Repository: sourceConnectionRepo, Cipher: sourceConnectionCipher,
+	})
 	sourceConnectionSelector := service.NewSourceConnectionSelector(
-		db.NewSourceConnectionRepository(gormDB), sourceConnectionCipher,
+		sourceConnectionRepo, sourceConnectionCipher,
 	)
 	feishuConnector := feishu.NewConnector(feishu.WithCredentialDecryptor(sourceConnectionCipher))
 	sourceSyncStore := db.NewSourceSyncDBStore(gormDB)
@@ -602,6 +608,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		indexGenerationBuilder: indexGenerationBuilder,
 		sourceSync:             sourceSync,
 		sourceSyncScheduler:    sourceSyncScheduler,
+		sourceConnections:      sourceConnectionService,
 		search:                 search,
 		multiSearch:            multiSearch,
 		retrievalCleanup:       retrievalCleanup,
@@ -783,6 +790,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		Search:                  services.search,
 		MultiSearch:             services.multiSearch,
 		Jobs:                    services.jobs,
+		SourceConnections:       services.sourceConnections,
 		MCPHandler:              mcpServer.Handler(),
 		SPA:                     webspa.SPA,
 		MaxFileSizeBytes:        services.maxFileSize,
