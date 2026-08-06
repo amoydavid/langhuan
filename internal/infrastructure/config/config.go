@@ -29,11 +29,19 @@ type Config struct {
 	SourceSync  SourceSyncConfig  `yaml:"source_sync"`
 }
 
-// SourceSyncConfig 描述来源同步 Meta Scheduler 的非敏感运行参数。
+// SourceSyncConfig 描述飞书同步 Meta Scheduler 的非敏感运行参数。
 type SourceSyncConfig struct {
-	// SchedulerIntervalSeconds 是 Meta Scheduler Tick 周期（秒）。
+	// SchedulerIntervalSeconds 是 Meta Scheduler 的扫描周期（秒）。
+	// Meta Scheduler 是常驻后台 goroutine，每隔这个周期查一次"到期该同步"
+	// 的飞书知识库（next_sync_at <= now）并入队。注意它决定的是到期检查的
+	// 频率（定时同步的最大延迟精度），不是同步频率本身——同步频率由每个
+	// 知识库的 source_config.cron 决定。调小则到期项更快入队但每周期多一次
+	// 数据库扫描；调大则到期项最多多等一个周期才被入队。
 	SchedulerIntervalSeconds int `yaml:"scheduler_interval_seconds"`
-	// MaxConcurrentPerConnection 是每个来源连接的最大并发同步任务数（按应用限流）。
+	// MaxConcurrentPerConnection 是每个飞书应用（source connection）同时
+	// 最多运行的同步任务数（pending/running）。超额的到期项排队等待——
+	// 同一应用下的某个同步任务完成后会立即续跑同应用队列里的下一项，
+	// 无需等下一个扫描周期。这是按应用限流、避免单应用并发拉取触发飞书限流的核心旋钮。
 	MaxConcurrentPerConnection int `yaml:"max_concurrent_per_connection"`
 }
 

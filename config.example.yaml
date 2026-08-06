@@ -108,7 +108,28 @@ search:
   multi_concurrency: 4           # 多库检索默认并发
   multi_merge_rrf_k: 60          # 跨库 RRF 合并参数
 
-# 来源同步 Meta Scheduler 运行参数（飞书知识库定时/首次同步）
+# 飞书知识库同步调度参数。
+#
+# 背景：飞书同步型知识库的定时同步不是由系统定时器直接触发，而是由一个常驻
+# 后台进程（Meta Scheduler）周期性地"扫描 + 入队"完成。它每隔
+# scheduler_interval_seconds 醒一次，做三件事：
+#   1. 查所有"该同步了"的飞书知识库（到期判定见下）
+#   2. 对每个飞书应用（source connection），检查它名下当前有几个同步任务
+#      还在跑（pending/running）
+#   3. 把"到期且还有空闲额度"的知识库推入异步队列，直到填满
+#      max_concurrent_per_connection 或没有更多到期项
+#
+# 什么是"到期"：每个飞书知识库在 source_config 里记录两个值——
+#   - cron：用户设置的同步频率（如 "0 */6 * * *" 表示每 6 小时一次）
+#   - next_sync_at：下次应同步的时刻
+# 每次某知识库被成功入队后，系统按其 cron 重算 next_sync_at。
+# "到期"就是 next_sync_at <= 当前时间。没有配 cron 的知识库不会被定时同步，
+# 只能手动触发（创建时或点"手动同步"按钮）。
+#
+# scheduler_interval_seconds 决定的是这种"检查有没有到期项"的频率，也就是
+# 定时同步的最大延迟精度——不是同步频率本身。同步频率由每个知识库的 cron 决定。
+# 调小：到期项被更快入队，但每周期多一次 ListDueFeishuKBs 数据库查询。
+# 调大：到期项最多多等一个周期才被入队，数据库扫描更省。
 source_sync:
-  scheduler_interval_seconds: 60   # Meta Scheduler 扫描到期 KB 的周期（秒）
-  max_concurrent_per_connection: 2 # 每个来源连接（飞书应用）的最大并发同步任务数
+  scheduler_interval_seconds: 60   # 调度器扫描周期（秒）：每隔多久检查一次有没有飞书知识库到期该同步
+  max_concurrent_per_connection: 2 # 每个飞书应用同时最多跑几个同步任务；超额的到期项排队等下一次扫描或 worker 完成后续跑
