@@ -13,6 +13,7 @@ export const apiKeys = {
     description:
       '通过 API Key 调用琅嬛的 REST 与 MCP 接口，权限仅限所选知识库与范围。',
     createButton: '创建 API Key',
+    docsButton: 'API 文档',
     listTitle: '密钥列表',
     listDescription: '明文只在创建时返回一次；列表仅保留前缀用于识别。',
     loading: '正在加载…',

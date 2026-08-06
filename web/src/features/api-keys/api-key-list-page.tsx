@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { BookOpen, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,15 +33,23 @@ export function APIKeyListPage() {
             {t('apiKeys.listPage.description')}
           </p>
         </div>
-        <Button asChild>
-          <Link
-            to='/workspaces/$workspaceSlug/api-keys/new'
-            params={{ workspaceSlug }}
-          >
-            <Plus />
-            {t('apiKeys.listPage.createButton')}
-          </Link>
-        </Button>
+        <div className='flex gap-2'>
+          <Button asChild variant='outline'>
+            <a href='/api/v1/docs' target='_blank' rel='noreferrer'>
+              <BookOpen />
+              {t('apiKeys.listPage.docsButton')}
+            </a>
+          </Button>
+          <Button asChild>
+            <Link
+              to='/workspaces/$workspaceSlug/api-keys/new'
+              params={{ workspaceSlug }}
+            >
+              <Plus />
+              {t('apiKeys.listPage.createButton')}
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <Card>

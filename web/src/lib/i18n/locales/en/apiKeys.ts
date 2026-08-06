@@ -20,6 +20,7 @@ export const apiKeys = {
     description:
       'Call Langhuan REST and MCP endpoints with an API Key; access is limited to the selected knowledge bases and scopes.',
     createButton: 'Create API Key',
+    docsButton: 'API Docs',
     listTitle: 'API Keys',
     listDescription:
       'The plaintext secret is returned only once at creation; the list keeps only the prefix for identification.',
