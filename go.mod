@@ -13,6 +13,7 @@ require (
 	github.com/cloudwego/eino-ext/components/embedding/ollama v0.0.0-20260724103301-c9a5dc923462
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260724103301-c9a5dc923462
 	github.com/cloudwego/eino-ext/components/embedding/tencentcloud v0.0.0-20260724103301-c9a5dc923462
+	github.com/getkin/kin-openapi v0.146.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/jsonschema-go v0.4.2
@@ -82,6 +83,8 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-openapi/jsonpointer v0.22.5 // indirect
+	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.1 // indirect
@@ -115,6 +118,8 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
+	github.com/oasdiff/yaml v0.1.1 // indirect
+	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/ollama/ollama v0.9.6 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect

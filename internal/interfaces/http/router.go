@@ -75,6 +75,13 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 	// --- healthz + MCP ---
 	api.GET("/healthz", healthz)
+
+	// --- OpenAPI 文档端点（登录后可见）---
+	// spec 在启动时反射 struct 生成一次；UI 与 spec JSON 挂在 SessionAuth 之后，
+	// 已登录用户才能访问，接口结构不向未认证者暴露。
+	api.Group("", SessionAuth(deps.Auth, cookieName)).GET("/openapi.json", serveOpenAPISpec(buildSpec()))
+	api.Group("", SessionAuth(deps.Auth, cookieName)).GET("/docs", serveDocsUI())
+
 	if deps.MCPHandler != nil {
 		// /mcp 只接受 Bearer API Key，不接受浏览器 Cookie，不进入 SPA fallback。
 		mcpAuth := router.Group("/mcp")
