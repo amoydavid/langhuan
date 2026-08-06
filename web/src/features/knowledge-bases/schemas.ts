@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import i18n from '@/lib/i18n'
 
+export const knowledgeBaseSourceTypeSchema = z.enum([
+  'upload',
+  'feishu_drive',
+  'feishu_wiki',
+])
+
 export const knowledgeBaseSchema = z
   .object({
     name: z
@@ -33,6 +39,11 @@ export const knowledgeBaseSchema = z
       .min(0, {
         error: () => i18n.t('knowledgeBases.schemas.chunkOverlapMin'),
       }),
+    source_type: knowledgeBaseSourceTypeSchema,
+    source_connection_id: z.string().optional(),
+    root_token: z.string().optional(),
+    sync_enabled: z.boolean(),
+    cron: z.string().optional(),
   })
   .superRefine((values, context) => {
     const maximum = values.enable_parent_child
@@ -54,6 +65,22 @@ export const knowledgeBaseSchema = z
         path: ['child_chunk_size'],
         message: i18n.t('knowledgeBases.schemas.childLargerThanParent'),
       })
+    }
+    if (values.source_type !== 'upload') {
+      if (!values.source_connection_id) {
+        context.addIssue({
+          code: 'custom',
+          path: ['source_connection_id'],
+          message: i18n.t('knowledgeBases.schemas.sourceConnectionRequired'),
+        })
+      }
+      if (!values.root_token?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['root_token'],
+          message: i18n.t('knowledgeBases.schemas.rootTokenRequired'),
+        })
+      }
     }
   })
 
@@ -104,6 +131,16 @@ export const knowledgeBaseResponseSchema = z.object({
   active_index_generation_id: z.uuid(),
   file_tree_root_id: z.uuid(),
   metadata: z.record(z.string(), z.unknown()),
+  source_type: knowledgeBaseSourceTypeSchema.catch('upload'),
+  source_config: z
+    .object({
+      root_token: z.string().optional(),
+      root_kind: z.string().optional(),
+      url: z.string().optional(),
+      cron: z.string().optional(),
+    })
+    .nullish(),
+  source_connection_id: z.string().nullish(),
   created_at: z.string(),
   updated_at: z.string(),
 })

@@ -21,6 +21,8 @@ export type EmbeddingModelSummary = {
   available: boolean
 }
 
+export type KnowledgeBaseSourceType = 'upload' | 'feishu_drive' | 'feishu_wiki'
+
 export type KnowledgeBase = z.infer<typeof knowledgeBaseResponseSchema>
 
 export type CreateKnowledgeBaseInput = {
@@ -28,4 +30,12 @@ export type CreateKnowledgeBaseInput = {
   description: string
   embedding_model_id: string
   chunking_config: ChunkingConfig
+  source_type?: KnowledgeBaseSourceType
+  source_config?: {
+    root_token?: string
+    root_kind?: string
+    url?: string
+    cron?: string
+  }
+  source_connection_id?: string
 }

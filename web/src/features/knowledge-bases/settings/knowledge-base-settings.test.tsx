@@ -41,9 +41,10 @@ const knowledgeBase: KnowledgeBase = {
   content_version: 18,
   active_index_generation_id: generationId,
   file_tree_root_id: '50000000-0000-4000-8000-000000000005',
-  metadata: { config_hash: 'do-not-render' },
-  created_at: '2026-08-01T09:00:00Z',
-  updated_at: '2026-08-01T10:00:00Z',
+  metadata: { config_hash: 'must-not-render' },
+  source_type: 'upload',
+  created_at: '2026-08-01T00:00:00Z',
+  updated_at: '2026-08-01T00:00:00Z',
 }
 
 const activeGeneration = {

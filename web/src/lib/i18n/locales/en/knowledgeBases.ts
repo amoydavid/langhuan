@@ -40,6 +40,25 @@ export const knowledgeBases = {
     chunkOverlapLabel: 'Overlap size',
     createdToast: 'Knowledge base created',
     submitButton: 'Create Knowledge Base',
+    sourceLabel: 'Content source',
+    sourceOptions: {
+      upload: 'Local upload',
+      feishu_drive: 'Feishu Drive',
+      feishu_wiki: 'Feishu Wiki',
+    },
+    sourceConnectionLabel: 'Feishu app',
+    sourceConnectionPlaceholder: 'Select an added Feishu app',
+    sourceConnectionEmpty: 'No Feishu app has been added yet.',
+    sourceConnectionGo: 'Add an app',
+    sourceTokenLabel: 'Wiki token / link',
+    sourceTokenPlaceholder: 'Paste a folder / wiki node token or link',
+    sourceTokenHint:
+      'The token (or share link) of the Feishu folder or wiki node to sync.',
+    syncScheduleLabel: 'Scheduled sync',
+    syncScheduleHint:
+      'When enabled, content is pulled from Feishu on a cron schedule.',
+    cronLabel: 'Cron expression',
+    cronHint: 'Standard 5-field cron, e.g. 0 0 * * * for daily at midnight.',
   },
 
   embeddingModelSelect: {
@@ -123,6 +142,8 @@ export const knowledgeBases = {
     contentMeta: 'Content version {{version}} · {{chunkCount}} chunks',
     addContentButton: 'Add Content',
     areaAriaLabel: 'Knowledge base area',
+    manualSync: 'Sync now',
+    manualSyncSuccess: 'Sync job started',
     tabs: {
       overview: 'Overview',
       content: 'Content',
@@ -135,6 +156,10 @@ export const knowledgeBases = {
       updating: 'Updating',
       failed: 'Has failures',
       candidate_ready: 'Candidate pending activation',
+    },
+    sourceType: {
+      feishu_drive: 'Feishu Drive',
+      feishu_wiki: 'Feishu Wiki',
     },
   },
 
@@ -150,5 +175,7 @@ export const knowledgeBases = {
     chunkOverlapLessThanSize: 'Overlap size must be less than chunk size',
     childLargerThanParent:
       'Child chunk size cannot be larger than context chunk size',
+    sourceConnectionRequired: 'Please select a Feishu app',
+    rootTokenRequired: 'Please enter a wiki token / link',
   },
 } satisfies Widen<typeof zhKnowledgeBases>

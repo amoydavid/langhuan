@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { knowledgeBaseResponseSchema } from '@/features/knowledge-bases/schemas'
 import { apiClient } from '@/lib/api/client'
 import { knowledgeBaseSummarySchema } from './schemas'
@@ -27,4 +28,16 @@ export async function updateKnowledgeBaseBasics(
     input
   )
   return knowledgeBaseResponseSchema.parse(response.data)
+}
+
+const syncKnowledgeBaseResponseSchema = z.object({
+  job_id: z.uuid(),
+})
+
+// 触发手动同步，返回后端受理的 job_id（HTTP 202）。
+export async function syncKnowledgeBase(workspaceSlug: string, kbId: string) {
+  const response = await apiClient.post<unknown>(
+    `${knowledgeBasePath(workspaceSlug, kbId)}/sync`
+  )
+  return syncKnowledgeBaseResponseSchema.parse(response.data)
 }

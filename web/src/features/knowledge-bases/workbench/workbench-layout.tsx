@@ -1,3 +1,4 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Link,
   Outlet,
@@ -5,9 +6,10 @@ import {
   useMatches,
   useNavigate,
 } from '@tanstack/react-router'
-import { ArrowRight, CircleAlert } from 'lucide-react'
+import { ArrowRight, CircleAlert, Loader2, RefreshCw } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -19,7 +21,9 @@ import {
 } from '@/components/ui/select'
 import { UploadFileDialog } from '@/features/content/file-tree/upload-file-dialog'
 import type { KnowledgeBase } from '@/features/knowledge-bases/types'
+import { parseApiError } from '@/lib/api/error'
 import { cn } from '@/lib/utils'
+import { syncKnowledgeBaseMutationOptions } from './queries'
 import type { KnowledgeBaseSummary, KnowledgeBaseSyncState } from './types'
 
 type KnowledgeBaseWorkbenchLayoutProps = {
@@ -54,16 +58,32 @@ export function KnowledgeBaseWorkbenchLayout({
   children,
 }: KnowledgeBaseWorkbenchLayoutProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [uploadOpen, setUploadOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   const matches = useMatches()
   const fullHeight = matches.some((m) => m.staticData.fullHeight === true)
+  const isFeishu = knowledgeBase.source_type !== 'upload'
+  const syncMutation = useMutation(
+    syncKnowledgeBaseMutationOptions(workspaceSlug, kbId, queryClient)
+  )
   const syncStateLabel: Record<KnowledgeBaseSyncState, string> = {
     synced: t('knowledgeBases.workbench.syncState.synced'),
     updating: t('knowledgeBases.workbench.syncState.updating'),
     failed: t('knowledgeBases.workbench.syncState.failed'),
     candidate_ready: t('knowledgeBases.workbench.syncState.candidate_ready'),
+  }
+  const sourceTypeLabel: Record<'feishu_drive' | 'feishu_wiki', string> = {
+    feishu_drive: t('knowledgeBases.workbench.sourceType.feishu_drive'),
+    feishu_wiki: t('knowledgeBases.workbench.sourceType.feishu_wiki'),
+  }
+  function handleManualSync() {
+    syncMutation.mutate(undefined, {
+      onSuccess: () =>
+        toast.success(t('knowledgeBases.workbench.manualSyncSuccess')),
+      onError: (error) => toast.error(parseApiError(error).message),
+    })
   }
   const base = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}`
   const tabs: WorkbenchTab[] = [
@@ -121,6 +141,15 @@ export function KnowledgeBaseWorkbenchLayout({
               {summary.sync_state === 'failed' && <CircleAlert />}
               {syncStateLabel[summary.sync_state]}
             </Badge>
+            {isFeishu && (
+              <Badge variant='secondary'>
+                {
+                  sourceTypeLabel[
+                    knowledgeBase.source_type as 'feishu_drive' | 'feishu_wiki'
+                  ]
+                }
+              </Badge>
+            )}
             <span aria-hidden className='text-muted-foreground'>
               ·
             </span>
@@ -131,18 +160,35 @@ export function KnowledgeBaseWorkbenchLayout({
               })}
             </p>
           </div>
-          {(current.segment === 'overview' ||
-            current.segment === 'content') && (
-            <Button
-              type='button'
-              size='sm'
-              className='shrink-0'
-              onClick={() => setUploadOpen(true)}
-            >
-              {t('knowledgeBases.workbench.addContentButton')}
-              <ArrowRight />
-            </Button>
-          )}
+          <div className='flex shrink-0 items-center gap-2'>
+            {isFeishu && (
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                disabled={syncMutation.isPending}
+                onClick={handleManualSync}
+              >
+                {syncMutation.isPending ? (
+                  <Loader2 className='animate-spin' />
+                ) : (
+                  <RefreshCw />
+                )}
+                {t('knowledgeBases.workbench.manualSync')}
+              </Button>
+            )}
+            {(current.segment === 'overview' ||
+              current.segment === 'content') && (
+              <Button
+                type='button'
+                size='sm'
+                onClick={() => setUploadOpen(true)}
+              >
+                {t('knowledgeBases.workbench.addContentButton')}
+                <ArrowRight />
+              </Button>
+            )}
+          </div>
         </div>
 
         <nav

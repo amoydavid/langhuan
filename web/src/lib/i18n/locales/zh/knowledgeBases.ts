@@ -34,6 +34,24 @@ export const knowledgeBases = {
     chunkOverlapLabel: '重叠大小',
     createdToast: '知识库已创建',
     submitButton: '创建知识库',
+    sourceLabel: '内容来源',
+    sourceOptions: {
+      upload: '本地上传',
+      feishu_drive: '飞书云文档',
+      feishu_wiki: '飞书知识库',
+    },
+    sourceConnectionLabel: '飞书应用',
+    sourceConnectionPlaceholder: '选择已添加的飞书应用',
+    sourceConnectionEmpty: '尚未添加飞书应用。',
+    sourceConnectionGo: '去添加应用',
+    sourceTokenLabel: '知识库 Token / 链接',
+    sourceTokenPlaceholder: '粘贴文件夹 / Wiki 节点 token 或链接',
+    sourceTokenHint:
+      '在飞书中获取的文件夹或知识库节点 token（也可粘贴分享链接）。',
+    syncScheduleLabel: '定时同步',
+    syncScheduleHint: '启用后按 cron 表达式周期性从飞书拉取最新内容。',
+    cronLabel: 'Cron 表达式',
+    cronHint: '标准 5 段式，例如 0 0 * * * 表示每天 0 点同步。',
   },
 
   // Embedding 模型选择器
@@ -115,6 +133,8 @@ export const knowledgeBases = {
     contentMeta: '内容版本 {{version}} · {{chunkCount}} 个分块',
     addContentButton: '添加内容',
     areaAriaLabel: '知识库区域',
+    manualSync: '手动同步',
+    manualSyncSuccess: '已发起同步任务',
     tabs: {
       overview: '概览',
       content: '内容',
@@ -127,6 +147,10 @@ export const knowledgeBases = {
       updating: '更新中',
       failed: '有失败',
       candidate_ready: '候选待激活',
+    },
+    sourceType: {
+      feishu_drive: '飞书云文档',
+      feishu_wiki: '飞书知识库',
     },
   },
 
@@ -142,5 +166,7 @@ export const knowledgeBases = {
     chunkOverlapMin: '重叠大小不能小于 0',
     chunkOverlapLessThanSize: '重叠大小必须小于分块大小',
     childLargerThanParent: '小块大小不能大于上下文块大小',
+    sourceConnectionRequired: '请选择飞书应用',
+    rootTokenRequired: '请输入知识库 Token / 链接',
   },
 } as const

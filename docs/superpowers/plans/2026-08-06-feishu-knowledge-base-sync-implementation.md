@@ -728,7 +728,7 @@ git commit -m "feat(web): 飞书集成页与应用管理"
 - 表单顶部「内容来源」RadioGroup（本地上传/飞书云文档/飞书知识库）；选飞书时出现应用 Select + token/URL Input + cron 可选 Switch。
 - 详情 Badge 同步状态（文字+图标，不只靠颜色）；概览展示来源/节点数/最近下次同步；「手动同步」按钮（admin）。
 
-- [ ] **Step 1: 写来源切换与详情状态失败测试。**
+- [x] **Step 1: 写来源切换与详情状态失败测试。**
 
 ```tsx
 it('shows feishu fields only when source is feishu', async () => {
@@ -744,23 +744,23 @@ it('renders sync status badge with text and icon', async () => {
 })
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `pnpm --dir web test -- knowledge-base-form workbench`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现来源切换、详情状态、手动同步 mutation。**
+- [x] **Step 3: 实现来源切换、详情状态、手动同步 mutation。**
 
 来源字段条件渲染；无应用时下拉显示跳转链接；同步状态用 Badge + Lucide 图标（✓⟳⚠–）；手动同步 mutation 后 invalidate KB summary。
 
-- [ ] **Step 4: 验证表单、详情、build。**
+- [x] **Step 4: 验证表单、详情、build。**
 
 Run: `pnpm --dir web test -- knowledge-base-form workbench && pnpm --dir web check && pnpm --dir web build`
 
 Expected: PASS；来源切换、状态可读、桌面/移动等价、无 UUID/secret 在 DOM。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add web/src/features/knowledge-bases web/src/lib/i18n

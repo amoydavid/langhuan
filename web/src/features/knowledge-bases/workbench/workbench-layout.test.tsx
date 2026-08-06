@@ -1,8 +1,12 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import type { KnowledgeBase } from '@/features/knowledge-bases/types'
 import type { KnowledgeBaseSummary } from './types'
 import { KnowledgeBaseWorkbenchLayout } from './workbench-layout'
+
+const syncKnowledgeBase = vi.hoisted(() => vi.fn())
 
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
@@ -21,6 +25,13 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),
   useMatches: () => [],
 }))
+// 仅 mock 发起同步的网络函数；mutation 选项本身保持真实逻辑，
+// 以验证成功后能 invalidate KB summary。
+vi.mock('./api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api')>()
+  return { ...actual, syncKnowledgeBase }
+})
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const kbId = 'de305d54-75b4-431b-adb2-eb6b9e546014'
 const workspaceId = 'f064b7d4-eba3-4d1d-8b54-b666e83d63e5'
@@ -60,6 +71,7 @@ const knowledgeBase: KnowledgeBase = {
   active_index_generation_id: generationId,
   file_tree_root_id: 'c373dee3-3cfc-42b6-985c-f9b46807b97d',
   metadata: { config_hash: 'must-not-render' },
+  source_type: 'upload',
   created_at: '2026-08-01T09:42:00Z',
   updated_at: '2026-08-01T10:00:00Z',
 }
@@ -102,16 +114,27 @@ const summary: KnowledgeBaseSummary = {
   blockers: [],
 }
 
-describe('KnowledgeBaseWorkbenchLayout', () => {
-  it('keeps readable KB context around a nested Outlet and route navigation', async () => {
-    const screen = await render(
+async function renderWorkbench(kb: KnowledgeBase = knowledgeBase) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  const invalidateQueries = vi.spyOn(client, 'invalidateQueries')
+  const screen = await render(
+    <QueryClientProvider client={client}>
       <KnowledgeBaseWorkbenchLayout
         workspaceSlug='acme'
         kbId={kbId}
-        knowledgeBase={knowledgeBase}
+        knowledgeBase={kb}
         summary={summary}
       />
-    )
+    </QueryClientProvider>
+  )
+  return { screen, invalidateQueries, client }
+}
+
+describe('KnowledgeBaseWorkbenchLayout', () => {
+  it('keeps readable KB context around a nested Outlet and route navigation', async () => {
+    const { screen } = await renderWorkbench()
 
     await expect
       .element(screen.getByText('产品文档', { exact: true }))
@@ -129,5 +152,38 @@ describe('KnowledgeBaseWorkbenchLayout', () => {
     expect(document.body.textContent).not.toContain(kbId)
     expect(document.body.textContent).not.toContain(workspaceId)
     expect(document.body.textContent).not.toContain('must-not-render')
+  })
+
+  it('hides the manual sync button for upload knowledge bases', async () => {
+    await renderWorkbench()
+
+    // upload 来源不渲染手动同步按钮，也不展示来源 Badge
+    expect(document.body.textContent).not.toContain('手动同步')
+    expect(document.body.textContent).not.toContain('飞书知识库')
+  })
+
+  it('shows a manual sync button and source badge for feishu wiki', async () => {
+    syncKnowledgeBase.mockResolvedValue({
+      job_id: '70000000-0000-4000-8000-000000000007',
+    })
+    const feishuKb: KnowledgeBase = {
+      ...knowledgeBase,
+      source_type: 'feishu_wiki',
+      source_connection_id: '60000000-0000-4000-8000-000000000006',
+      source_config: {
+        root_token: 'wikcnYYYY',
+        root_kind: 'wiki_node',
+      },
+    }
+    const { screen } = await renderWorkbench(feishuKb)
+
+    await expect
+      .element(screen.getByRole('button', { name: '手动同步' }))
+      .toBeVisible()
+    await expect.element(screen.getByText('飞书知识库')).toBeVisible()
+
+    await userEvent.click(screen.getByRole('button', { name: '手动同步' }))
+    await vi.waitFor(() => expect(syncKnowledgeBase).toHaveBeenCalledOnce())
+    expect(syncKnowledgeBase).toHaveBeenCalledWith('acme', kbId)
   })
 })
