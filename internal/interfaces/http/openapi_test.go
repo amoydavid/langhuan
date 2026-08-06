@@ -40,11 +40,8 @@ func TestKeyRoutesPresent(t *testing.T) {
 		hasResp bool // 期望有成功响应
 		hasReq  bool // 期望有请求体
 	}{
-		{http.MethodPost, "/api/v1/auth/login", true, true},
-		{http.MethodPost, "/api/v1/workspaces", true, true},
 		{http.MethodPost, "/api/v1/workspaces/{workspace_slug}/knowledge-bases", true, true},
 		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/knowledge-bases", true, false},
-		{http.MethodDelete, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}", false, false},
 		{http.MethodPost, "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/documents", true, true},
 		{http.MethodPost, "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/search", true, true},
 	}
@@ -66,6 +63,35 @@ func TestKeyRoutesPresent(t *testing.T) {
 			}
 			if tc.hasResp && len(op.Responses.Map()) == 0 {
 				t.Errorf("期望有响应，实际无")
+			}
+		})
+	}
+}
+
+func TestSessionOnlyRoutesExcluded(t *testing.T) {
+	spec := buildSpec()
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/auth/login"},
+		{http.MethodGet, "/api/v1/auth/me"},
+		{http.MethodPost, "/api/v1/workspaces"},
+		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/members"},
+		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/search-settings"},
+		{http.MethodGet, "/api/v1/admin/model-providers"},
+		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}"},
+		{http.MethodDelete, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}"},
+		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/index-generations"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+strings.ReplaceAll(tc.path, "/", "_"), func(t *testing.T) {
+			path := spec.Paths.Find(tc.path)
+			if path == nil {
+				return
+			}
+			if op := pickOp(path, tc.method); op != nil {
+				t.Fatalf("Session-only 路由不应出现在 OpenAPI: %s %s", tc.method, tc.path)
 			}
 		})
 	}
@@ -112,9 +138,9 @@ func TestUUIDFieldReflectsAsStringFormat(t *testing.T) {
 // TestEnumValuesPopulated 验证 value.* enum 字段反射后带枚举值。
 func TestEnumValuesPopulated(t *testing.T) {
 	spec := buildSpec()
-	pi := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/members")
+	pi := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/models")
 	if pi == nil || pi.Get == nil {
-		t.Fatal("成员列表路由未注册")
+		t.Fatal("模型列表路由未注册")
 	}
 	resp := pi.Get.Responses.Status(http.StatusOK)
 	if resp == nil {
@@ -128,12 +154,12 @@ func TestEnumValuesPopulated(t *testing.T) {
 	if items == nil || items.Value == nil {
 		t.Fatal("响应应为 array")
 	}
-	roleProp := items.Value.Properties["role"]
-	if roleProp == nil || roleProp.Value == nil {
-		t.Fatal("membership schema 缺少 role 字段")
+	statusProp := items.Value.Properties["status"]
+	if statusProp == nil || statusProp.Value == nil {
+		t.Fatal("model schema 缺少 status 字段")
 	}
-	if len(roleProp.Value.Enum) == 0 {
-		t.Errorf("role 字段应带 enum 枚举值，实际为空（type=%v）", roleProp.Value.Type)
+	if len(statusProp.Value.Enum) == 0 {
+		t.Errorf("status 字段应带 enum 枚举值，实际为空（type=%v）", statusProp.Value.Type)
 	}
 }
 
@@ -156,13 +182,8 @@ func TestRequiredComputed(t *testing.T) {
 // TestSecurityRequirements 验证鉴权方式映射。
 func TestSecurityRequirements(t *testing.T) {
 	spec := buildSpec()
-	login := spec.Paths.Find("/api/v1/auth/login").Post
-	if login.Security != nil {
-		t.Errorf("public 路由不应有 security，实际 %v", login.Security)
-	}
-	me := spec.Paths.Find("/api/v1/auth/me").Get
-	if me.Security == nil || len(*me.Security) == 0 {
-		t.Errorf("session 路由应有 security requirement")
+	if spec.Paths.Find("/api/v1/auth/login") != nil || spec.Paths.Find("/api/v1/auth/me") != nil {
+		t.Errorf("认证路由不应进入 API Key OpenAPI 文档")
 	}
 	kb := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/knowledge-bases").Post
 	if kb.Security == nil || len(*kb.Security) != 2 {
@@ -177,7 +198,7 @@ func TestSecurityRequirements(t *testing.T) {
 	}
 }
 
-func TestJinshuRoutesExposeScopesAndLineageParameters(t *testing.T) {
+func TestProgrammaticRoutesExposeScopesAndLineageParameters(t *testing.T) {
 	spec := buildSpec()
 	path := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/documents/{document_id}/faq")
 	if path == nil || path.Get == nil {
@@ -256,6 +277,38 @@ func TestEveryBearerOrSessionOperationDeclaresRequiredScope(t *testing.T) {
 				t.Errorf("%s %s 缺少 x-langhuan-required-scopes", method, pathName)
 			}
 		}
+	}
+}
+
+func TestOpenAPIPublishesOnlyAPIKeyOperations(t *testing.T) {
+	spec := buildSpec()
+	operationCount := 0
+	for pathName, pathItem := range spec.Paths.Map() {
+		for method, operation := range map[string]*openapi3.Operation{
+			http.MethodGet: pathItem.Get, http.MethodPost: pathItem.Post, http.MethodPut: pathItem.Put,
+			http.MethodPatch: pathItem.Patch, http.MethodDelete: pathItem.Delete,
+		} {
+			if operation == nil {
+				continue
+			}
+			operationCount++
+			if operation.Security == nil || len(*operation.Security) != 2 {
+				t.Errorf("%s %s 必须声明 Bearer 或 Session security", method, pathName)
+				continue
+			}
+			if _, ok := (*operation.Security)[0][secBearer]; !ok {
+				t.Errorf("%s %s 第一 security requirement 应为 BearerAuth", method, pathName)
+			}
+			if _, ok := (*operation.Security)[1][secSessionCookie]; !ok {
+				t.Errorf("%s %s 第二 security requirement 应为 SessionCookie", method, pathName)
+			}
+			if operation.Extensions["x-langhuan-required-scopes"] == nil {
+				t.Errorf("%s %s 缺少 required scopes extension", method, pathName)
+			}
+		}
+	}
+	if operationCount == 0 {
+		t.Fatal("OpenAPI 至少应包含一条 API Key operation")
 	}
 }
 

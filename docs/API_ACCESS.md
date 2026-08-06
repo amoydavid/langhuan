@@ -49,6 +49,8 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 
 **优先级规则**：存在 `Authorization` 头时，Bearer 是唯一权威凭证；无效 Bearer 直接返回 `401`，不回退浏览器 Cookie。API Key 不得出现在 URL、query 或 multipart 字段中。
 
+OpenAPI 文档（`GET /api/v1/openapi.json`）只收录上述支持 API Key 的对外 REST 接口，并为每个 operation 声明所需 scope；登录、成员、邀请、Provider、模型配置、设置等 Session-only 管理接口不会出现在文档中。
+
 ## 4. REST 能力与 scope
 
 | REST | Scope | 说明 |

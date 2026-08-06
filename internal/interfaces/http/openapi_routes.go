@@ -13,7 +13,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-// 本文件是 OpenAPI 文档唯一的"手写"部分：声明每条对外 REST 路由的绑定关系
+// 本文件是 OpenAPI 文档唯一的"手写"部分：声明每条可供 API Key 访问的对外 REST 路由的绑定关系
 // （method/path/请求体/响应体/状态码/鉴权方式/tag）。字段级 schema 一律不写，
 // 全部由 openapi_spec.go 的反射器从 struct 自动生成。
 //
@@ -47,14 +47,15 @@ type openapiParam struct {
 	defaultValue          any
 }
 
-// registerRoutes 把全部 REST 路由注册进 spec。按资源组织，便于定位。
+// registerRoutes 把 API Key 可访问的对外 REST 路由注册进 spec。按资源组织，便于定位。
 func (b *specBuilder) registerRoutes() {
-	for _, o := range b.allOps() {
+	for _, o := range b.externalOps() {
 		b.add(o)
 	}
 }
 
-// allOps 汇总全部对外 REST 路由。MCP、healthz、SPA 不纳入文档。
+// allOps 汇总 REST 路由元数据。内部 Session-only 路由保留在这里，供运行时合同与审查对照，
+// 但不会自动进入 OpenAPI 文档。
 func (b *specBuilder) allOps() []op {
 	var ops []op
 	ops = append(ops, b.authOps()...)
@@ -75,6 +76,21 @@ func (b *specBuilder) allOps() []op {
 	ops = append(ops, b.membershipOps()...)
 	ops = append(ops, b.readinessAndSettingsOps()...)
 	return ops
+}
+
+// externalOps 只返回真正支持 API Key 的对外 REST 路由。
+//
+// requiredScopes 是 API Key 授权合同的必要标记；仅有 Session 鉴权的管理接口、
+// 认证接口以及其它内部路由不得出现在对外 OpenAPI 文档中。
+func (b *specBuilder) externalOps() []op {
+	all := b.allOps()
+	result := make([]op, 0, len(all))
+	for _, o := range all {
+		if o.sec == secBearerOrSession && len(o.requiredScopes) > 0 {
+			result = append(result, o)
+		}
+	}
+	return result
 }
 
 // add 把一条 op 注册进 spec：反射请求/响应 struct、转换路径参数语法、挂鉴权。
