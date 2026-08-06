@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
@@ -20,6 +21,7 @@ type ModelProviderRepository interface {
 	Update(context.Context, *model.ModelProvider) error
 	Delete(context.Context, uuid.UUID) error
 	CountModels(context.Context, uuid.UUID) (int64, error)
+	CountModelsByProvider(context.Context, []uuid.UUID) (map[uuid.UUID]dto.ProviderModelCounts, error)
 	CountGenerationReferences(context.Context, uuid.UUID) (int64, error)
 }
 
@@ -32,6 +34,8 @@ type ModelRepository interface {
 	ListByProviderVisible(context.Context, uuid.UUID, uuid.UUID) ([]*model.Model, error)
 	ListByProviderPlatform(context.Context, uuid.UUID) ([]*model.Model, error)
 	ListVisible(context.Context, uuid.UUID, value.ModelType, bool) ([]*model.ResolvedModel, error)
+	ListManagedVisible(context.Context, uuid.UUID, ModelListFilter) ([]*model.ResolvedModel, error)
+	ListManagedPlatform(context.Context, ModelListFilter) ([]*model.ResolvedModel, error)
 	Update(context.Context, *model.Model) error
 	Delete(context.Context, uuid.UUID) error
 	CountGenerationReferences(context.Context, uuid.UUID) (int64, error)

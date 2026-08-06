@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	appservice "github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -132,6 +134,91 @@ func (r *ModelRepository) ListVisible(ctx context.Context, workspaceID uuid.UUID
 				return nil, err
 			}
 			providers[item.ProviderID] = provider
+		}
+		result = append(result, &model.ResolvedModel{Model: item, Provider: provider})
+	}
+	return result, nil
+}
+
+// ListManagedVisible 返回 Workspace 可见的管理目录模型。
+func (r *ModelRepository) ListManagedVisible(ctx context.Context, workspaceID uuid.UUID, filter appservice.ModelListFilter) ([]*model.ResolvedModel, error) {
+	query := r.db.WithContext(ctx).
+		Model(&ModelRow{}).
+		Joins("JOIN model_providers AS provider ON provider.id = models.provider_id").
+		Where("provider.scope = ? OR (provider.scope = ? AND provider.workspace_id = ?)",
+			value.ModelScopePlatform, value.ModelScopeWorkspace, workspaceID)
+	return r.listManaged(ctx, query, filter)
+}
+
+// ListManagedPlatform 返回平台连接下的管理目录模型。
+func (r *ModelRepository) ListManagedPlatform(ctx context.Context, filter appservice.ModelListFilter) ([]*model.ResolvedModel, error) {
+	query := r.db.WithContext(ctx).
+		Model(&ModelRow{}).
+		Joins("JOIN model_providers AS provider ON provider.id = models.provider_id").
+		Where("provider.scope = ?", value.ModelScopePlatform)
+	return r.listManaged(ctx, query, filter)
+}
+
+func (r *ModelRepository) listManaged(ctx context.Context, query *gorm.DB, filter appservice.ModelListFilter) ([]*model.ResolvedModel, error) {
+	if filter.Type != nil {
+		query = query.Where("models.type = ?", *filter.Type)
+	}
+	if filter.Status != nil {
+		query = query.Where("models.status = ?", *filter.Status)
+	}
+	if filter.Scope != nil {
+		query = query.Where("provider.scope = ?", *filter.Scope)
+	}
+	if filter.ProviderID != nil {
+		query = query.Where("models.provider_id = ?", *filter.ProviderID)
+	}
+	if search := strings.TrimSpace(filter.Query); search != "" {
+		pattern := "%" + search + "%"
+		query = query.Where(`models.name ILIKE ? OR models.display_name ILIKE ? OR models.model_name ILIKE ? OR provider.display_name ILIKE ?`,
+			pattern, pattern, pattern, pattern)
+	}
+	var rows []ModelRow
+	if err := query.
+		Order("CASE provider.scope WHEN 'workspace' THEN 0 ELSE 1 END").
+		Order("lower(models.display_name) ASC, models.id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("列出管理模型目录失败: %w", err)
+	}
+	return r.resolveRows(ctx, rows)
+}
+
+func (r *ModelRepository) resolveRows(ctx context.Context, rows []ModelRow) ([]*model.ResolvedModel, error) {
+	providerIDs := make([]uuid.UUID, 0, len(rows))
+	seen := make(map[uuid.UUID]struct{}, len(rows))
+	for _, row := range rows {
+		if _, ok := seen[row.ProviderID]; !ok {
+			seen[row.ProviderID] = struct{}{}
+			providerIDs = append(providerIDs, row.ProviderID)
+		}
+	}
+	providerRows := make([]ModelProviderRow, 0, len(providerIDs))
+	if len(providerIDs) > 0 {
+		if err := r.db.WithContext(ctx).Where("id IN ?", providerIDs).Find(&providerRows).Error; err != nil {
+			return nil, fmt.Errorf("批量读取模型 Provider 失败: %w", err)
+		}
+	}
+	providers := make(map[uuid.UUID]*model.ModelProvider, len(providerRows))
+	for i := range providerRows {
+		provider, err := modelProviderFromRow(&providerRows[i])
+		if err != nil {
+			return nil, err
+		}
+		providers[provider.ID] = provider
+	}
+	result := make([]*model.ResolvedModel, 0, len(rows))
+	for i := range rows {
+		item, err := modelFromRow(&rows[i])
+		if err != nil {
+			return nil, err
+		}
+		provider := providers[item.ProviderID]
+		if provider == nil {
+			return nil, fmt.Errorf("读取模型 %s 的 Provider 失败: %w", item.ID, domainerrors.ErrNotFound)
 		}
 		result = append(result, &model.ResolvedModel{Model: item, Provider: provider})
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/dajee/langhuan/internal/application/dto"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -185,6 +186,42 @@ func (r *ModelProviderRepository) CountModels(ctx context.Context, providerID uu
 		return 0, fmt.Errorf("统计 Provider 模型失败: %w", err)
 	}
 	return count, nil
+}
+
+// CountModelsByProvider 用一次分组查询返回多条连接的模型统计。
+func (r *ModelProviderRepository) CountModelsByProvider(ctx context.Context, providerIDs []uuid.UUID) (map[uuid.UUID]dto.ProviderModelCounts, error) {
+	result := make(map[uuid.UUID]dto.ProviderModelCounts, len(providerIDs))
+	if len(providerIDs) == 0 {
+		return result, nil
+	}
+	type countRow struct {
+		ProviderID uuid.UUID
+		Total      int64
+		Active     int64
+		Embedding  int64
+		Rerank     int64
+	}
+	var rows []countRow
+	err := r.db.WithContext(ctx).
+		Model(&ModelRow{}).
+		Select(`provider_id,
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE status = ?) AS active,
+			COUNT(*) FILTER (WHERE type = ?) AS embedding,
+			COUNT(*) FILTER (WHERE type = ?) AS rerank`,
+			value.ModelStatusActive, value.ModelTypeEmbedding, value.ModelTypeRerank).
+		Where("provider_id IN ?", providerIDs).
+		Group("provider_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("统计 Provider 模型分布失败: %w", err)
+	}
+	for _, row := range rows {
+		result[row.ProviderID] = dto.ProviderModelCounts{
+			Total: row.Total, Active: row.Active, Embedding: row.Embedding, Rerank: row.Rerank,
+		}
+	}
+	return result, nil
 }
 
 // CountGenerationReferences 统计引用该 Provider 的 Generation 数量，

@@ -127,6 +127,8 @@ type fakeModelHTTPService struct {
 	deleteModelID     uuid.UUID
 	listSelectType    value.ModelType
 	listSelectActive  bool
+	listManaged       bool
+	listFilter        service.ModelListFilter
 	result            *dto.Model
 	err               error
 }
@@ -164,6 +166,16 @@ func (s *fakeModelHTTPService) ListPlatform(context.Context, uuid.UUID) ([]*dto.
 
 func (s *fakeModelHTTPService) ListSelectableWorkspace(_ context.Context, _ uuid.UUID, modelType value.ModelType, active bool) ([]*dto.Model, error) {
 	s.listSelectType, s.listSelectActive = modelType, active
+	return []*dto.Model{s.item()}, s.err
+}
+
+func (s *fakeModelHTTPService) ListWorkspaceModels(_ context.Context, _ uuid.UUID, filter service.ModelListFilter) ([]*dto.Model, error) {
+	s.listManaged, s.listFilter = true, filter
+	return []*dto.Model{s.item()}, s.err
+}
+
+func (s *fakeModelHTTPService) ListPlatformModels(_ context.Context, filter service.ModelListFilter) ([]*dto.Model, error) {
+	s.listManaged, s.listFilter = true, filter
 	return []*dto.Model{s.item()}, s.err
 }
 
@@ -439,6 +451,26 @@ func TestListSelectableModelsFiltersByType(t *testing.T) {
 	bad := admin.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/models?type=llm", "")
 	if bad.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("bad type status = %d, body = %s", bad.Code, bad.Body.String())
+	}
+}
+
+func TestManagementModelCatalogRoutesParseFilters(t *testing.T) {
+	workspace := newModelRouteFixture(t, value.RoleAdmin, false)
+	rec := workspace.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/models?management=true&type=rerank&status=active&scope=workspace&q=BGE", "")
+	if rec.Code != stdhttp.StatusOK || !workspace.models.listManaged {
+		t.Fatalf("workspace status = %d managed = %v body = %s", rec.Code, workspace.models.listManaged, rec.Body.String())
+	}
+	if workspace.models.listFilter.Type == nil || *workspace.models.listFilter.Type != value.ModelTypeRerank ||
+		workspace.models.listFilter.Status == nil || *workspace.models.listFilter.Status != value.ModelStatusActive ||
+		workspace.models.listFilter.Scope == nil || *workspace.models.listFilter.Scope != value.ModelScopeWorkspace ||
+		workspace.models.listFilter.Query != "BGE" {
+		t.Fatalf("filter = %#v", workspace.models.listFilter)
+	}
+
+	platform := newModelRouteFixture(t, value.RoleMember, true)
+	rec = platform.request(stdhttp.MethodGet, "/api/v1/admin/models?type=all&status=disabled", "")
+	if rec.Code != stdhttp.StatusOK || !platform.models.listManaged || platform.models.listFilter.Status == nil || *platform.models.listFilter.Status != value.ModelStatusDisabled {
+		t.Fatalf("platform status = %d filter = %#v body = %s", rec.Code, platform.models.listFilter, rec.Body.String())
 	}
 }
 

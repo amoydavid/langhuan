@@ -103,22 +103,30 @@ func (s *ModelProviderService) create(ctx context.Context, input CreateModelProv
 	if err := s.repository.Create(ctx, provider); err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, dto.ProviderModelCounts{}), nil
 }
 
 // ListWorkspace lists platform-shared and Workspace-owned Providers.
 func (s *ModelProviderService) ListWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*dto.ModelProvider, error) {
 	items, err := s.repository.ListVisible(ctx, workspaceID)
-	return s.providerList(items, err)
+	return s.providerList(ctx, items, err)
 }
 
 // ListPlatform lists only platform-shared Providers.
 func (s *ModelProviderService) ListPlatform(ctx context.Context) ([]*dto.ModelProvider, error) {
 	items, err := s.repository.ListPlatform(ctx)
-	return s.providerList(items, err)
+	return s.providerList(ctx, items, err)
 }
 
-func (s *ModelProviderService) providerList(items []*model.ModelProvider, err error) ([]*dto.ModelProvider, error) {
+func (s *ModelProviderService) providerList(ctx context.Context, items []*model.ModelProvider, err error) ([]*dto.ModelProvider, error) {
+	if err != nil {
+		return nil, err
+	}
+	providerIDs := make([]uuid.UUID, 0, len(items))
+	for _, item := range items {
+		providerIDs = append(providerIDs, item.ID)
+	}
+	counts, err := s.repository.CountModelsByProvider(ctx, providerIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +136,7 @@ func (s *ModelProviderService) providerList(items []*model.ModelProvider, err er
 		if factoryErr != nil {
 			return nil, factoryErr
 		}
-		result = append(result, dto.ModelProviderFromModel(item, factory.CredentialFields))
+		result = append(result, dto.ModelProviderFromModel(item, factory.CredentialFields, factory.Capabilities, counts[item.ID]))
 	}
 	return result, nil
 }
@@ -136,16 +144,16 @@ func (s *ModelProviderService) providerList(items []*model.ModelProvider, err er
 // GetWorkspace gets a visible Workspace or platform-shared Provider.
 func (s *ModelProviderService) GetWorkspace(ctx context.Context, workspaceID, providerID uuid.UUID) (*dto.ModelProvider, error) {
 	provider, err := s.repository.GetVisible(ctx, workspaceID, providerID)
-	return s.providerDTO(provider, err)
+	return s.providerDTO(ctx, provider, err)
 }
 
 // GetPlatform gets one platform Provider.
 func (s *ModelProviderService) GetPlatform(ctx context.Context, providerID uuid.UUID) (*dto.ModelProvider, error) {
 	provider, err := s.repository.GetPlatform(ctx, providerID)
-	return s.providerDTO(provider, err)
+	return s.providerDTO(ctx, provider, err)
 }
 
-func (s *ModelProviderService) providerDTO(provider *model.ModelProvider, err error) (*dto.ModelProvider, error) {
+func (s *ModelProviderService) providerDTO(ctx context.Context, provider *model.ModelProvider, err error) (*dto.ModelProvider, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +161,11 @@ func (s *ModelProviderService) providerDTO(provider *model.ModelProvider, err er
 	if err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields), nil
+	counts, err := s.repository.CountModelsByProvider(ctx, []uuid.UUID{provider.ID})
+	if err != nil {
+		return nil, err
+	}
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, counts[provider.ID]), nil
 }
 
 // UpdateWorkspace updates only a Provider owned by the given Workspace.
@@ -229,7 +241,11 @@ func (s *ModelProviderService) update(ctx context.Context, provider *model.Model
 	if err := s.repository.Update(ctx, provider); err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields), nil
+	counts, err := s.repository.CountModelsByProvider(ctx, []uuid.UUID{provider.ID})
+	if err != nil {
+		return nil, err
+	}
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, counts[provider.ID]), nil
 }
 
 // DeleteWorkspace deletes an unreferenced Workspace Provider.

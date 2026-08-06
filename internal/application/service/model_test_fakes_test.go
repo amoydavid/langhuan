@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 
+	"github.com/dajee/langhuan/internal/application/dto"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -80,6 +82,9 @@ func (r *fakeModelProviderRepository) Delete(_ context.Context, id uuid.UUID) er
 }
 func (r *fakeModelProviderRepository) CountModels(_ context.Context, providerID uuid.UUID) (int64, error) {
 	return 0, nil
+}
+func (r *fakeModelProviderRepository) CountModelsByProvider(_ context.Context, providerIDs []uuid.UUID) (map[uuid.UUID]dto.ProviderModelCounts, error) {
+	return make(map[uuid.UUID]dto.ProviderModelCounts, len(providerIDs)), nil
 }
 func (r *fakeModelProviderRepository) CountGenerationReferences(_ context.Context, _ uuid.UUID) (int64, error) {
 	return 0, nil
@@ -155,6 +160,37 @@ func (r *fakeModelRepository) ListVisible(ctx context.Context, workspaceID uuid.
 		if err == nil && item.Type == modelType && (!activeOnly || (item.Status == value.ModelStatusActive && resolved.Provider.Status == value.ModelStatusActive)) {
 			result = append(result, resolved)
 		}
+	}
+	return result, nil
+}
+func (r *fakeModelRepository) ListManagedVisible(ctx context.Context, workspaceID uuid.UUID, filter ModelListFilter) ([]*model.ResolvedModel, error) {
+	return r.listManaged(ctx, &workspaceID, filter)
+}
+func (r *fakeModelRepository) ListManagedPlatform(ctx context.Context, filter ModelListFilter) ([]*model.ResolvedModel, error) {
+	return r.listManaged(ctx, nil, filter)
+}
+func (r *fakeModelRepository) listManaged(ctx context.Context, workspaceID *uuid.UUID, filter ModelListFilter) ([]*model.ResolvedModel, error) {
+	result := make([]*model.ResolvedModel, 0)
+	query := strings.ToLower(filter.Query)
+	for id, item := range r.items {
+		var resolved *model.ResolvedModel
+		var err error
+		if workspaceID == nil {
+			resolved, err = r.GetPlatform(ctx, id)
+		} else {
+			resolved, err = r.GetVisible(ctx, *workspaceID, id)
+		}
+		if err != nil || (filter.Type != nil && item.Type != *filter.Type) ||
+			(filter.Status != nil && item.Status != *filter.Status) ||
+			(filter.Scope != nil && resolved.Provider.Scope != *filter.Scope) ||
+			(filter.ProviderID != nil && item.ProviderID != *filter.ProviderID) {
+			continue
+		}
+		searchable := strings.ToLower(item.Name + " " + item.DisplayName + " " + item.ModelName + " " + resolved.Provider.DisplayName)
+		if query != "" && !strings.Contains(searchable, query) {
+			continue
+		}
+		result = append(result, resolved)
 	}
 	return result, nil
 }

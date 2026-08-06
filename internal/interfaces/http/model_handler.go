@@ -21,6 +21,8 @@ type ModelHTTPService interface {
 	ListWorkspace(context.Context, uuid.UUID, uuid.UUID) ([]*dto.Model, error)
 	ListPlatform(context.Context, uuid.UUID) ([]*dto.Model, error)
 	ListSelectableWorkspace(context.Context, uuid.UUID, value.ModelType, bool) ([]*dto.Model, error)
+	ListWorkspaceModels(context.Context, uuid.UUID, service.ModelListFilter) ([]*dto.Model, error)
+	ListPlatformModels(context.Context, service.ModelListFilter) ([]*dto.Model, error)
 	GetWorkspace(context.Context, uuid.UUID, uuid.UUID) (*dto.Model, error)
 	GetPlatform(context.Context, uuid.UUID) (*dto.Model, error)
 	UpdateWorkspace(context.Context, uuid.UUID, uuid.UUID, service.UpdateModelInput) (*dto.Model, error)
@@ -136,6 +138,20 @@ func (h modelHandler) listSelectable(c *gin.Context) {
 		return
 	}
 	rawType := strings.TrimSpace(c.Query("type"))
+	management, err := parseOptionalBool(c.DefaultQuery("management", "false"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "management 必须是布尔值")
+		return
+	}
+	if management || rawType == "all" {
+		filter, ok := parseModelListFilter(c)
+		if !ok {
+			return
+		}
+		items, listErr := h.models.ListWorkspaceModels(c.Request.Context(), authCtx.WorkspaceID, filter)
+		writeModelList(c, items, listErr)
+		return
+	}
 	modelType := value.ModelType(rawType)
 	if modelType != value.ModelTypeEmbedding && modelType != value.ModelTypeRerank {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "type 必须是 embedding 或 rerank")
@@ -148,6 +164,56 @@ func (h modelHandler) listSelectable(c *gin.Context) {
 	}
 	items, err := h.models.ListSelectableWorkspace(c.Request.Context(), authCtx.WorkspaceID, modelType, active)
 	writeModelList(c, items, err)
+}
+
+func (h modelHandler) listPlatformModels(c *gin.Context) {
+	filter, ok := parseModelListFilter(c)
+	if !ok {
+		return
+	}
+	items, err := h.models.ListPlatformModels(c.Request.Context(), filter)
+	writeModelList(c, items, err)
+}
+
+func parseModelListFilter(c *gin.Context) (service.ModelListFilter, bool) {
+	filter := service.ModelListFilter{Query: strings.TrimSpace(c.Query("q"))}
+	if len([]rune(filter.Query)) > 100 {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "q 不能超过 100 个字符")
+		return service.ModelListFilter{}, false
+	}
+	if raw := strings.TrimSpace(c.Query("type")); raw != "" && raw != "all" {
+		modelType := value.ModelType(raw)
+		if modelType != value.ModelTypeEmbedding && modelType != value.ModelTypeRerank {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "type 必须是 all、embedding 或 rerank")
+			return service.ModelListFilter{}, false
+		}
+		filter.Type = &modelType
+	}
+	if raw := strings.TrimSpace(c.Query("status")); raw != "" && raw != "all" {
+		status := value.ModelStatus(raw)
+		if !status.IsValid() {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "status 必须是 all、active 或 disabled")
+			return service.ModelListFilter{}, false
+		}
+		filter.Status = &status
+	}
+	if raw := strings.TrimSpace(c.Query("scope")); raw != "" && raw != "all" {
+		scope := value.ModelScope(raw)
+		if scope != value.ModelScopeWorkspace && scope != value.ModelScopePlatform {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "scope 必须是 all、workspace 或 platform")
+			return service.ModelListFilter{}, false
+		}
+		filter.Scope = &scope
+	}
+	if raw := strings.TrimSpace(c.Query("provider_id")); raw != "" {
+		providerID, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "provider_id 必须是 UUID")
+			return service.ModelListFilter{}, false
+		}
+		filter.ProviderID = &providerID
+	}
+	return filter, true
 }
 
 func writeModelList(c *gin.Context, items []*dto.Model, err error) {

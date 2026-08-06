@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,15 @@ type UpdateModelInput struct {
 	Dimensions  *int
 	Parameters  *json.RawMessage
 	Status      *value.ModelStatus
+}
+
+// ModelListFilter 描述管理目录支持的可选筛选条件。
+type ModelListFilter struct {
+	Type       *value.ModelType
+	Status     *value.ModelStatus
+	Scope      *value.ModelScope
+	ProviderID *uuid.UUID
+	Query      string
 }
 
 // ModelService manages Embedding 与 Rerank 模型，按 ModelType 路由 capability factory。
@@ -187,6 +197,58 @@ func (s *ModelService) ListSelectablePlatform(ctx context.Context, modelType val
 	// 平台可选项复用 workspace 视图（平台 Provider 对所有 workspace 可见），
 	// 使用零值 workspace 不合适；这里直接读取 platform-resolved models。
 	return s.ListSelectableWorkspace(ctx, uuid.Nil, modelType, activeOnly)
+}
+
+// ListWorkspaceModels 返回 Workspace 可见的管理型模型目录。
+func (s *ModelService) ListWorkspaceModels(ctx context.Context, workspaceID uuid.UUID, filter ModelListFilter) ([]*dto.Model, error) {
+	filter, err := normalizeModelListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.models.ListManagedVisible(ctx, workspaceID, filter)
+	return s.resolvedModelList(ctx, items, err)
+}
+
+// ListPlatformModels 返回平台共享模型的管理目录。
+func (s *ModelService) ListPlatformModels(ctx context.Context, filter ModelListFilter) ([]*dto.Model, error) {
+	filter, err := normalizeModelListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.models.ListManagedPlatform(ctx, filter)
+	return s.resolvedModelList(ctx, items, err)
+}
+
+func normalizeModelListFilter(filter ModelListFilter) (ModelListFilter, error) {
+	if filter.Type != nil && *filter.Type != value.ModelTypeEmbedding && *filter.Type != value.ModelTypeRerank {
+		return ModelListFilter{}, domainerrors.ErrUnsupportedModelType
+	}
+	if filter.Status != nil && !filter.Status.IsValid() {
+		return ModelListFilter{}, fmt.Errorf("%w: 模型 status 无效", domainerrors.ErrValidation)
+	}
+	if filter.Scope != nil && *filter.Scope != value.ModelScopeWorkspace && *filter.Scope != value.ModelScopePlatform {
+		return ModelListFilter{}, fmt.Errorf("%w: 模型 scope 无效", domainerrors.ErrValidation)
+	}
+	filter.Query = strings.TrimSpace(filter.Query)
+	if len([]rune(filter.Query)) > 100 {
+		return ModelListFilter{}, fmt.Errorf("%w: 搜索词不能超过 100 个字符", domainerrors.ErrValidation)
+	}
+	return filter, nil
+}
+
+func (s *ModelService) resolvedModelList(ctx context.Context, items []*model.ResolvedModel, err error) ([]*dto.Model, error) {
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*dto.Model, 0, len(items))
+	for _, item := range items {
+		count, countErr := s.models.CountGenerationReferences(ctx, item.Model.ID)
+		if countErr != nil {
+			return nil, countErr
+		}
+		result = append(result, dto.ModelFromResolved(item, count))
+	}
+	return result, nil
 }
 
 func (s *ModelService) modelList(ctx context.Context, provider *model.ModelProvider, items []*model.Model, err error) ([]*dto.Model, error) {

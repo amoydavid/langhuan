@@ -52,6 +52,50 @@ func TestModelRepositoryListVisibleJoinsProviderScopeAndStatus(t *testing.T) {
 	}
 }
 
+func TestModelRepositoryManagedFilterAndProviderCounts(t *testing.T) {
+	ctx, tx := newAuthTestDB(t)
+	workspaceA := createWorkspaceRow(t, ctx, tx, "model-catalog-a")
+	workspaceB := createWorkspaceRow(t, ctx, tx, "model-catalog-b")
+	providerRepo := NewModelProviderRepository(tx)
+	modelRepo := NewModelRepository(tx)
+
+	platform := createProviderForTest(t, ctx, providerRepo, value.ModelScopePlatform, nil, "siliconflow-platform")
+	own := createProviderForTest(t, ctx, providerRepo, value.ModelScopeWorkspace, &workspaceA, "siliconflow-own")
+	other := createProviderForTest(t, ctx, providerRepo, value.ModelScopeWorkspace, &workspaceB, "siliconflow-hidden")
+	createModelForTest(t, ctx, modelRepo, platform.ID, "bge_m3", value.ModelStatusActive)
+	rerank := createRerankModelForTest(t, ctx, modelRepo, own.ID, "bge_reranker")
+	rerank.DisplayName = "BGE Reranker"
+	if err := modelRepo.Update(ctx, rerank); err != nil {
+		t.Fatal(err)
+	}
+	disabled := createModelForTest(t, ctx, modelRepo, own.ID, "disabled_embedding", value.ModelStatusDisabled)
+	createRerankModelForTest(t, ctx, modelRepo, other.ID, "hidden_reranker")
+
+	rerankType := value.ModelTypeRerank
+	activeStatus := value.ModelStatusActive
+	workspaceScope := value.ModelScopeWorkspace
+	items, err := modelRepo.ListManagedVisible(ctx, workspaceA, appservice.ModelListFilter{
+		Type: &rerankType, Status: &activeStatus, Scope: &workspaceScope, Query: "BGE Reranker",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Model.ID != rerank.ID || items[0].Provider.ID != own.ID {
+		t.Fatalf("managed models = %#v", items)
+	}
+
+	counts, err := providerRepo.CountModelsByProvider(ctx, []uuid.UUID{platform.ID, own.ID, other.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := counts[own.ID]; got.Total != 2 || got.Active != 1 || got.Embedding != 1 || got.Rerank != 1 {
+		t.Fatalf("own counts = %#v; disabled=%s", got, disabled.ID)
+	}
+	if got := counts[platform.ID]; got.Total != 1 || got.Active != 1 || got.Embedding != 1 || got.Rerank != 0 {
+		t.Fatalf("platform counts = %#v", got)
+	}
+}
+
 func TestModelRepositoryEnforcesOwnedReadsUpdatesAndReferenceDelete(t *testing.T) {
 	ctx, tx := newAuthTestDB(t)
 	workspaceID := createWorkspaceRow(t, ctx, tx, "model-update")

@@ -214,3 +214,27 @@ func TestProviderFactoryResolverExposesCapabilities(t *testing.T) {
 		t.Fatalf("rerank option = %#v", options[1])
 	}
 }
+
+func TestListWorkspaceModelsFiltersWithoutChangingSelectableContract(t *testing.T) {
+	t.Parallel()
+	workspaceID, actorID := uuid.New(), uuid.New()
+	providers := newFakeModelProviderRepository()
+	provider, _ := model.NewModelProvider(value.ModelScopeWorkspace, &workspaceID, "siliconflow", "SiliconFlow", "", "siliconflow", map[string]any{}, nil, actorID)
+	providers.items[provider.ID] = provider
+	models := newFakeModelRepository(providers)
+	dimension := 1024
+	embeddingModel, _ := model.NewModel(provider.ID, "bge_m3", "BGE M3", "", value.ModelTypeEmbedding, "BAAI/bge-m3", &dimension, map[string]any{}, actorID)
+	rerankModel, _ := model.NewModel(provider.ID, "bge_reranker", "BGE Reranker", "", value.ModelTypeRerank, "BAAI/bge-reranker-v2-m3", nil, map[string]any{}, actorID)
+	models.items[embeddingModel.ID] = embeddingModel
+	models.items[rerankModel.ID] = rerankModel
+
+	service := NewModelService(providers, models, fakeFactoryRegistry{}, fakeRerankFactoryRegistry{}, testProviderDescriptors())
+	rerankType := value.ModelTypeRerank
+	activeStatus := value.ModelStatusActive
+	got, err := service.ListWorkspaceModels(context.Background(), workspaceID, ModelListFilter{
+		Type: &rerankType, Status: &activeStatus, Query: "BGE Reranker",
+	})
+	if err != nil || len(got) != 1 || got[0].Type != value.ModelTypeRerank {
+		t.Fatalf("models = %#v, error = %v", got, err)
+	}
+}

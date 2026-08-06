@@ -156,6 +156,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			modelH := modelHandler{models: deps.Models, connections: deps.ModelConnectionTests}
 			admin.POST("/admin/model-providers/:provider_id/models", modelH.createPlatform)
 			admin.GET("/admin/model-providers/:provider_id/models", modelH.listPlatform)
+			admin.GET("/admin/models", modelH.listPlatformModels)
 			admin.GET("/admin/models/:model_id", modelH.getPlatform)
 			admin.PATCH("/admin/models/:model_id", modelH.updatePlatform)
 			admin.DELETE("/admin/models/:model_id", modelH.deletePlatform)
