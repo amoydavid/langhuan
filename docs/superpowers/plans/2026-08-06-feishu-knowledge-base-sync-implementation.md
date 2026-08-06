@@ -369,7 +369,7 @@ git commit -m "feat(feishu): 实现飞书 SourceConnector 适配器"
 
 > 复用确认：`RawDocumentStore.Put(ctx, RawDocumentInput{Reader, ...})` 直接吃 `io.Reader`（`ports/storage/raw_document.go:10-25`）；`model.NewDocumentIdentity` + `NewDocumentRevision(file)` 字段约束可满足（filename=`标题.md`、file_type=`markdown`）。**不**复用 `DocumentIngestService.Ingest`（file kind + FileTree + allowlist 三重耦合 + sha256 去重）。
 
-- [ ] **Step 1: 写全量同步失败测试（mock connector + 临时库）。**
+- [x] **Step 1: 写全量同步失败测试（mock connector + 临时库）。**
 
 ```go
 func TestSyncKnowledgeBaseFetchesAndEnqueuesParse(t *testing.T) {
@@ -391,23 +391,23 @@ func TestSyncSkipsNonDocxNodesWithWarning(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/application/service -run SyncKnowledgeBase -count=1`
 
 Expected: FAIL，service/store 不存在。
 
-- [ ] **Step 3: 实现 Service + store。**
+- [x] **Step 3: 实现 Service + store。**
 
 Service 持有 `SourceConnector`、`SourceConnectionSelector`、`rawStore`、`sourceSyncStore`、`docRepo`、`fileTreeRepo`、`queue`。folder → FileTreeNode(folder)，docx → Fetch→Put→建 Document+Revision+FileTreeNode(file)+Job，维护 `map[feishuToken]nodeID` 建层级。入队 `document_parse_start`（复用现有 TaskID 规则）。
 
-- [ ] **Step 4: 运行聚焦 + 集成测试。**
+- [x] **Step 4: 运行聚焦 + 集成测试。**
 
 Run: `go test ./internal/application/service ./internal/infrastructure/db -run 'SyncKnowledgeBase|CreateSyncedDocument' -count=1 && go test -tags=integration -p 1 ./internal/infrastructure/db -run 'CreateSyncedDocument' -count=1`
 
 Expected: PASS；2 docx 落库 + external_id + 2 job 入队、sheet 跳过、folder 树结构正确。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/application/service internal/infrastructure/db

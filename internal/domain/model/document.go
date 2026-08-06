@@ -104,6 +104,26 @@ func NewDocumentIdentity(
 	}, nil
 }
 
+// NewDocumentIdentityWithExternal 在 NewDocumentIdentity 的基础上额外设置 ExternalID，
+// 供飞书等外部内容源同步时记录外部稳定标识（飞书 docx 的 document_id / wiki node_token）。
+func NewDocumentIdentityWithExternal(
+	workspaceID uuid.UUID,
+	knowledgeBaseID uuid.UUID,
+	kind value.DocumentKind,
+	title string,
+	sourceType string,
+	sourceURI string,
+	externalID string,
+	metadata map[string]any,
+) (*Document, error) {
+	document, err := NewDocumentIdentity(workspaceID, knowledgeBaseID, kind, title, sourceType, sourceURI, metadata)
+	if err != nil {
+		return nil, err
+	}
+	document.ExternalID = strings.TrimSpace(externalID)
+	return document, nil
+}
+
 func NewDocument(input NewDocumentInput) (*Document, error) {
 	if input.KnowledgeBaseID == uuid.Nil {
 		return nil, fmt.Errorf("%w: knowledge_base_id 不能为空", domainerrors.ErrValidation)

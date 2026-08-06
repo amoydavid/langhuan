@@ -84,3 +84,43 @@ func TestNewDocumentDefaultsMetadataToEmptyMap(t *testing.T) {
 		t.Fatal("metadata should default to an empty map")
 	}
 }
+
+func TestNewDocumentIdentityWithExternalSetsExternalID(t *testing.T) {
+	workspaceID, kbID := uuid.New(), uuid.New()
+	externalID := "feishu-docx-external-123"
+	document, err := NewDocumentIdentityWithExternal(
+		workspaceID, kbID, value.DocumentKindFile, "飞书文档", "feishu", "", externalID, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewDocumentIdentityWithExternal error = %v", err)
+	}
+	if document.ExternalID != externalID {
+		t.Fatalf("ExternalID = %q, want %q", document.ExternalID, externalID)
+	}
+	if document.SourceType != "feishu" {
+		t.Fatalf("SourceType = %q, want feishu", document.SourceType)
+	}
+	if document.WorkspaceID != workspaceID || document.KnowledgeBaseID != kbID {
+		t.Fatalf("lineage = %s/%s", document.WorkspaceID, document.KnowledgeBaseID)
+	}
+}
+
+func TestNewDocumentIdentityWithExternalTrimsWhitespace(t *testing.T) {
+	document, err := NewDocumentIdentityWithExternal(
+		uuid.New(), uuid.New(), value.DocumentKindFile, "t", "feishu", "", "  spaced-external-id  ", nil,
+	)
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	if document.ExternalID != "spaced-external-id" {
+		t.Fatalf("ExternalID = %q, want trimmed", document.ExternalID)
+	}
+}
+
+func TestNewDocumentIdentityWithExternalPropagatesValidationError(t *testing.T) {
+	if _, err := NewDocumentIdentityWithExternal(
+		uuid.Nil, uuid.New(), value.DocumentKindFile, "t", "feishu", "", "ext", nil,
+	); !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
