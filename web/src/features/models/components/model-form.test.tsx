@@ -22,6 +22,8 @@ const provider: ModelProvider = {
   config: { timeout_seconds: 60 },
   credentials_configured: true,
   credential_fields: ['api_key'],
+  capabilities: ['embedding'],
+  model_counts: { total: 0, active: 0, embedding: 0, rerank: 0 },
   status: 'active',
   created_at: '2026-07-30T00:00:00Z',
   updated_at: '2026-07-30T00:00:00Z',

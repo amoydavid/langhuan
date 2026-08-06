@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  modelCatalogPath,
   modelCollectionPath,
   modelProviderCollectionPath,
   modelResourcePath,
@@ -18,6 +19,22 @@ describe('model API paths', () => {
     )
     expect(modelResourcePath('platform', 'model/id')).toBe(
       '/admin/models/model%2Fid'
+    )
+  })
+
+  it('builds management catalog paths without changing selectable paths', () => {
+    expect(
+      modelCatalogPath('workspace', 'acme', {
+        type: 'rerank',
+        status: 'active',
+        scope: 'workspace',
+        q: 'BGE',
+      })
+    ).toBe(
+      '/workspaces/acme/models?management=true&type=rerank&status=active&scope=workspace&q=BGE'
+    )
+    expect(modelCatalogPath('platform', undefined, { type: 'all' })).toBe(
+      '/admin/models?type=all'
     )
   })
 })

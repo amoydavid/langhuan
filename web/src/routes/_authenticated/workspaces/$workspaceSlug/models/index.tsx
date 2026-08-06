@@ -3,10 +3,12 @@ import { Main } from '@/components/layout/main'
 import { meQueryOptions } from '@/features/auth/queries'
 import { ModelProviderListPage } from '@/features/models/model-provider-list-page'
 import { modelProvidersQueryOptions } from '@/features/models/queries'
+import { modelServiceSearchSchema } from '@/features/models/search-params'
 
 export const Route = createFileRoute(
   '/_authenticated/workspaces/$workspaceSlug/models/'
 )({
+  validateSearch: modelServiceSearchSchema,
   loader: async ({ context, params }) => {
     const [me] = await Promise.all([
       context.queryClient.ensureQueryData(meQueryOptions()),

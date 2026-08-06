@@ -17,6 +17,7 @@ export function providerLabels(t: TFunction): Record<ProviderKey, string> {
     dashscope: t('models.common.providerDashscope'),
     tencentcloud: t('models.common.providerTencentcloud'),
     rerank_compatible: t('models.common.providerRerankCompatible'),
+    siliconflow: 'SiliconFlow',
     mineru: t('models.common.providerMinerU'),
   }
 }
@@ -106,6 +107,20 @@ export function providerFormDefaults(
           ? 'pipeline'
           : 'vlm') as 'vlm' | 'pipeline',
         token: '',
+      }
+    case 'siliconflow':
+      return {
+        ...common,
+        provider: 'siliconflow',
+        base_url:
+          configString(provider, 'base_url') || 'https://api.siliconflow.cn',
+        embedding_endpoint_path:
+          configString(provider, 'embedding_endpoint_path') || '/v1/embeddings',
+        rerank_endpoint_path:
+          configString(provider, 'rerank_endpoint_path') || '/v1/rerank',
+        timeout_seconds: configNumber(provider, 'timeout_seconds', 60),
+        retry_times: configNumber(provider, 'retry_times', 2),
+        api_key: '',
       }
     case 'rerank_compatible':
       return {
@@ -204,6 +219,19 @@ export function toCreateProviderRequest(
           model_version: values.model_version,
         },
         credentials: { token: values.token },
+      }
+    case 'siliconflow':
+      return {
+        ...common,
+        provider: 'siliconflow',
+        config: {
+          base_url: values.base_url,
+          embedding_endpoint_path: values.embedding_endpoint_path,
+          rerank_endpoint_path: values.rerank_endpoint_path,
+          timeout_seconds: values.timeout_seconds,
+          retry_times: values.retry_times,
+        },
+        credentials: { api_key: values.api_key },
       }
     case 'rerank_compatible': {
       const customHeaders = parseCustomHeadersText(values.custom_headers)

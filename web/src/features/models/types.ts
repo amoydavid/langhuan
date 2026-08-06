@@ -9,6 +9,7 @@ export type ProviderKey =
   | 'dashscope'
   | 'tencentcloud'
   | 'rerank_compatible'
+  | 'siliconflow'
   | 'mineru'
 
 export const embeddingDimensions = [798, 1024, 2048, 3584] as const
@@ -51,6 +52,13 @@ export type ModelProvider = {
   config: Record<string, unknown>
   credentials_configured: boolean
   credential_fields: string[]
+  capabilities: ProviderCapability[]
+  model_counts: {
+    total: number
+    active: number
+    embedding: number
+    rerank: number
+  }
   status: ModelStatus
   created_at: string
   updated_at: string
@@ -145,6 +153,17 @@ export type CreateModelProviderInput = ModelProviderInputBase &
           api_key: string
           custom_headers?: Record<string, string>
         }
+      }
+    | {
+        provider: 'siliconflow'
+        config: {
+          base_url: string
+          embedding_endpoint_path: string
+          rerank_endpoint_path: string
+          timeout_seconds: number
+          retry_times: number
+        }
+        credentials: { api_key: string }
       }
     | {
         provider: 'mineru'

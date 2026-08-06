@@ -4,6 +4,7 @@ import { KeyRound, Loader2, PlugZap, RotateCcw } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -46,6 +47,16 @@ function clearCredentials(
       form.setValue('secret_key', '')
       break
     case 'ollama':
+      break
+    case 'rerank_compatible':
+      form.setValue('api_key', '')
+      form.setValue('custom_headers', '')
+      break
+    case 'siliconflow':
+      form.setValue('api_key', '')
+      break
+    case 'mineru':
+      form.setValue('token', '')
       break
   }
 }
@@ -146,6 +157,9 @@ export function ProviderForm({
         providerOptionsData.length === 0 ||
         availableKeys.has(key))
   )
+  const selectedCapabilities = providerOptionsData.find(
+    (option) => option.key === selectedProvider
+  )?.capabilities
 
   return (
     <form
@@ -191,6 +205,23 @@ export function ProviderForm({
           ))}
         </select>
       </Field>
+      {selectedCapabilities && selectedCapabilities.length > 0 && (
+        <fieldset className='flex flex-wrap items-center gap-2'>
+          <legend className='sr-only'>支持能力</legend>
+          <span aria-hidden='true' className='text-muted-foreground text-xs'>
+            支持能力
+          </span>
+          {selectedCapabilities.map((capability) => (
+            <Badge key={capability} variant='secondary'>
+              {capability === 'embedding'
+                ? 'Embedding'
+                : capability === 'rerank'
+                  ? 'Rerank'
+                  : '文档解析'}
+            </Badge>
+          ))}
+        </fieldset>
+      )}
       <ProviderFields
         form={form}
         provider={selectedProvider}

@@ -184,6 +184,88 @@ export function ProviderFields({
       </div>
     )
   }
+  if (provider === 'siliconflow') {
+    return (
+      <div className='grid gap-4 sm:grid-cols-2'>
+        <Field label='API 地址' htmlFor='siliconflow-base-url'>
+          <Input id='siliconflow-base-url' {...form.register('base_url')} />
+        </Field>
+        <NumberField
+          form={form}
+          name='timeout_seconds'
+          label={t('models.providerFields.timeoutLabel')}
+        />
+        <NumberField
+          form={form}
+          name='retry_times'
+          label={t('models.providerFields.retryTimesLabel')}
+        />
+        {replaceCredentials && (
+          <Field label='API Key' htmlFor='siliconflow-api-key'>
+            <Input
+              id='siliconflow-api-key'
+              type='password'
+              autoComplete='new-password'
+              {...form.register('api_key')}
+            />
+          </Field>
+        )}
+        <details className='rounded-lg border px-4 py-3 sm:col-span-2'>
+          <summary className='cursor-pointer font-medium text-sm'>
+            高级设置
+          </summary>
+          <div className='mt-4 grid gap-4 sm:grid-cols-2'>
+            <Field label='Embedding 路径' htmlFor='siliconflow-embedding-path'>
+              <Input
+                id='siliconflow-embedding-path'
+                {...form.register('embedding_endpoint_path')}
+              />
+            </Field>
+            <Field label='Rerank 路径' htmlFor='siliconflow-rerank-path'>
+              <Input
+                id='siliconflow-rerank-path'
+                {...form.register('rerank_endpoint_path')}
+              />
+            </Field>
+          </div>
+        </details>
+      </div>
+    )
+  }
+  if (provider === 'rerank_compatible') {
+    return (
+      <div className='grid gap-4 sm:grid-cols-2'>
+        <Field label='Base URL' htmlFor='rerank-base-url'>
+          <Input id='rerank-base-url' {...form.register('base_url')} />
+        </Field>
+        <Field label='Endpoint Path' htmlFor='rerank-endpoint-path'>
+          <Input
+            id='rerank-endpoint-path'
+            {...form.register('endpoint_path')}
+          />
+        </Field>
+        <NumberField
+          form={form}
+          name='timeout_seconds'
+          label={t('models.providerFields.timeoutLabel')}
+        />
+        <NumberField
+          form={form}
+          name='retry_times'
+          label={t('models.providerFields.retryTimesLabel')}
+        />
+        {replaceCredentials && (
+          <Field label='API Key' htmlFor='rerank-api-key'>
+            <Input
+              id='rerank-api-key'
+              type='password'
+              {...form.register('api_key')}
+            />
+          </Field>
+        )}
+      </div>
+    )
+  }
   if (provider === 'mineru') {
     return (
       <div className='grid gap-4 sm:grid-cols-2'>

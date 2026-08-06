@@ -1,5 +1,11 @@
 import { queryOptions } from '@tanstack/react-query'
-import { getModelProvider, listModelProviders, listModels } from './api'
+import {
+  getModelProvider,
+  listModelCatalog,
+  listModelProviders,
+  listModels,
+  type ModelCatalogFilters,
+} from './api'
 import type { ModelScope } from './types'
 
 export function modelProvidersQueryOptions(
@@ -9,6 +15,18 @@ export function modelProvidersQueryOptions(
   return queryOptions({
     queryKey: ['model-providers', scope, workspaceSlug ?? null],
     queryFn: () => listModelProviders(scope, workspaceSlug),
+    staleTime: 15_000,
+  })
+}
+
+export function modelCatalogQueryOptions(
+  scope: ModelScope,
+  workspaceSlug: string | undefined,
+  filters: Partial<ModelCatalogFilters>
+) {
+  return queryOptions({
+    queryKey: ['model-catalog', scope, workspaceSlug ?? null, filters],
+    queryFn: () => listModelCatalog(scope, workspaceSlug, filters),
     staleTime: 15_000,
   })
 }

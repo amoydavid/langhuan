@@ -6,6 +6,7 @@ import { minerUProviderSchema } from './mineru'
 import { ollamaProviderSchema } from './ollama'
 import { openAIProviderSchema } from './openai'
 import { rerankCompatibleProviderSchema } from './rerank-compatible'
+import { siliconFlowProviderSchema } from './siliconflow'
 import { tencentCloudProviderSchema } from './tencentcloud'
 
 export {
@@ -23,6 +24,7 @@ export const providerFormSchema = z
     dashScopeProviderSchema,
     tencentCloudProviderSchema,
     rerankCompatibleProviderSchema,
+    siliconFlowProviderSchema,
     minerUProviderSchema,
   ])
   .superRefine((values, context) => {
@@ -73,6 +75,17 @@ export const providerFormSchema = z
     }
     if (
       values.provider === 'dashscope' &&
+      values.replace_credentials &&
+      !values.api_key.trim()
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['api_key'],
+        message: i18n.t('models.schemas.apiKeyRequired'),
+      })
+    }
+    if (
+      values.provider === 'siliconflow' &&
       values.replace_credentials &&
       !values.api_key.trim()
     ) {

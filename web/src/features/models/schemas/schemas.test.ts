@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { toCreateProviderRequest } from '../components/provider-form-data'
 import { embeddingDimensions, modelFormDefaults } from '../types'
 import { providerFormSchema } from '.'
 
@@ -60,5 +61,30 @@ describe('model configuration schemas', () => {
         base_url: 'http://localhost:11434',
       }).success
     ).toBe(false)
+  })
+
+  it('builds one SiliconFlow connection for embedding and rerank', () => {
+    const values = providerFormSchema.parse({
+      scope: 'platform',
+      name: 'siliconflow_prod',
+      display_name: 'SiliconFlow 平台',
+      description: '',
+      replace_credentials: true,
+      provider: 'siliconflow',
+      base_url: 'https://api.siliconflow.cn',
+      embedding_endpoint_path: '/v1/embeddings',
+      rerank_endpoint_path: '/v1/rerank',
+      timeout_seconds: 60,
+      retry_times: 2,
+      api_key: 'secret',
+    })
+    expect(toCreateProviderRequest(values)).toMatchObject({
+      provider: 'siliconflow',
+      config: {
+        embedding_endpoint_path: '/v1/embeddings',
+        rerank_endpoint_path: '/v1/rerank',
+      },
+      credentials: { api_key: 'secret' },
+    })
   })
 })

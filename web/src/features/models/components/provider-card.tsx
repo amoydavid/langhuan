@@ -24,6 +24,7 @@ export function ProviderCard({
     dashscope: t('models.common.providerDashscope'),
     tencentcloud: t('models.common.providerTencentcloud'),
     rerank_compatible: t('models.common.providerRerankCompatible'),
+    siliconflow: 'SiliconFlow',
     mineru: t('models.common.providerMinerU'),
   }
   const href =

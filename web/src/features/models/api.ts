@@ -1,4 +1,5 @@
 import { apiClient } from '@/lib/api/client'
+import type { ModelServiceSearch } from './search-params'
 import type {
   ConnectionTestResult,
   CreateModelInput,
@@ -47,6 +48,37 @@ export function modelResourcePath(
   workspaceSlug?: string
 ) {
   return `${scopeBasePath(scope, workspaceSlug)}/models/${encodeURIComponent(modelId)}`
+}
+
+export type ModelCatalogFilters = Pick<
+  ModelServiceSearch,
+  'type' | 'status' | 'scope' | 'q'
+> & { providerId?: string }
+
+export function modelCatalogPath(
+  scope: ModelScope,
+  workspaceSlug: string | undefined,
+  filters: Partial<ModelCatalogFilters>
+) {
+  const params = new URLSearchParams()
+  if (scope === 'workspace') params.set('management', 'true')
+  if (filters.type) params.set('type', filters.type)
+  if (filters.status) params.set('status', filters.status)
+  if (filters.scope) params.set('scope', filters.scope)
+  if (filters.q) params.set('q', filters.q)
+  if (filters.providerId) params.set('provider_id', filters.providerId)
+  return `${scopeBasePath(scope, workspaceSlug)}/models?${params.toString()}`
+}
+
+export async function listModelCatalog(
+  scope: ModelScope,
+  workspaceSlug: string | undefined,
+  filters: Partial<ModelCatalogFilters>
+) {
+  const response = await apiClient.get<Model[]>(
+    modelCatalogPath(scope, workspaceSlug, filters)
+  )
+  return response.data
 }
 
 export async function listModelProviders(
