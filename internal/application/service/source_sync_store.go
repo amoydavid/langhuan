@@ -40,4 +40,6 @@ type SourceSyncStore interface {
 		workspaceID, documentID, revisionID, jobID uuid.UUID,
 		errorClass, errorMessage string,
 	) error
+	// CreateSourceSyncJob 持久化一个 source_sync 任务（仅关联 KB，不带 document/generation）。
+	CreateSourceSyncJob(ctx context.Context, job *model.Job) error
 }

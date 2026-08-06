@@ -1,0 +1,210 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
+
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+)
+
+func TestSourceSyncHandleForwardsLineageAndMarksRunning(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{}
+	store := &sourceSyncTaskStoreSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store}
+	payload := SourceSyncTaskPayload{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New(),
+		ConnectionID: uuid.New(),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err != nil {
+		t.Fatalf("Handle err = %v", err)
+	}
+	if len(runner.calls) != 1 ||
+		runner.calls[0].WorkspaceID != payload.WorkspaceID ||
+		runner.calls[0].KnowledgeBaseID != payload.KnowledgeBaseID {
+		t.Fatalf("runner calls = %#v", runner.calls)
+	}
+	if !store.running[payload.JobID] {
+		t.Fatalf("MarkRunning not called for job %s", payload.JobID)
+	}
+	if !store.succeeded[payload.JobID] {
+		t.Fatalf("MarkSucceeded not called for job %s", payload.JobID)
+	}
+	if store.failed[payload.JobID] != "" {
+		t.Fatalf("MarkFailed should not be called on success; got %q", store.failed[payload.JobID])
+	}
+}
+
+func TestSourceSyncHandleMarksFailedAndRetriesOnTransientError(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{err: errors.New("network down")}
+	store := &sourceSyncTaskStoreSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store}
+	payload := SourceSyncTaskPayload{WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New()}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded))
+	if err == nil {
+		t.Fatal("Handle err = nil, want transient error")
+	}
+	if !errors.Is(err, runner.err) {
+		t.Fatalf("err = %v, want %v", err, runner.err)
+	}
+	if errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("transient error should not SkipRetry; got %v", err)
+	}
+	if !store.running[payload.JobID] {
+		t.Fatalf("MarkRunning not called")
+	}
+	if store.succeeded[payload.JobID] {
+		t.Fatalf("MarkSucceeded should not be called on failure")
+	}
+	if store.failed[payload.JobID] != runner.err.Error() {
+		t.Fatalf("MarkFailed message = %q, want %q", store.failed[payload.JobID], runner.err.Error())
+	}
+}
+
+func TestSourceSyncHandleSkipRetryOnPermanentError(t *testing.T) {
+	perm := fmt.Errorf("%w: 知识库未绑定来源连接", domainerrors.ErrValidation)
+	runner := &sourceSyncRunnerSpy{err: perm}
+	store := &sourceSyncTaskStoreSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store}
+	payload := SourceSyncTaskPayload{WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New()}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded))
+	if err == nil {
+		t.Fatal("Handle err = nil, want permanent error")
+	}
+	if !errors.Is(err, asynq.SkipRetry) {
+		t.Fatalf("permanent error should include SkipRetry; got %v", err)
+	}
+	if !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("permanent error should wrap ErrValidation; got %v", err)
+	}
+	if store.failed[payload.JobID] != perm.Error() {
+		t.Fatalf("MarkFailed message = %q", store.failed[payload.JobID])
+	}
+}
+
+func TestSourceSyncHandleRejectsEmptyLineage(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{}
+	store := &sourceSyncTaskStoreSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store}
+	// Missing JobID.
+	encoded, err := json.Marshal(SourceSyncTaskPayload{WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err == nil {
+		t.Fatal("Handle err = nil, want lineage error")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("runner should not be called on bad payload; calls = %#v", runner.calls)
+	}
+	if len(store.running) != 0 {
+		t.Fatalf("MarkRunning should not be called on bad payload")
+	}
+}
+
+func TestSourceSyncHandleHandlesNilStoreGracefully(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{}
+	handler := SourceSyncHandler{Runner: runner} // no Store
+	payload := SourceSyncTaskPayload{WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New()}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err != nil {
+		t.Fatalf("Handle err = %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner calls = %d", len(runner.calls))
+	}
+}
+
+func TestIsPermanentSourceSyncTaskError(t *testing.T) {
+	if !isPermanentSourceSyncTaskError(fmt.Errorf("%w: x", domainerrors.ErrValidation)) {
+		t.Fatal("ErrValidation should be permanent")
+	}
+	if !isPermanentSourceSyncTaskError(fmt.Errorf("%w: x", domainerrors.ErrNotFound)) {
+		t.Fatal("ErrNotFound should be permanent")
+	}
+	if isPermanentSourceSyncTaskError(errors.New("transient")) {
+		t.Fatal("generic error should not be permanent")
+	}
+}
+
+func TestRegisterSourceSyncHandlerWiresTaskType(t *testing.T) {
+	mux := asynq.NewServeMux()
+	RegisterSourceSyncHandler(mux, SourceSyncHandler{Runner: &sourceSyncRunnerSpy{}})
+	// ServeMux 暴露 ProcessTask；这里只断言注册不 panic。
+}
+
+// --- fakes -------------------------------------------------------------
+
+type sourceSyncRunnerSpy struct {
+	calls []sourceSyncCall
+	err   error
+}
+
+type sourceSyncCall struct {
+	WorkspaceID     uuid.UUID
+	KnowledgeBaseID uuid.UUID
+}
+
+func (s *sourceSyncRunnerSpy) SyncKnowledgeBase(_ context.Context, workspaceID, kbID uuid.UUID) error {
+	s.calls = append(s.calls, sourceSyncCall{WorkspaceID: workspaceID, KnowledgeBaseID: kbID})
+	return s.err
+}
+
+type sourceSyncTaskStoreSpy struct {
+	running   map[uuid.UUID]bool
+	succeeded map[uuid.UUID]bool
+	failed    map[uuid.UUID]string
+}
+
+func (s *sourceSyncTaskStoreSpy) MarkRunning(_ context.Context, _ uuid.UUID, jobID uuid.UUID) error {
+	s.ensure()
+	s.running[jobID] = true
+	return nil
+}
+
+func (s *sourceSyncTaskStoreSpy) MarkSucceeded(_ context.Context, _ uuid.UUID, jobID uuid.UUID) error {
+	s.ensure()
+	s.succeeded[jobID] = true
+	return nil
+}
+
+func (s *sourceSyncTaskStoreSpy) MarkFailed(_ context.Context, _ uuid.UUID, jobID uuid.UUID, message string) error {
+	s.ensure()
+	s.failed[jobID] = message
+	return nil
+}
+
+func (s *sourceSyncTaskStoreSpy) ensure() {
+	if s.running == nil {
+		s.running = map[uuid.UUID]bool{}
+	}
+	if s.succeeded == nil {
+		s.succeeded = map[uuid.UUID]bool{}
+	}
+	if s.failed == nil {
+		s.failed = map[uuid.UUID]string{}
+	}
+}

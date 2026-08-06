@@ -38,3 +38,9 @@ func DocumentTaskID(typ string, workspaceID, revisionID, generationID uuid.UUID)
 func DocumentPollTaskID(workspaceID, revisionID, jobID uuid.UUID) string {
 	return fmt.Sprintf("poll:%s:%s:%s", workspaceID, revisionID, jobID)
 }
+
+// SourceSyncTaskID 返回 source_sync 任务的稳定 TaskID（幂等去重）。
+// 按 KB 维度幂等：同一 KB 同时只允许一个 source_sync 任务在队列中。
+func SourceSyncTaskID(workspaceID, kbID uuid.UUID) string {
+	return fmt.Sprintf("source_sync:%s:%s", workspaceID, kbID)
+}

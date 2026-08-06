@@ -434,7 +434,7 @@ git commit -m "feat(source): 飞书全量同步入库与文件树构建"
 
 > 装配参考：worker 注册参照 `index_generation_tasks.go`（最简模板）；service 装配参照 `main.go:531-536` document ingest；`runtimeServices` struct（`main.go:90-139`）加 `sourceSync` 字段。本任务**不接限流**（直接入队），限流在 Task 7 加。
 
-- [ ] **Step 1: 写 handler + API 失败测试。**
+- [x] **Step 1: 写 handler + API 失败测试。**
 
 ```go
 func TestSourceSyncHandlerRunsAndMarksSucceeded(t *testing.T) {
@@ -453,23 +453,23 @@ func TestManualSyncEndpointRejectsMember(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/interfaces/worker ./internal/interfaces/http -run 'SourceSync|ManualSync' -count=1`
 
 Expected: FAIL，handler/路由不存在。
 
-- [ ] **Step 3: 实现 handler + TaskID + 路由 + 装配。**
+- [x] **Step 3: 实现 handler + TaskID + 路由 + 装配。**
 
 Handler 结构体持 `Runner interface{ SyncKnowledgeBase(ctx,ws,kb) error }` + `Store`（MarkRunning/Succeeded/Failed 复用 `DocumentTaskDBStore`）+ Logger。路由用 `RequireWorkspaceRole(value.RoleAdmin)`。`main.go` 装配 `feishu.NewConnector()` + `SourceConnectionSelector` + `SourceSyncService`，worker mux 加 `worker.RegisterSourceSyncHandler`。
 
-- [ ] **Step 4: 运行 worker + http 测试。**
+- [x] **Step 4: 运行 worker + http 测试。**
 
 Run: `go test ./internal/interfaces/worker ./internal/interfaces/http ./cmd/langhuan -run 'SourceSync|ManualSync|App' -count=1`
 
 Expected: PASS；handler 推进 job 状态、member 403、admin 入队成功。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/interfaces/worker internal/interfaces/http internal/ports/queue cmd/langhuan

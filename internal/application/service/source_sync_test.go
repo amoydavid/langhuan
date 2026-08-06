@@ -166,6 +166,13 @@ func (s *fakeSourceSyncStore) FailCreatedSync(
 	return nil
 }
 
+func (s *fakeSourceSyncStore) CreateSourceSyncJob(_ context.Context, job *model.Job) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobs[job.ID] = job
+	return nil
+}
+
 // fakeSyncRawStore 返回基于 document id 的固定 key，记录 put/delete。
 type fakeSyncRawStore struct {
 	puts    []storage.RawDocumentInput
@@ -603,6 +610,68 @@ func TestSyncRejectsNonFeishuKB(t *testing.T) {
 	}
 	if store.createDocCalls != 0 {
 		t.Fatalf("no documents should be created for non-feishu KB; got %d", store.createDocCalls)
+	}
+}
+
+// TestEnqueueSyncPersistsJobAndEnqueuesDedupedTask 验证 EnqueueSync 创建 source_sync
+// Job 落库并以稳定的 TaskID 入队（同 KB 幂等）。
+func TestEnqueueSyncPersistsJobAndEnqueuesDedupedTask(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	q := &fakeSyncQueue{}
+	svc := NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: &fakeKBSyncRepo{kb: kb},
+		Selector:                NewSourceConnectionSelector(&fakeSyncConnRepo{}, passthroughCipher{}),
+		Connector:               &fakeSourceConnector{},
+		RawStore:                &fakeSyncRawStore{},
+		Store:                   store,
+		Queue:                   q,
+		Logger:                  &recordingLogger{},
+	})
+
+	job, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID)
+	if err != nil {
+		t.Fatalf("EnqueueSync err = %v", err)
+	}
+	if job == nil || job.Type != model.SourceSyncJobType || job.WorkspaceID != workspaceID || job.KnowledgeBaseID != kb.ID {
+		t.Fatalf("job = %#v", job)
+	}
+	if job.SourceConnectionID != *kb.SourceConnectionID {
+		t.Fatalf("job SourceConnectionID = %s, want %s", job.SourceConnectionID, *kb.SourceConnectionID)
+	}
+	if stored, ok := store.jobs[job.ID]; !ok || stored != job {
+		t.Fatalf("job 未持久化到 store: %v", stored)
+	}
+	if len(q.requests) != 1 {
+		t.Fatalf("enqueue requests = %d, want 1", len(q.requests))
+	}
+	req := q.requests[0]
+	if req.Type != model.SourceSyncJobType {
+		t.Fatalf("queue type = %s", req.Type)
+	}
+	if req.TaskID != queue.SourceSyncTaskID(workspaceID, kb.ID) {
+		t.Fatalf("TaskID = %s, want stable dedup id", req.TaskID)
+	}
+}
+
+// TestEnqueueSyncRejectsNonFeishuKB 验证非飞书 KB 不能入队 source_sync。
+func TestEnqueueSyncRejectsNonFeishuKB(t *testing.T) {
+	workspaceID := uuid.New()
+	// 直接构造一个 upload 类型 KB（绕过 NewKnowledgeBaseWithSource）。
+	kb := &model.KnowledgeBase{
+		ID: uuid.New(), WorkspaceID: workspaceID, SourceType: value.SourceTypeUpload,
+		SourceConfig: map[string]any{},
+	}
+	svc := NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: &fakeKBSyncRepo{kb: kb},
+		Store:                   newFakeSourceSyncStore(kb),
+		Queue:                   &fakeSyncQueue{},
+		Logger:                  &recordingLogger{},
+	})
+
+	if _, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID); !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 }
 

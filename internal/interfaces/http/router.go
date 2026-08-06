@@ -30,6 +30,7 @@ type Dependencies struct {
 	WorkspaceReadiness      WorkspaceReadinessHTTPService
 	WorkspaceSearchSettings WorkspaceSearchSettingsHTTPService
 	KnowledgeBases          KnowledgeBaseService
+	KnowledgeBaseSync       KnowledgeBaseSyncService
 	KnowledgeBaseSummary    KnowledgeBaseSummaryHTTPService
 	DocumentChunks          DocumentChunksHTTPService
 	ModelProviders          ModelProviderHTTPService
@@ -279,6 +280,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			}
 			write := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeKnowledgeBasesWrite), RequireKnowledgeBaseForAPIKey("id"), RequireAdminForSession())
 			write.PATCH("", kb.patch)
+			if deps.KnowledgeBaseSync != nil {
+				sync := knowledgeBaseSyncHandler{service: deps.KnowledgeBaseSync}
+				write.POST("/sync", sync.sync)
+			}
 		} else if deps.KnowledgeBaseSummary != nil {
 			readSummary := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeKnowledgeBasesRead), RequireKnowledgeBaseForAPIKey("id"))
 			summary := knowledgeBaseSummaryHandler{service: deps.KnowledgeBaseSummary}

@@ -37,6 +37,22 @@ func (s *SourceSyncDBStore) WithinWorkspace(
 	})
 }
 
+// CreateSourceSyncJob 持久化一个 source_sync 任务（仅关联 KB）。
+func (s *SourceSyncDBStore) CreateSourceSyncJob(ctx context.Context, job *model.Job) error {
+	if job == nil {
+		return fmt.Errorf("%w: source_sync Job 不能为空", domainerrors.ErrValidation)
+	}
+	if job.Type != model.SourceSyncJobType {
+		return fmt.Errorf("%w: CreateSourceSyncJob 仅接受 source_sync 任务", domainerrors.ErrValidation)
+	}
+	return NewWorkspaceTxRunner(s.db).WithinWorkspace(ctx, job.WorkspaceID, func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Create(jobV2ToRow(job)).Error; err != nil {
+			return translateDBError(err, "创建 source_sync Job 失败")
+		}
+		return nil
+	})
+}
+
 // FailCreatedSync 把刚创建的同步 Document/Revision/Job 标记为失败（入队失败兜底）。
 func (s *SourceSyncDBStore) FailCreatedSync(
 	ctx context.Context,

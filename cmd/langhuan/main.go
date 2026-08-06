@@ -40,6 +40,7 @@ import (
 	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	siliconflowadapter "github.com/dajee/langhuan/internal/adapters/siliconflow"
+	feishu "github.com/dajee/langhuan/internal/adapters/source/feishu"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
 	s3storage "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	"github.com/dajee/langhuan/internal/application/dto"
@@ -133,6 +134,7 @@ type runtimeServices struct {
 	chunkRevisionIndexer    *service.ChunkRevisionIndexService
 	indexGenerations        *service.IndexGenerationService
 	indexGenerationBuilder  *service.IndexGenerationBuildService
+	sourceSync              *service.SourceSyncService
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
 	retrievalCleanup        *service.RetrievalCleanupService
@@ -167,6 +169,20 @@ func (r *mcpDocumentStatusReader) GetDocument(ctx context.Context, access value.
 }
 func (r *mcpDocumentStatusReader) GetJob(ctx context.Context, access value.ResourceAccess, jobID uuid.UUID) (*dto.Job, error) {
 	return r.jobs.Get(ctx, access, jobID)
+}
+
+// httpKnowledgeBaseSyncService 把 *service.SourceSyncService.EnqueueSync（返回 *model.Job）
+// 适配成 langhttp.KnowledgeBaseSyncService（返回 *dto.Job）。
+type httpKnowledgeBaseSyncService struct {
+	sync *service.SourceSyncService
+}
+
+func (s *httpKnowledgeBaseSyncService) EnqueueSync(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) (*dto.Job, error) {
+	job, err := s.sync.EnqueueSync(ctx, workspaceID, knowledgeBaseID)
+	if err != nil {
+		return nil, err
+	}
+	return dto.JobFromModel(job), nil
 }
 
 func main() {
@@ -328,6 +344,11 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 		worker.RegisterIndexGenerationBuildHandler(app.workerMux, worker.IndexGenerationBuildHandler{
 			Builder: app.services.indexGenerationBuilder,
 			Logger:  log,
+		})
+		worker.RegisterSourceSyncHandler(app.workerMux, worker.SourceSyncHandler{
+			Runner: app.services.sourceSync,
+			Store:  app.services.documentTaskStore,
+			Logger: log,
 		})
 	}
 
@@ -495,6 +516,28 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	if err != nil {
 		return nil, fmt.Errorf("构造 API Key 服务失败: %w", err)
 	}
+
+	// 来源同步（飞书全量同步）：cipher + selector + connector + store + service。
+	sourceConnectionCipher, err := db.NewSourceConnectionCredentialCipher(encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("构造来源连接凭证加密器失败: %w", err)
+	}
+	sourceConnectionSelector := service.NewSourceConnectionSelector(
+		db.NewSourceConnectionRepository(gormDB), sourceConnectionCipher,
+	)
+	feishuConnector := feishu.NewConnector(feishu.WithCredentialDecryptor(sourceConnectionCipher))
+	sourceSyncStore := db.NewSourceSyncDBStore(gormDB)
+	sourceSync := service.NewSourceSyncService(service.SourceSyncServiceDeps{
+		KnowledgeBaseRepository: kbRepo,
+		Selector:                sourceConnectionSelector,
+		Connector:               feishuConnector,
+		RawStore:                rawStore,
+		Store:                   sourceSyncStore,
+		Queue:                   jobQueue,
+		Logger:                  log,
+		RootResolver:            feishu.ParseURL,
+	})
+
 	return &runtimeServices{
 		userRepo:       userRepo,
 		sessionRepo:    sessionRepo,
@@ -545,6 +588,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		chunkRevisionIndexer:   chunkRevisionIndexer,
 		indexGenerations:       indexGenerations,
 		indexGenerationBuilder: indexGenerationBuilder,
+		sourceSync:             sourceSync,
 		search:                 search,
 		multiSearch:            multiSearch,
 		retrievalCleanup:       retrievalCleanup,
@@ -709,6 +753,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		WorkspaceSearchSettings: services.workspaceSearchSettings,
 		KnowledgeBaseSummary:    services.knowledgeBaseSummary,
 		KnowledgeBases:          services.knowledgeBases,
+		KnowledgeBaseSync:       &httpKnowledgeBaseSyncService{sync: services.sourceSync},
 		ModelProviders:          services.modelProviders,
 		Models:                  services.models,
 		ModelConnectionTests:    services.modelConnectionTests,

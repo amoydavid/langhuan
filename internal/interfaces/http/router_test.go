@@ -514,6 +514,7 @@ type slugResourceFixtures struct {
 	mbs        *fakeMembershipService
 	wsSvc      *fakeWorkspaceService
 	kbSvc      *fakeKnowledgeBaseService
+	syncSvc    *fakeKnowledgeBaseSyncService
 	docSvc     *fakeDocumentQueryService
 	jobSvc     *fakeJobQueryService
 	summarySvc *fakeKnowledgeBaseSummaryHTTPService
@@ -545,6 +546,9 @@ func newSlugResourceFixtures(t *testing.T, role value.WorkspaceRole, isPlatformA
 	kbSvc := newFakeKnowledgeBaseService()
 	deps.KnowledgeBases = kbSvc
 
+	syncSvc := &fakeKnowledgeBaseSyncService{}
+	deps.KnowledgeBaseSync = syncSvc
+
 	docSvc := newFakeDocumentQueryService()
 	deps.Documents = docSvc
 
@@ -573,6 +577,7 @@ func newSlugResourceFixtures(t *testing.T, role value.WorkspaceRole, isPlatformA
 		mbs:        mbs,
 		wsSvc:      wsSvc,
 		kbSvc:      kbSvc,
+		syncSvc:    syncSvc,
 		docSvc:     docSvc,
 		jobSvc:     jobSvc,
 		summarySvc: summarySvc,

@@ -77,6 +77,80 @@ func NewSourceSyncService(deps SourceSyncServiceDeps) *SourceSyncService {
 	}
 }
 
+// EnqueueSync 为单个知识库创建一个 source_sync 任务并进入队列，返回创建的 Job。
+// 任务按 KB 幂等去重（queue.SourceSyncTaskID），同一 KB 同时只允许一个同步任务在队列中。
+// KB 的来源连接必须在 EnqueueSync 时已知（已读取 SourceConnectionID），写入 payload 以便 worker 校验。
+func (s *SourceSyncService) EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID) (*model.Job, error) {
+	if workspaceID == uuid.Nil || kbID == uuid.Nil {
+		return nil, fmt.Errorf("%w: workspace_id/knowledge_base_id 不能为空", domainerrors.ErrValidation)
+	}
+	if s.store == nil || s.queue == nil {
+		return nil, fmt.Errorf("%w: 来源同步依赖未配置", domainerrors.ErrValidation)
+	}
+
+	kb, err := s.kbRepo.Get(ctx, workspaceID, kbID)
+	if err != nil {
+		return nil, fmt.Errorf("读取知识库失败: %w", err)
+	}
+	if !kb.SourceType.IsFeishu() {
+		return nil, fmt.Errorf("%w: 知识库来源类型 %q 不支持来源同步", domainerrors.ErrValidation, kb.SourceType)
+	}
+
+	var connID uuid.UUID
+	if kb.SourceConnectionID != nil {
+		connID = *kb.SourceConnectionID
+	}
+
+	job, err := model.NewJob(model.NewJobInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
+		SourceConnectionID: connID,
+		Type:               model.SourceSyncJobType, Status: value.JobStatusPending,
+		Payload: map[string]any{
+			"workspace_id":      workspaceID.String(),
+			"knowledge_base_id": kbID.String(),
+			"connection_id":     connID.String(),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("构造 source_sync Job 失败: %w", err)
+	}
+	job.Payload["job_id"] = job.ID.String()
+
+	if err := s.store.CreateSourceSyncJob(ctx, job); err != nil {
+		return nil, fmt.Errorf("持久化 source_sync Job 失败: %w", err)
+	}
+
+	payload, err := json.Marshal(sourceSyncTaskPayload{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
+		JobID: job.ID, ConnectionID: connID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("编码 source_sync payload 失败: %w", err)
+	}
+
+	if _, err := s.queue.Enqueue(ctx, queue.JobRequest{
+		Type: model.SourceSyncJobType, Payload: payload,
+		TaskID: queue.SourceSyncTaskID(workspaceID, kbID),
+	}); err != nil {
+		return nil, fmt.Errorf("入队 source_sync 任务失败: %w", err)
+	}
+
+	s.logger.Info("已入队飞书知识库同步任务",
+		"workspace_id", workspaceID.String(),
+		"knowledge_base_id", kbID.String(),
+		"job_id", job.ID.String(),
+	)
+	return job, nil
+}
+
+// sourceSyncTaskPayload 是 source_sync 任务的队列载荷（worker 与 HTTP handler 共用）。
+type sourceSyncTaskPayload struct {
+	WorkspaceID     uuid.UUID `json:"workspace_id"`
+	KnowledgeBaseID uuid.UUID `json:"knowledge_base_id"`
+	JobID           uuid.UUID `json:"job_id"`
+	ConnectionID    uuid.UUID `json:"connection_id,omitempty"`
+}
+
 // feishuObjTypeDocx 是飞书侧可同步文档的类型标识。
 const feishuObjTypeDocx = "docx"
 
