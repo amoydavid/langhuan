@@ -40,7 +40,7 @@ const scalarHTML = `<!doctype html>
     <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
     <script>
       Scalar.createApiReference('#openapi-docs', {
-        spec: { url: '/openapi.json' },
+        spec: { url: '/api/v1/openapi.json' },
       });
     </script>
   </body>
