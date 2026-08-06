@@ -210,23 +210,39 @@ func (b *specBuilder) schemaRef(t reflect.Type) (*openapi3.SchemaRef, error) {
 	return ref, nil
 }
 
-// normalizeRefs 递归规整反射产生的 SchemaRef：
-//   - 非标准 ref（如 "ModelProvider"）：清空 Ref，inline Value；
-//   - 标准 component ref（#/components/schemas/Name）：收集 Value 到 b.schemas，保留 ref。
+// normalizeRefs 递归规整反射产生的 SchemaRef，处理 openapi3gen 的两类 ref：
+//
+//  1. 命名 struct 的 ref（Ref=t.Name()，无 #/ 前缀，如 "ModelProvider"）。
+//     SchemaRef.MarshalJSON 在 Ref 非空时只输出 {"$ref":name} 并丢弃 Value。
+//     处理：把 Value 作为 component 定义收集到 b.schemas（以类型名为 key），
+//     然后清空 Ref 让该处 inline。这样同类型的多处引用都能从 b.schemas 解析。
+//     但对自引用类型（如 FileTreeNode.Children []*FileTreeNode），必须保留 component
+//     ref 形式，因此当 b.schemas 已存在该类型定义时，把 ref 改为标准 #/ 引用而非 inline。
+//
+//  2. 标准 component ref（#/components/schemas/Name）：cycle 打破点。generator 对
+//     顶层自引用类型只给 ref 不给 Value（Value 在该类型作为字段值出现时才完整）。
+//     处理：保留 ref；其定义来自第 1 类收集（或 generator 给出的 Value）。
 func (b *specBuilder) normalizeRefs(ref *openapi3.SchemaRef, visited map[*openapi3.Schema]struct{}) {
 	if ref == nil {
 		return
 	}
+	// 情况 2：标准 component ref（cycle 打破点），保留。
 	if strings.HasPrefix(ref.Ref, "#/components/schemas/") {
-		// 真实 cycle 打破点：把 component 定义收集起来。
 		name := strings.TrimPrefix(ref.Ref, "#/components/schemas/")
 		if ref.Value != nil {
-			if _, ok := b.schemas[name]; !ok {
-				b.schemas[name] = &openapi3.SchemaRef{Value: ref.Value}
-			}
+			b.saveComponent(name, ref.Value)
 		}
-	} else if ref.Ref != "" {
-		// 无根命名 ref：清除，inline。
+		// 无论 Value 是否存在，继续递归（若有 Value 则处理其内部）
+	}
+	// 情况 1：无前缀命名 ref（类型名）。
+	if ref.Ref != "" && !strings.HasPrefix(ref.Ref, "#/") {
+		name := ref.Ref
+		if ref.Value != nil {
+			// 把这个命名类型的完整定义收集为 component。
+			b.saveComponent(name, ref.Value)
+			// 继续递归其内部字段，确保内部引用也被规整。
+		}
+		// 清空无前缀 Ref，改为 inline（Value 会被 MarshalJSON 输出）。
 		ref.Ref = ""
 	}
 	if ref.Value == nil {
@@ -252,6 +268,20 @@ func (b *specBuilder) normalizeRefs(ref *openapi3.SchemaRef, visited map[*openap
 	for _, ao := range s.AllOf {
 		b.normalizeRefs(ao, visited)
 	}
+}
+
+// saveComponent 把一个命名类型的 struct schema 存入 b.schemas（首次写入生效）。
+// 用于让自引用类型（cycle）的 $ref 能解析到完整定义。
+func (b *specBuilder) saveComponent(name string, schema *openapi3.Schema) {
+	if name == "" || schema == nil {
+		return
+	}
+	if _, exists := b.schemas[name]; exists {
+		return
+	}
+	// 复制一份，避免 inline 处理改动影响 component 定义。
+	copied := *schema
+	b.schemas[name] = &openapi3.SchemaRef{Value: &copied}
 }
 
 // fillRequired 遍历 struct 的直接字段，把"非指针且无 omitempty"的字段名加入 required。
