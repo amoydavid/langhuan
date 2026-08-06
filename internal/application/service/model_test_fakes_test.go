@@ -197,6 +197,14 @@ type fakeEmbeddingFactory struct {
 	client *recordingEmbeddingClient
 }
 
+func testProviderDescriptors(descriptors ...ProviderDescriptor) *ProviderDescriptorRegistry {
+	registry, err := NewProviderDescriptorRegistry(descriptors...)
+	if err != nil {
+		panic(err)
+	}
+	return registry
+}
+
 func (f *fakeEmbeddingFactory) Provider() string           { return "openai" }
 func (f *fakeEmbeddingFactory) CredentialFields() []string { return []string{"api_key"} }
 func (f *fakeEmbeddingFactory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[string]any, []byte, error) {

@@ -89,5 +89,5 @@ func isNotFound(err error) bool { return errors.Is(err, domainerrors.ErrNotFound
 
 // resolverFromFakeRegistry 把测试用的 fakeFactoryRegistry 包装成 ProviderFactoryResolver。
 func resolverFromFakeRegistry(factory embeddingport.Factory) *ProviderFactoryResolver {
-	return NewProviderFactoryResolver(fakeFactoryRegistry{factory: factory}, nil, nil)
+	return NewProviderFactoryResolver(testProviderDescriptors(EmbeddingProviderDescriptor(factory)))
 }

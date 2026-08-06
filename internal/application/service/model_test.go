@@ -23,7 +23,8 @@ func TestModelServiceOnlyCreatesEmbeddingAndProtectsReferencedSemantics(t *testi
 	}
 	providers.items[provider.ID] = provider
 	models := newFakeModelRepository(providers)
-	service := NewModelService(providers, models, fakeFactoryRegistry{factory: &fakeEmbeddingFactory{}}, fakeRerankFactoryRegistry{})
+	embeddingFactory := &fakeEmbeddingFactory{}
+	service := NewModelService(providers, models, fakeFactoryRegistry{factory: embeddingFactory}, fakeRerankFactoryRegistry{}, testProviderDescriptors(EmbeddingProviderDescriptor(embeddingFactory)))
 
 	if _, err := service.CreateWorkspace(context.Background(), workspaceID, CreateModelInput{
 		ProviderID: provider.ID, ActorID: actorID, Name: "chat", Type: value.ModelTypeLLM,
@@ -63,7 +64,8 @@ func TestModelDTOAvailabilityIncludesProviderStatus(t *testing.T) {
 	dimension := 1024
 	item, _ := model.NewModel(provider.ID, "embed", "Embedding", "", value.ModelTypeEmbedding, "text-embedding", &dimension, map[string]any{}, actorID)
 	models.items[item.ID] = item
-	service := NewModelService(providers, models, fakeFactoryRegistry{factory: &fakeEmbeddingFactory{}}, fakeRerankFactoryRegistry{})
+	embeddingFactory := &fakeEmbeddingFactory{}
+	service := NewModelService(providers, models, fakeFactoryRegistry{factory: embeddingFactory}, fakeRerankFactoryRegistry{}, testProviderDescriptors(EmbeddingProviderDescriptor(embeddingFactory)))
 	got, err := service.GetWorkspace(context.Background(), workspaceID, item.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +86,7 @@ func TestModelServiceCreatesRerankWithoutDimensions(t *testing.T) {
 	providers.items[provider.ID] = provider
 	models := newFakeModelRepository(providers)
 	rerankRegistry := fakeRerankFactoryRegistry{factory: &fakeRerankFactory{provider: "rerank_compatible"}}
-	service := NewModelService(providers, models, fakeFactoryRegistry{}, rerankRegistry)
+	service := NewModelService(providers, models, fakeFactoryRegistry{}, rerankRegistry, testProviderDescriptors(RerankProviderDescriptor(rerankRegistry.factory)))
 
 	// Rerank 传 dimensions 被拒绝。
 	if _, err := service.CreateWorkspace(context.Background(), workspaceID, CreateModelInput{
@@ -95,11 +97,11 @@ func TestModelServiceCreatesRerankWithoutDimensions(t *testing.T) {
 		t.Fatalf("rerank with dimensions error = %v", err)
 	}
 
-	// Embedding 缺 dimensions 被拒绝。
+	// Provider 未声明 Embedding capability 时直接拒绝。
 	if _, err := service.CreateWorkspace(context.Background(), workspaceID, CreateModelInput{
 		ProviderID: provider.ID, ActorID: actorID, Name: "embed", Type: value.ModelTypeEmbedding,
 		ModelName: "text-embedding", Parameters: json.RawMessage(`{}`),
-	}); !errors.Is(err, domainerrors.ErrUnsupportedEmbeddingDimension) {
+	}); !errors.Is(err, domainerrors.ErrUnsupportedModelType) {
 		t.Fatalf("embedding without dimensions error = %v", err)
 	}
 
@@ -122,5 +124,36 @@ func TestModelServiceCreatesRerankWithoutDimensions(t *testing.T) {
 	}
 	if got.Type != value.ModelTypeRerank || got.Dimensions != nil {
 		t.Fatalf("rerank model = %#v", got)
+	}
+}
+
+func TestModelServiceRejectsTypeOutsideProviderCapabilities(t *testing.T) {
+	t.Parallel()
+	workspaceID, actorID := uuid.New(), uuid.New()
+	providers := newFakeModelProviderRepository()
+	provider, err := model.NewModelProvider(value.ModelScopeWorkspace, &workspaceID, "openai", "OpenAI", "", "openai", map[string]any{}, []byte("cipher"), actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers.items[provider.ID] = provider
+	models := newFakeModelRepository(providers)
+	descriptors, err := NewProviderDescriptorRegistry(ProviderDescriptor{
+		Key:          "openai",
+		Capabilities: []value.ProviderCapability{value.CapabilityEmbedding},
+		DecodeProvider: func(value.ModelScope, json.RawMessage, json.RawMessage) (ProviderDecodeResult, error) {
+			return ProviderDecodeResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewModelService(providers, models, fakeFactoryRegistry{factory: &fakeEmbeddingFactory{}}, fakeRerankFactoryRegistry{factory: &fakeRerankFactory{provider: "openai"}}, descriptors)
+
+	_, err = service.CreateWorkspace(context.Background(), workspaceID, CreateModelInput{
+		ProviderID: provider.ID, ActorID: actorID, Name: "rerank", DisplayName: "Rerank",
+		Type: value.ModelTypeRerank, ModelName: "bge-reranker", Parameters: json.RawMessage(`{}`),
+	})
+	if !errors.Is(err, domainerrors.ErrUnsupportedModelType) {
+		t.Fatalf("error = %v", err)
 	}
 }

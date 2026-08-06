@@ -325,6 +325,11 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
+	providerDescriptors, err := buildProviderDescriptorRegistry(embeddingRegistry, rerankRegistry, parserProviderRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("构造 Provider descriptor registry 失败: %w", err)
+	}
+	providerResolver := service.NewProviderFactoryResolver(providerDescriptors)
 	publicURLs, err := service.NewPublicURLBuilder(cfg.Server.BaseURL)
 	if err != nil {
 		return nil, err
@@ -501,8 +506,8 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		workspaceReadiness:   service.NewWorkspaceReadinessService(workspaceReadinessRepo),
 		knowledgeBaseSummary: service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
 		knowledgeBases:       service.NewKnowledgeBaseService(kbRepo, kbRepo),
-		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, buildProviderFactoryResolver(embeddingRegistry, rerankRegistry, parserProviderRegistry)),
-		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry, rerankRegistry),
+		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, providerResolver),
+		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry, rerankRegistry, providerDescriptors),
 		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry, rerankRegistry),
 		documents:            service.NewDocumentService(documentRepo, kbRepo),
 		documentAssets:       service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
@@ -564,24 +569,29 @@ func buildRuntimeParserProviderRegistry(cfg *config.Config) (*parserprovideradap
 	return parserprovideradapter.NewRegistry(factories...)
 }
 
-// buildProviderFactoryResolver 构建 embedding + rerank + parser 多能力域解析器。
-// parserRegistry 为 nil 时只支持 embedding/rerank 能力域。
-func buildProviderFactoryResolver(embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserRegistry *parserprovideradapter.Registry) *service.ProviderFactoryResolver {
-	var adapter *service.ParserRegistryAdapter
-	if parserRegistry != nil {
-		adapter = service.NewParserRegistryAdapter(parserRegistry)
+// buildProviderDescriptorRegistry 从已装配的能力 Factory 构建显式 Provider 描述符。
+func buildProviderDescriptorRegistry(embeddingRegistry embeddingport.FactoryRegistry, rerankRegistry rerankport.FactoryRegistry, parserRegistry *parserprovideradapter.Registry) (*service.ProviderDescriptorRegistry, error) {
+	descriptors := make([]service.ProviderDescriptor, 0, 7)
+	for _, provider := range []string{"openai", "ark", "ollama", "dashscope", "tencentcloud"} {
+		factory, err := embeddingRegistry.Factory(value.ModelTypeEmbedding, provider)
+		if err != nil {
+			return nil, err
+		}
+		descriptors = append(descriptors, service.EmbeddingProviderDescriptor(factory))
 	}
-	// 可用 provider 键集合：embedding 5 个 + rerank 1 个 + 条件注册的 parser provider（如 mineru）。
-	supported := []string{"openai", "ark", "ollama", "dashscope", "tencentcloud"}
 	if rerankRegistry != nil {
-		supported = append(supported, "rerank_compatible")
+		factory, err := rerankRegistry.Factory("rerank_compatible")
+		if err != nil {
+			return nil, err
+		}
+		descriptors = append(descriptors, service.RerankProviderDescriptor(factory))
 	}
 	if parserRegistry != nil {
 		for _, factory := range parserRegistry.Factories() {
-			supported = append(supported, factory.Provider())
+			descriptors = append(descriptors, service.ParserProviderDescriptor(factory))
 		}
 	}
-	return service.NewProviderFactoryResolver(embeddingRegistry, rerankRegistry, adapter, supported...)
+	return service.NewProviderDescriptorRegistry(descriptors...)
 }
 
 func clearSensitiveBytes(value []byte) {

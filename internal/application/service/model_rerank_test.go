@@ -171,7 +171,10 @@ func TestModelServiceListSelectableFiltersByType(t *testing.T) {
 	models.items[rerankModel.ID] = rerankModel
 
 	rerankRegistry := fakeRerankFactoryRegistry{}
-	service := NewModelService(providers, models, fakeFactoryRegistry{factory: &fakeEmbeddingFactory{}}, rerankRegistry)
+	embeddingFactory := &fakeEmbeddingFactory{}
+	service := NewModelService(providers, models, fakeFactoryRegistry{factory: embeddingFactory}, rerankRegistry, testProviderDescriptors(
+		EmbeddingProviderDescriptor(embeddingFactory),
+	))
 
 	rerankOnly, err := service.ListSelectableWorkspace(context.Background(), workspaceID, value.ModelTypeRerank, true)
 	if err != nil {
@@ -193,7 +196,11 @@ func TestProviderFactoryResolverExposesCapabilities(t *testing.T) {
 	t.Parallel()
 	embeddingReg := fakeFactoryRegistry{factory: &fakeEmbeddingFactory{}}
 	rerankReg := fakeRerankFactoryRegistry{factory: &fakeRerankFactory{provider: "rerank_compatible"}}
-	resolver := NewProviderFactoryResolver(embeddingReg, rerankReg, nil, "openai", "rerank_compatible")
+	descriptors := testProviderDescriptors(
+		EmbeddingProviderDescriptor(embeddingReg.factory),
+		RerankProviderDescriptor(rerankReg.factory),
+	)
+	resolver := NewProviderFactoryResolver(descriptors)
 
 	options := resolver.ProviderOptions()
 	if len(options) != 2 {

@@ -45,6 +45,7 @@ type ModelService struct {
 	models           ModelRepository
 	embeddingFactory embeddingport.FactoryRegistry
 	rerankFactory    rerankport.FactoryRegistry
+	descriptors      *ProviderDescriptorRegistry
 }
 
 // NewModelService creates a model application service.
@@ -53,12 +54,14 @@ func NewModelService(
 	models ModelRepository,
 	embeddingFactory embeddingport.FactoryRegistry,
 	rerankFactory rerankport.FactoryRegistry,
+	descriptors *ProviderDescriptorRegistry,
 ) *ModelService {
 	return &ModelService{
 		providers:        providers,
 		models:           models,
 		embeddingFactory: embeddingFactory,
 		rerankFactory:    rerankFactory,
+		descriptors:      descriptors,
 	}
 }
 
@@ -104,6 +107,9 @@ func (s *ModelService) decodeModelParameters(
 	dimensions *int,
 	parameters json.RawMessage,
 ) (map[string]any, *int, error) {
+	if s.descriptors == nil || !s.descriptors.SupportsModelType(providerKey, modelType) {
+		return nil, nil, domainerrors.ErrUnsupportedModelType
+	}
 	switch modelType {
 	case value.ModelTypeEmbedding:
 		if dimensions == nil {
