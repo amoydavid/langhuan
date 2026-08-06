@@ -18,8 +18,8 @@ func TestProviderDTOIncludesCapabilitiesAndCounts(t *testing.T) {
 	counts := ProviderModelCounts{Total: 5, Active: 4, Embedding: 3, Rerank: 2}
 	got := ModelProviderFromModel(provider, []string{"api_key"}, []value.ProviderCapability{
 		value.CapabilityEmbedding, value.CapabilityRerank,
-	}, counts)
-	if got.ModelCounts != counts || len(got.Capabilities) != 2 {
+	}, true, counts)
+	if got.ModelCounts != counts || len(got.Capabilities) != 2 || !got.ModelCatalog {
 		t.Fatalf("provider DTO = %#v", got)
 	}
 }

@@ -592,6 +592,9 @@ func buildProviderDescriptorRegistry(embeddingRegistry embeddingFactoryCatalog, 
 		key := strings.ToLower(strings.TrimSpace(descriptor.Key))
 		if existing, ok := byKey[key]; ok {
 			existing.Capabilities = append(existing.Capabilities, descriptor.Capabilities...)
+			if existing.ModelCatalog == nil {
+				existing.ModelCatalog = descriptor.ModelCatalog
+			}
 			byKey[key] = existing
 			return
 		}

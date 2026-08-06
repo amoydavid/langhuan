@@ -18,6 +18,7 @@ import {
   type ModelScope,
   rerankModelFormDefaults,
 } from '../types'
+import { ModelCatalogPicker } from './model-catalog-picker'
 import { RerankModelFields } from './rerank-model-fields'
 
 type RerankModelFormProps = {
@@ -100,6 +101,33 @@ export function RerankModelForm({
     },
   })
   const errors = form.formState.errors
+  const applyCatalogItem = (
+    item: import('../types').ProviderModelCatalogItem
+  ) => {
+    const suggestedName = (item.id || item.display_name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 80)
+    if (!form.getValues('name').trim() && suggestedName) {
+      form.setValue('name', suggestedName, { shouldDirty: true })
+    }
+    if (!form.getValues('display_name').trim()) {
+      form.setValue('display_name', item.display_name || item.id, {
+        shouldDirty: true,
+      })
+    }
+    form.setValue('model_name', item.id, { shouldDirty: true })
+    for (const key of [
+      'max_documents',
+      'max_query_chars',
+      'max_document_chars',
+    ] as const) {
+      const value = item.parameters[key]
+      if (typeof value === 'number')
+        form.setValue(key, value, { shouldDirty: true })
+    }
+  }
 
   return (
     <form
@@ -141,6 +169,13 @@ export function RerankModelForm({
             {...form.register('model_name')}
           />
         </Field>
+        <ModelCatalogPicker
+          provider={provider}
+          scope={scope}
+          workspaceSlug={workspaceSlug}
+          type='rerank'
+          onSelect={applyCatalogItem}
+        />
         <RerankModelFields register={form.register} errors={errors} />
       </div>
       <Field

@@ -1,7 +1,12 @@
 package value
 
+import (
+	"regexp"
+	"strings"
+)
+
 // ProviderCapability 描述一个 Provider 支持的能力类型，用于 Provider options。
-// 它与 ModelType 在 embedding/rerank 上重叠，但额外包含 parser 这种非模型能力。
+// 能力由运行时 descriptor 注册，不在领域层维护供应商或能力白名单。
 type ProviderCapability string
 
 const (
@@ -23,4 +28,12 @@ func CapabilityFromModelType(modelType ModelType) ProviderCapability {
 	default:
 		return ProviderCapability(modelType)
 	}
+}
+
+var providerCapabilityPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+
+// NormalizeProviderCapability 规范化并校验一个 descriptor 能力标识。
+func NormalizeProviderCapability(capability ProviderCapability) (ProviderCapability, bool) {
+	normalized := ProviderCapability(strings.ToLower(strings.TrimSpace(string(capability))))
+	return normalized, providerCapabilityPattern.MatchString(string(normalized))
 }

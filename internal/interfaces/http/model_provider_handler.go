@@ -3,13 +3,18 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	stdhttp "net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -29,17 +34,25 @@ type ModelProviderHTTPService interface {
 	SupportedProviders() []string
 	// ProviderOptions 返回带 capability 的 provider 选项。
 	ProviderOptions() []service.ProviderOption
+	ListModelCatalogWorkspace(context.Context, uuid.UUID, uuid.UUID, service.ModelCatalogFilter) (*dto.ModelCatalogResponse, error)
+	ListModelCatalogPlatform(context.Context, uuid.UUID, service.ModelCatalogFilter) (*dto.ModelCatalogResponse, error)
 }
 
 // providerOptionView 是 GET .../model-providers/options 返回的单个 provider 选项。
 type providerOptionView struct {
 	Key          string   `json:"key"`
 	Capabilities []string `json:"capabilities"`
+	ModelCatalog bool     `json:"model_catalog"`
 }
 
 // providerOptionsResponse 是 GET .../model-providers/options 的响应。
 type providerOptionsResponse struct {
 	Providers []providerOptionView `json:"providers"`
+}
+
+type modelCatalogQuery struct {
+	Type  *value.ModelType
+	Query string
 }
 
 type createModelProviderRequest struct {
@@ -171,9 +184,100 @@ func (h modelProviderHandler) options(c *gin.Context) {
 		for _, capability := range option.Capabilities {
 			capabilities = append(capabilities, string(capability))
 		}
-		views = append(views, providerOptionView{Key: option.Key, Capabilities: capabilities})
+		views = append(views, providerOptionView{Key: option.Key, Capabilities: capabilities, ModelCatalog: option.ModelCatalog})
 	}
 	c.JSON(stdhttp.StatusOK, providerOptionsResponse{Providers: views})
+}
+
+func (h modelProviderHandler) catalogWorkspace(c *gin.Context) {
+	authCtx, ok := requireHandlerAuthContext(c)
+	if !ok {
+		return
+	}
+	providerID, ok := parseUUIDParam(c, "provider_id")
+	if !ok {
+		return
+	}
+	query, ok := decodeModelCatalogQuery(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	result, err := h.service.ListModelCatalogWorkspace(c.Request.Context(), authCtx.WorkspaceID, providerID, service.ModelCatalogFilter{Type: query.Type, Query: query.Query})
+	logModelCatalogRequest(c.Request.Context(), providerID, &authCtx.WorkspaceID, query.Type, result, err, startedAt)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, result)
+}
+
+func (h modelProviderHandler) catalogPlatform(c *gin.Context) {
+	providerID, ok := parseUUIDParam(c, "provider_id")
+	if !ok {
+		return
+	}
+	query, ok := decodeModelCatalogQuery(c)
+	if !ok {
+		return
+	}
+	startedAt := time.Now()
+	result, err := h.service.ListModelCatalogPlatform(c.Request.Context(), providerID, service.ModelCatalogFilter{Type: query.Type, Query: query.Query})
+	logModelCatalogRequest(c.Request.Context(), providerID, nil, query.Type, result, err, startedAt)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, result)
+}
+
+func logModelCatalogRequest(ctx context.Context, providerID uuid.UUID, workspaceID *uuid.UUID, modelType *value.ModelType, result *dto.ModelCatalogResponse, err error, startedAt time.Time) {
+	attrs := []slog.Attr{
+		slog.String("event", "provider.model_catalog.completed"),
+		slog.String("provider_id", providerID.String()),
+		slog.Int64("duration_ms", time.Since(startedAt).Milliseconds()),
+	}
+	if workspaceID != nil {
+		attrs = append(attrs, slog.String("workspace_id", workspaceID.String()))
+	}
+	if modelType != nil {
+		attrs = append(attrs, slog.String("model_type", string(*modelType)))
+	}
+	if err != nil {
+		attrs[0] = slog.String("event", "provider.model_catalog.failed")
+		errorClass := "internal_error"
+		if errors.Is(err, domainerrors.ErrCatalogUnavailable) {
+			errorClass = "catalog_unavailable"
+		}
+		attrs = append(attrs, slog.String("error_class", errorClass), slog.Any("error", err))
+		slog.LogAttrs(ctx, slog.LevelWarn, "Provider 模型目录读取失败", attrs...)
+		return
+	}
+	itemCount := 0
+	if result != nil {
+		itemCount = len(result.Items)
+	}
+	attrs = append(attrs, slog.Int("item_count", itemCount))
+	slog.LogAttrs(ctx, slog.LevelInfo, "Provider 模型目录读取完成", attrs...)
+}
+
+func decodeModelCatalogQuery(c *gin.Context) (modelCatalogQuery, bool) {
+	result := modelCatalogQuery{Query: strings.TrimSpace(c.Query("q"))}
+	if len([]rune(result.Query)) > 100 {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "搜索词不能超过 100 个字符")
+		return modelCatalogQuery{}, false
+	}
+	rawType := strings.TrimSpace(c.Query("type"))
+	if rawType == "" || rawType == "all" {
+		return result, true
+	}
+	modelType := value.ModelType(rawType)
+	if modelType != value.ModelTypeEmbedding && modelType != value.ModelTypeRerank {
+		writeError(c, stdhttp.StatusBadRequest, "unsupported_model_type", domainerrors.ErrUnsupportedModelType.Error())
+		return modelCatalogQuery{}, false
+	}
+	result.Type = &modelType
+	return result, true
 }
 
 func writeModelProviderList(c *gin.Context, items []*dto.ModelProvider, err error) {

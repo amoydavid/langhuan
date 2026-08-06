@@ -5,6 +5,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/adapters/providerutil"
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
+	modelcatalogport "github.com/dajee/langhuan/internal/ports/modelcatalog"
 	rerankport "github.com/dajee/langhuan/internal/ports/rerank"
 )
 
@@ -18,8 +19,9 @@ func NewRerankFactory() *RerankFactory {
 	return &RerankFactory{delegate: rerankcompatible.NewFactoryWithProvider(ProviderKey)}
 }
 
-func (f *RerankFactory) Provider() string           { return ProviderKey }
-func (f *RerankFactory) CredentialFields() []string { return []string{"api_key"} }
+func (f *RerankFactory) Provider() string                       { return ProviderKey }
+func (f *RerankFactory) CredentialFields() []string             { return []string{"api_key"} }
+func (f *RerankFactory) ModelCatalog() modelcatalogport.Catalog { return &modelCatalog{} }
 
 func (f *RerankFactory) DecodeProvider(input rerankport.ProviderDecodeInput) (map[string]any, []byte, error) {
 	return DecodeProvider(input.Scope, input.Config, input.Credentials)

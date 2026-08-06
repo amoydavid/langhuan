@@ -19,6 +19,7 @@ import {
   type ModelScope,
   modelFormDefaults,
 } from '../types'
+import { ModelCatalogPicker } from './model-catalog-picker'
 import { RerankModelForm } from './rerank-model-form'
 
 type ModelFormProps = {
@@ -126,6 +127,40 @@ export function EmbeddingModelForm({
     },
   })
   const errors = form.formState.errors
+  const applyCatalogItem = (
+    item: import('../types').ProviderModelCatalogItem
+  ) => {
+    const suggestedName = (item.id || item.display_name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 80)
+    if (!form.getValues('name').trim() && suggestedName) {
+      form.setValue('name', suggestedName, { shouldDirty: true })
+    }
+    if (!form.getValues('display_name').trim()) {
+      form.setValue('display_name', item.display_name || item.id, {
+        shouldDirty: true,
+      })
+    }
+    form.setValue('model_name', item.id, { shouldDirty: true })
+    if (
+      typeof item.dimensions === 'number' &&
+      embeddingDimensions.includes(item.dimensions as never)
+    ) {
+      form.setValue(
+        'dimensions',
+        item.dimensions as (typeof embeddingDimensions)[number],
+        {
+          shouldDirty: true,
+        }
+      )
+    }
+    const batchSize = item.parameters.batch_size
+    if (typeof batchSize === 'number') {
+      form.setValue('batch_size', batchSize, { shouldDirty: true })
+    }
+  }
 
   return (
     <form
@@ -175,6 +210,13 @@ export function EmbeddingModelForm({
             {...form.register('model_name')}
           />
         </Field>
+        <ModelCatalogPicker
+          provider={provider}
+          scope={scope}
+          workspaceSlug={workspaceSlug}
+          type='embedding'
+          onSelect={applyCatalogItem}
+        />
         <Field
           label={t('models.modelForm.dimensionsLabel')}
           htmlFor='model-dimensions'

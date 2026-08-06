@@ -29,6 +29,7 @@ var (
 	ErrEndpointUnreachable            = stderrors.New("供应商地址不可达")
 	ErrRequestTimeout                 = stderrors.New("供应商请求超时")
 	ErrProviderRejected               = stderrors.New("供应商拒绝请求")
+	ErrCatalogUnavailable             = stderrors.New("Provider 模型目录暂不可用")
 	ErrInvalidEmbeddingResponse       = stderrors.New("供应商返回了无效向量")
 	ErrRevisionConflict               = stderrors.New("修订版本冲突")
 	ErrGenerationStale                = stderrors.New("索引代次已过期")

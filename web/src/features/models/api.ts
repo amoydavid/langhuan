@@ -8,6 +8,7 @@ import type {
   ModelProvider,
   ModelScope,
   ModelType,
+  ProviderModelCatalogResponse,
   ProviderOption,
   UpdateModelInput,
   UpdateModelProviderInput,
@@ -108,6 +109,21 @@ export async function getModelProvider(
 ) {
   const response = await apiClient.get<ModelProvider>(
     modelProviderResourcePath(scope, providerId, workspaceSlug)
+  )
+  return response.data
+}
+
+export async function listProviderModelCatalog(
+  scope: ModelScope,
+  providerId: string,
+  type: ModelType,
+  workspaceSlug?: string,
+  query?: string
+) {
+  const params = new URLSearchParams({ type })
+  if (query?.trim()) params.set('q', query.trim())
+  const response = await apiClient.get<ProviderModelCatalogResponse>(
+    `${modelProviderResourcePath(scope, providerId, workspaceSlug)}/model-catalog?${params.toString()}`
   )
   return response.data
 }

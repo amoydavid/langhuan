@@ -6,6 +6,7 @@ import (
 	openaiembedding "github.com/dajee/langhuan/internal/adapters/embedding/openai"
 	"github.com/dajee/langhuan/internal/adapters/providerutil"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	modelcatalogport "github.com/dajee/langhuan/internal/ports/modelcatalog"
 )
 
 // EmbeddingFactory 把 SiliconFlow 共享连接投影到 OpenAI-compatible Embedding transport。
@@ -18,8 +19,9 @@ func NewEmbeddingFactory() *EmbeddingFactory {
 	return &EmbeddingFactory{delegate: openaiembedding.NewFactoryWithProvider(ProviderKey)}
 }
 
-func (f *EmbeddingFactory) Provider() string           { return ProviderKey }
-func (f *EmbeddingFactory) CredentialFields() []string { return []string{"api_key"} }
+func (f *EmbeddingFactory) Provider() string                       { return ProviderKey }
+func (f *EmbeddingFactory) CredentialFields() []string             { return []string{"api_key"} }
+func (f *EmbeddingFactory) ModelCatalog() modelcatalogport.Catalog { return &modelCatalog{} }
 
 func (f *EmbeddingFactory) DecodeProvider(input embeddingport.ProviderDecodeInput) (map[string]any, []byte, error) {
 	return DecodeProvider(input.Scope, input.Config, input.Credentials)

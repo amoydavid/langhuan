@@ -76,7 +76,7 @@ export function ProviderForm({
 }: ProviderFormProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const initialProvider = provider?.provider ?? 'openai'
+  const initialProvider = (provider?.provider ?? 'openai') as ProviderKey
   const form = useForm<ProviderFormValues>({
     // zodResolver 与 discriminated union 的类型推断在 TS 严格模式下不完美，
     // 这里用 as 绕过 Resolver 类型不兼容问题。
@@ -134,7 +134,7 @@ export function ProviderForm({
           : t('models.providerForm.createdToast')
       )
       if (!provider) {
-        form.reset(providerFormDefaults(scope, saved.provider))
+        form.reset(providerFormDefaults(scope, saved.provider as ProviderKey))
       }
       onSaved?.(saved)
     },
@@ -217,7 +217,9 @@ export function ProviderForm({
                 ? 'Embedding'
                 : capability === 'rerank'
                   ? 'Rerank'
-                  : '文档解析'}
+                  : capability === 'parser'
+                    ? '文档解析'
+                    : capability}
             </Badge>
           ))}
         </fieldset>

@@ -3,6 +3,7 @@ import {
   modelCatalogPath,
   modelCollectionPath,
   modelProviderCollectionPath,
+  modelProviderResourcePath,
   modelResourcePath,
 } from './api'
 
@@ -19,6 +20,9 @@ describe('model API paths', () => {
     )
     expect(modelResourcePath('platform', 'model/id')).toBe(
       '/admin/models/model%2Fid'
+    )
+    expect(modelProviderResourcePath('workspace', 'provider/id', 'acme')).toBe(
+      '/workspaces/acme/model-providers/provider%2Fid'
     )
   })
 

@@ -103,7 +103,7 @@ func (s *ModelProviderService) create(ctx context.Context, input CreateModelProv
 	if err := s.repository.Create(ctx, provider); err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, dto.ProviderModelCounts{}), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, factory.ModelCatalog != nil, dto.ProviderModelCounts{}), nil
 }
 
 // ListWorkspace lists platform-shared and Workspace-owned Providers.
@@ -136,7 +136,7 @@ func (s *ModelProviderService) providerList(ctx context.Context, items []*model.
 		if factoryErr != nil {
 			return nil, factoryErr
 		}
-		result = append(result, dto.ModelProviderFromModel(item, factory.CredentialFields, factory.Capabilities, counts[item.ID]))
+		result = append(result, dto.ModelProviderFromModel(item, factory.CredentialFields, factory.Capabilities, factory.ModelCatalog != nil, counts[item.ID]))
 	}
 	return result, nil
 }
@@ -165,7 +165,7 @@ func (s *ModelProviderService) providerDTO(ctx context.Context, provider *model.
 	if err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, counts[provider.ID]), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, factory.ModelCatalog != nil, counts[provider.ID]), nil
 }
 
 // UpdateWorkspace updates only a Provider owned by the given Workspace.
@@ -245,7 +245,7 @@ func (s *ModelProviderService) update(ctx context.Context, provider *model.Model
 	if err != nil {
 		return nil, err
 	}
-	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, counts[provider.ID]), nil
+	return dto.ModelProviderFromModel(provider, factory.CredentialFields, factory.Capabilities, factory.ModelCatalog != nil, counts[provider.ID]), nil
 }
 
 // DeleteWorkspace deletes an unreferenced Workspace Provider.

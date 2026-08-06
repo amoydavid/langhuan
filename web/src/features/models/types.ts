@@ -1,7 +1,9 @@
 export type ModelScope = 'workspace' | 'platform'
 export type ModelStatus = 'active' | 'disabled'
 export type ModelType = 'embedding' | 'rerank'
-export type ProviderCapability = 'embedding' | 'rerank' | 'parser'
+// Provider keys and capabilities are descriptor-defined on the server. Keep
+// the client open to newly registered providers/capabilities.
+export type ProviderCapability = string
 export type ProviderKey =
   | 'openai'
   | 'ark'
@@ -37,8 +39,9 @@ export const rerankModelFormDefaults = {
 }
 
 export type ProviderOption = {
-  key: ProviderKey
+  key: string
   capabilities: ProviderCapability[]
+  model_catalog?: boolean
 }
 
 export type ModelProvider = {
@@ -48,11 +51,12 @@ export type ModelProvider = {
   name: string
   display_name: string
   description: string
-  provider: ProviderKey
+  provider: string
   config: Record<string, unknown>
   credentials_configured: boolean
   credential_fields: string[]
   capabilities: ProviderCapability[]
+  model_catalog?: boolean
   model_counts: {
     total: number
     active: number
@@ -70,7 +74,7 @@ export type ModelProviderSummary = {
   workspace_id?: string
   name: string
   display_name: string
-  provider: ProviderKey
+  provider: string
   status: ModelStatus
 }
 
@@ -205,4 +209,21 @@ export type ConnectionTestResult = {
   dimensions?: number | null
   result_count?: number | null
   duration_ms: number
+}
+
+export type ProviderModelCatalogItem = {
+  id: string
+  display_name: string
+  description: string
+  type?: ModelType | null
+  dimensions?: number | null
+  parameters: Record<string, unknown>
+  available: boolean
+}
+
+export type ProviderModelCatalogResponse = {
+  provider: string
+  items: ProviderModelCatalogItem[]
+  source: string
+  fetched_at: string
 }

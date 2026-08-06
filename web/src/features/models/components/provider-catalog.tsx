@@ -23,7 +23,8 @@ function detailHref(
 function capabilityLabel(capability: string) {
   if (capability === 'embedding') return 'Embedding'
   if (capability === 'rerank') return 'Rerank'
-  return '文档解析'
+  if (capability === 'parser') return '文档解析'
+  return capability
 }
 
 export function ProviderCatalog({

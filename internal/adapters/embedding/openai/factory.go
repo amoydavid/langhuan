@@ -10,9 +10,11 @@ import (
 	einoopenai "github.com/cloudwego/eino-ext/components/embedding/openai"
 
 	embeddingadapter "github.com/dajee/langhuan/internal/adapters/embedding"
+	openaicatalog "github.com/dajee/langhuan/internal/adapters/modelcatalog/openai"
 	"github.com/dajee/langhuan/internal/adapters/providerutil"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	modelcatalogport "github.com/dajee/langhuan/internal/ports/modelcatalog"
 )
 
 const defaultBatchSize = 32
@@ -54,6 +56,9 @@ func NewFactoryWithProvider(provider string) *Factory {
 }
 
 func (f *Factory) Provider() string { return f.provider }
+
+// ModelCatalog returns the optional OpenAI-compatible /models discovery adapter.
+func (f *Factory) ModelCatalog() modelcatalogport.Catalog { return openaicatalog.NewCatalog() }
 
 func (f *Factory) CredentialFields() []string { return []string{"api_key", "custom_headers"} }
 
@@ -147,3 +152,4 @@ func (f *Factory) NewClient(ctx context.Context, input embeddingport.ClientInput
 }
 
 var _ embeddingport.Factory = (*Factory)(nil)
+var _ modelcatalogport.CatalogProvider = (*Factory)(nil)

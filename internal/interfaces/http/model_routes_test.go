@@ -33,6 +33,9 @@ type fakeModelProviderHTTPService struct {
 	updatePlatformInput  service.UpdateModelProviderInput
 	deleteWorkspaceID    uuid.UUID
 	deleteProviderID     uuid.UUID
+	catalogWorkspaceID   uuid.UUID
+	catalogProviderID    uuid.UUID
+	catalogFilter        service.ModelCatalogFilter
 	result               *dto.ModelProvider
 	err                  error
 }
@@ -115,6 +118,16 @@ func (s *fakeModelProviderHTTPService) ProviderOptions() []service.ProviderOptio
 		{Key: "openai", Capabilities: []value.ProviderCapability{value.CapabilityEmbedding}},
 		{Key: "rerank_compatible", Capabilities: []value.ProviderCapability{value.CapabilityRerank}},
 	}
+}
+
+func (s *fakeModelProviderHTTPService) ListModelCatalogWorkspace(_ context.Context, workspaceID, providerID uuid.UUID, filter service.ModelCatalogFilter) (*dto.ModelCatalogResponse, error) {
+	s.catalogWorkspaceID, s.catalogProviderID, s.catalogFilter = workspaceID, providerID, filter
+	return &dto.ModelCatalogResponse{Provider: "openai", Items: []dto.ModelCatalogItem{}}, s.err
+}
+
+func (s *fakeModelProviderHTTPService) ListModelCatalogPlatform(_ context.Context, providerID uuid.UUID, filter service.ModelCatalogFilter) (*dto.ModelCatalogResponse, error) {
+	s.catalogProviderID, s.catalogFilter = providerID, filter
+	return &dto.ModelCatalogResponse{Provider: "openai", Items: []dto.ModelCatalogItem{}}, s.err
 }
 
 type fakeModelHTTPService struct {
@@ -431,9 +444,32 @@ func TestProviderOptionsExposeCapabilities(t *testing.T) {
 	if rec.Code != stdhttp.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	want := `{"providers":[{"key":"openai","capabilities":["embedding"]},{"key":"rerank_compatible","capabilities":["rerank"]}]}`
+	want := `{"providers":[{"key":"openai","capabilities":["embedding"],"model_catalog":false},{"key":"rerank_compatible","capabilities":["rerank"],"model_catalog":false}]}`
 	if !jsonEqual(rec.Body.Bytes(), []byte(want)) {
 		t.Fatalf("body = %s, want %s", rec.Body.String(), want)
+	}
+}
+
+func TestProviderModelCatalogRoutesParseFiltersAndScope(t *testing.T) {
+	workspace := newModelRouteFixture(t, value.RoleMember, false)
+	providerID := uuid.New()
+	rec := workspace.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/model-providers/"+providerID.String()+"/model-catalog?type=rerank&q=BGE", "")
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("workspace status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if workspace.providers.catalogWorkspaceID != workspace.workspaceID || workspace.providers.catalogProviderID != providerID || workspace.providers.catalogFilter.Type == nil || *workspace.providers.catalogFilter.Type != value.ModelTypeRerank || workspace.providers.catalogFilter.Query != "BGE" {
+		t.Fatalf("workspace catalog call = %#v", workspace.providers.catalogFilter)
+	}
+
+	platform := newModelRouteFixture(t, value.RoleMember, true)
+	rec = platform.request(stdhttp.MethodGet, "/api/v1/admin/model-providers/"+providerID.String()+"/model-catalog?type=all", "")
+	if rec.Code != stdhttp.StatusOK || platform.providers.catalogProviderID != providerID || platform.providers.catalogFilter.Type != nil {
+		t.Fatalf("platform status = %d filter = %#v body = %s", rec.Code, platform.providers.catalogFilter, rec.Body.String())
+	}
+
+	bad := workspace.request(stdhttp.MethodGet, "/api/v1/workspaces/acme/model-providers/"+providerID.String()+"/model-catalog?type=llm", "")
+	if bad.Code != stdhttp.StatusBadRequest || !strings.Contains(bad.Body.String(), "unsupported_model_type") {
+		t.Fatalf("bad status = %d body = %s", bad.Code, bad.Body.String())
 	}
 }
 

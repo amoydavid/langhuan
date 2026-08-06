@@ -5,7 +5,11 @@ import { render } from 'vitest-browser-react'
 import type { Model, ModelProvider } from '../types'
 import { ModelEditor } from './model-editor'
 
-vi.mock('../api', () => ({ createModel: vi.fn(), updateModel: vi.fn() }))
+vi.mock('../api', () => ({
+  createModel: vi.fn(),
+  updateModel: vi.fn(),
+  listProviderModelCatalog: vi.fn(),
+}))
 vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
 
 const provider: ModelProvider = {

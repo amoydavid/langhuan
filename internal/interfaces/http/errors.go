@@ -153,6 +153,7 @@ func modelErrorDetails(err error) (int, string, string, bool) {
 		{domainerrors.ErrRequestTimeout, stdhttp.StatusGatewayTimeout, "request_timeout"},
 		{domainerrors.ErrRateLimited, stdhttp.StatusTooManyRequests, "rate_limited"},
 		{domainerrors.ErrProviderRejected, stdhttp.StatusBadGateway, "provider_rejected"},
+		{domainerrors.ErrCatalogUnavailable, stdhttp.StatusBadGateway, "catalog_unavailable"},
 		{domainerrors.ErrInvalidEmbeddingResponse, stdhttp.StatusUnprocessableEntity, "invalid_embedding_response"},
 		{domainerrors.ErrImmutableModelField, stdhttp.StatusConflict, "immutable_model_field"},
 		{domainerrors.ErrModelInUse, stdhttp.StatusConflict, "model_in_use"},

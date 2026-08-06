@@ -4,6 +4,7 @@ import {
   listModelCatalog,
   listModelProviders,
   listModels,
+  listProviderModelCatalog,
   type ModelCatalogFilters,
 } from './api'
 import type { ModelScope } from './types'
@@ -40,6 +41,28 @@ export function modelProviderQueryOptions(
     queryKey: ['model-provider', scope, workspaceSlug ?? null, providerId],
     queryFn: () => getModelProvider(scope, providerId, workspaceSlug),
     staleTime: 15_000,
+  })
+}
+
+export function providerModelCatalogQueryOptions(
+  scope: ModelScope,
+  providerId: string,
+  type: 'embedding' | 'rerank',
+  workspaceSlug?: string,
+  query = ''
+) {
+  return queryOptions({
+    queryKey: [
+      'provider-model-catalog',
+      scope,
+      workspaceSlug ?? null,
+      providerId,
+      type,
+      query,
+    ],
+    queryFn: () =>
+      listProviderModelCatalog(scope, providerId, type, workspaceSlug, query),
+    staleTime: 60_000,
   })
 }
 

@@ -22,6 +22,7 @@ type ModelProvider struct {
 	CredentialsConfigured bool                       `json:"credentials_configured"`
 	CredentialFields      []string                   `json:"credential_fields"`
 	Capabilities          []value.ProviderCapability `json:"capabilities"`
+	ModelCatalog          bool                       `json:"model_catalog"`
 	ModelCounts           ProviderModelCounts        `json:"model_counts"`
 	Status                value.ModelStatus          `json:"status"`
 	CreatedAt             time.Time                  `json:"created_at"`
@@ -37,7 +38,7 @@ type ProviderModelCounts struct {
 }
 
 // ModelProviderFromModel removes encrypted credentials and builds an API DTO.
-func ModelProviderFromModel(provider *model.ModelProvider, credentialFields []string, capabilities []value.ProviderCapability, counts ProviderModelCounts) *ModelProvider {
+func ModelProviderFromModel(provider *model.ModelProvider, credentialFields []string, capabilities []value.ProviderCapability, modelCatalog bool, counts ProviderModelCounts) *ModelProvider {
 	if provider == nil {
 		return nil
 	}
@@ -57,7 +58,7 @@ func ModelProviderFromModel(provider *model.ModelProvider, credentialFields []st
 		Name: provider.Name, DisplayName: provider.DisplayName, Description: provider.Description,
 		Provider: provider.Provider, Config: config,
 		CredentialsConfigured: len(fields) > 0 && len(provider.CredentialsCiphertext) > 0,
-		CredentialFields:      fields, Capabilities: capabilityValues, ModelCounts: counts, Status: provider.Status,
+		CredentialFields:      fields, Capabilities: capabilityValues, ModelCatalog: modelCatalog, ModelCounts: counts, Status: provider.Status,
 		CreatedAt: provider.CreatedAt, UpdatedAt: provider.UpdatedAt,
 	}
 }

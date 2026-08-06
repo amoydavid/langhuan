@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/dajee/langhuan/internal/domain/value"
+	modelcatalogport "github.com/dajee/langhuan/internal/ports/modelcatalog"
 )
 
 // ProviderDecodeResult 是 Provider 配置解码后的统一结果。
@@ -18,12 +19,14 @@ type ProviderFactoryInfo struct {
 	CredentialFields []string
 	Capabilities     []value.ProviderCapability
 	DecodeProvider   func(value.ModelScope, json.RawMessage, json.RawMessage) (ProviderDecodeResult, error)
+	ModelCatalog     modelcatalogport.Catalog
 }
 
 // ProviderOption 描述一个 Provider 的 capability 视图。
 type ProviderOption struct {
 	Key          string
 	Capabilities []value.ProviderCapability
+	ModelCatalog bool
 }
 
 // ProviderFactoryResolver 按显式 descriptor 路由 Provider 配置能力。
@@ -71,5 +74,6 @@ func (r *ProviderFactoryResolver) Resolve(provider string) (ProviderFactoryInfo,
 		CredentialFields: descriptor.CredentialFields,
 		Capabilities:     descriptor.Capabilities,
 		DecodeProvider:   descriptor.DecodeProvider,
+		ModelCatalog:     descriptor.ModelCatalog,
 	}, nil
 }

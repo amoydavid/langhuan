@@ -78,3 +78,56 @@ func TestProviderDescriptorRegistryReturnsUnsupportedProvider(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestProviderDescriptorRegistryAcceptsExtensibleCapabilities(t *testing.T) {
+	t.Parallel()
+	registry, err := NewProviderDescriptorRegistry(ProviderDescriptor{
+		Key:          "future-provider",
+		Capabilities: []value.ProviderCapability{"llm", "asr_v2"},
+		DecodeProvider: func(value.ModelScope, json.RawMessage, json.RawMessage) (ProviderDecodeResult, error) {
+			return ProviderDecodeResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := registry.Descriptor("future-provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []value.ProviderCapability{"asr_v2", "llm"}
+	if !reflect.DeepEqual(got.Capabilities, want) {
+		t.Fatalf("capabilities = %#v, want %#v", got.Capabilities, want)
+	}
+}
+
+func TestProviderDescriptorOptionsExposeModelCatalog(t *testing.T) {
+	t.Parallel()
+	registry, err := NewProviderDescriptorRegistry(ProviderDescriptor{
+		Key: "catalog-provider", Capabilities: []value.ProviderCapability{"embedding"}, ModelCatalog: &recordingModelCatalog{},
+		DecodeProvider: func(value.ModelScope, json.RawMessage, json.RawMessage) (ProviderDecodeResult, error) {
+			return ProviderDecodeResult{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := registry.Options()
+	if len(options) != 1 || !options[0].ModelCatalog {
+		t.Fatalf("options = %#v", options)
+	}
+}
+
+func TestProviderDescriptorRegistryRejectsInvalidCapabilityIdentifier(t *testing.T) {
+	t.Parallel()
+	_, err := NewProviderDescriptorRegistry(ProviderDescriptor{
+		Key:          "future-provider",
+		Capabilities: []value.ProviderCapability{"LLM chat"},
+		DecodeProvider: func(value.ModelScope, json.RawMessage, json.RawMessage) (ProviderDecodeResult, error) {
+			return ProviderDecodeResult{}, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid capability identifier error")
+	}
+}

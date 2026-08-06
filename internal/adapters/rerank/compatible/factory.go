@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	openaicatalog "github.com/dajee/langhuan/internal/adapters/modelcatalog/openai"
 	"github.com/dajee/langhuan/internal/adapters/providerutil"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
+	modelcatalogport "github.com/dajee/langhuan/internal/ports/modelcatalog"
 	rerankport "github.com/dajee/langhuan/internal/ports/rerank"
 )
 
@@ -83,6 +85,9 @@ func NewFactoryWithProvider(provider string) *Factory {
 
 func (f *Factory) Provider() string           { return f.provider }
 func (f *Factory) CredentialFields() []string { return []string{"api_key", "custom_headers"} }
+
+// ModelCatalog returns the optional OpenAI-compatible /models discovery adapter.
+func (f *Factory) ModelCatalog() modelcatalogport.Catalog { return openaicatalog.NewCatalog() }
 
 func (f *Factory) DecodeProvider(input rerankport.ProviderDecodeInput) (map[string]any, []byte, error) {
 	config := ProviderConfig{
@@ -190,6 +195,7 @@ func (f *Factory) NewClient(ctx context.Context, input rerankport.ClientInput) (
 }
 
 var _ rerankport.Factory = (*Factory)(nil)
+var _ modelcatalogport.CatalogProvider = (*Factory)(nil)
 
 func validateBaseURL(baseURL string, scope value.ModelScope) error {
 	if baseURL == "" {

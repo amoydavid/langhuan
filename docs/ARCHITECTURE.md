@@ -39,6 +39,8 @@ ProviderDescriptor(siliconflow)
 
 Provider API 返回服务端 descriptor 的 `capabilities` 与按模型 status/type 聚合的 `model_counts`；管理型模型目录支持 `type/status/scope/provider_id/q` 筛选。Generation 选择接口仍只接受精确的 `type=embedding|rerank`，保持原合同。
 
+Provider descriptor 可选实现 `ModelCatalog` port。目录适配器接收已规范化连接配置和一次性解密凭证，调用供应商模型列表接口并归一化为临时选项（名称、类型、维度和模型参数）；HTTP 层在返回前清理凭证，前端只在用户点击时加载并填充 RHF 草稿，明确不自动持久化。OpenAI-compatible `/models` 与 SiliconFlow `/v1/models` 已提供实现，后续火山、百炼、智谱或 DeepSeek 只需注册自己的 descriptor/adapter。
+
 ## 2. 边界与分层
 
 ```mermaid

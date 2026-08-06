@@ -9,6 +9,7 @@ import (
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
+	modelcatalogport "github.com/dajee/langhuan/internal/ports/modelcatalog"
 	parserproviderport "github.com/dajee/langhuan/internal/ports/parserprovider"
 	rerankport "github.com/dajee/langhuan/internal/ports/rerank"
 )
@@ -19,6 +20,7 @@ type ProviderDescriptor struct {
 	Capabilities     []value.ProviderCapability
 	CredentialFields []string
 	DecodeProvider   func(value.ModelScope, json.RawMessage, json.RawMessage) (ProviderDecodeResult, error)
+	ModelCatalog     modelcatalogport.Catalog
 }
 
 // ProviderDescriptorRegistry 保存按 provider key 唯一注册的显式描述符。
@@ -55,12 +57,11 @@ func normalizeProviderDescriptor(descriptor ProviderDescriptor) (ProviderDescrip
 	}
 	capabilities := make(map[value.ProviderCapability]struct{}, len(descriptor.Capabilities))
 	for _, capability := range descriptor.Capabilities {
-		switch capability {
-		case value.CapabilityEmbedding, value.CapabilityRerank, value.CapabilityParser:
-			capabilities[capability] = struct{}{}
-		default:
-			return ProviderDescriptor{}, fmt.Errorf("Provider descriptor %s 包含未知 capability: %s", descriptor.Key, capability)
+		normalizedCapability, valid := value.NormalizeProviderCapability(capability)
+		if !valid {
+			return ProviderDescriptor{}, fmt.Errorf("Provider descriptor %s 包含无效 capability: %s", descriptor.Key, capability)
 		}
+		capabilities[normalizedCapability] = struct{}{}
 	}
 	descriptor.Capabilities = make([]value.ProviderCapability, 0, len(capabilities))
 	for capability := range capabilities {
@@ -104,6 +105,7 @@ func (r *ProviderDescriptorRegistry) Options() []ProviderOption {
 		options = append(options, ProviderOption{
 			Key:          key,
 			Capabilities: append([]value.ProviderCapability(nil), descriptor.Capabilities...),
+			ModelCatalog: descriptor.ModelCatalog != nil,
 		})
 	}
 	return options
@@ -112,7 +114,7 @@ func (r *ProviderDescriptorRegistry) Options() []ProviderOption {
 // SupportsModelType 判断 Provider 是否显式声明支持该模型类型。
 func (r *ProviderDescriptorRegistry) SupportsModelType(provider string, modelType value.ModelType) bool {
 	capability := value.CapabilityFromModelType(modelType)
-	if capability != value.CapabilityEmbedding && capability != value.CapabilityRerank {
+	if _, valid := value.NormalizeProviderCapability(capability); !valid {
 		return false
 	}
 	descriptor, err := r.Descriptor(provider)
@@ -129,7 +131,7 @@ func (r *ProviderDescriptorRegistry) SupportsModelType(provider string, modelTyp
 
 // EmbeddingProviderDescriptor 把单能力 Embedding Factory 适配成显式描述符。
 func EmbeddingProviderDescriptor(factory embeddingport.Factory) ProviderDescriptor {
-	return ProviderDescriptor{
+	descriptor := ProviderDescriptor{
 		Key:              factory.Provider(),
 		Capabilities:     []value.ProviderCapability{value.CapabilityEmbedding},
 		CredentialFields: factory.CredentialFields(),
@@ -140,11 +142,15 @@ func EmbeddingProviderDescriptor(factory embeddingport.Factory) ProviderDescript
 			return ProviderDecodeResult{Config: decoded, CredentialsJSON: credentialsJSON}, err
 		},
 	}
+	if catalogProvider, ok := factory.(modelcatalogport.CatalogProvider); ok {
+		descriptor.ModelCatalog = catalogProvider.ModelCatalog()
+	}
+	return descriptor
 }
 
 // RerankProviderDescriptor 把单能力 Rerank Factory 适配成显式描述符。
 func RerankProviderDescriptor(factory rerankport.Factory) ProviderDescriptor {
-	return ProviderDescriptor{
+	descriptor := ProviderDescriptor{
 		Key:              factory.Provider(),
 		Capabilities:     []value.ProviderCapability{value.CapabilityRerank},
 		CredentialFields: factory.CredentialFields(),
@@ -155,6 +161,10 @@ func RerankProviderDescriptor(factory rerankport.Factory) ProviderDescriptor {
 			return ProviderDecodeResult{Config: decoded, CredentialsJSON: credentialsJSON}, err
 		},
 	}
+	if catalogProvider, ok := factory.(modelcatalogport.CatalogProvider); ok {
+		descriptor.ModelCatalog = catalogProvider.ModelCatalog()
+	}
+	return descriptor
 }
 
 // ParserProviderDescriptor 把单能力 Parser Factory 适配成显式描述符。
