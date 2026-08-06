@@ -43,6 +43,8 @@ func TestKeyRoutesPresent(t *testing.T) {
 		{http.MethodPost, "/api/v1/workspaces/{workspace_slug}/knowledge-bases", true, true},
 		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/knowledge-bases", true, false},
 		{http.MethodPost, "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/documents", true, true},
+		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}", true, false},
+		{http.MethodDelete, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}", false, false},
 		{http.MethodPost, "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/search", true, true},
 	}
 	for _, tc := range cases {
@@ -80,8 +82,6 @@ func TestSessionOnlyRoutesExcluded(t *testing.T) {
 		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/members"},
 		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/search-settings"},
 		{http.MethodGet, "/api/v1/admin/model-providers"},
-		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}"},
-		{http.MethodDelete, "/api/v1/workspaces/{workspace_slug}/documents/{document_id}"},
 		{http.MethodGet, "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/index-generations"},
 	}
 	for _, tc := range cases {

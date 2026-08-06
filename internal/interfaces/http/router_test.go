@@ -911,6 +911,49 @@ func TestDeleteWorkspaceDocument(t *testing.T) {
 	}
 }
 
+func TestBearerDocumentStatusAndDeleteRespectKnowledgeBaseBinding(t *testing.T) {
+	deps, auth, _, mbs, _ := newAuthTestDeps()
+	workspaceID := uuid.New()
+	auth.authUser = &model.User{ID: uuid.New()}
+	mbs.getResult = &dto.Membership{WorkspaceID: workspaceID, UserID: auth.authUser.ID, Role: value.RoleMember}
+	wsSvc := newFakeWorkspaceService()
+	wsSvc.slugIndex = map[string]*dto.Workspace{"acme": {ID: workspaceID, Slug: "acme", Metadata: map[string]any{}}}
+	wsSvc.items[workspaceID] = wsSvc.slugIndex["acme"]
+	docSvc := newFakeDocumentQueryService()
+	allowedKB, deniedKB := uuid.New(), uuid.New()
+	allowedDoc, deniedDoc := uuid.New(), uuid.New()
+	docSvc.items[allowedDoc] = &dto.Document{ID: allowedDoc, WorkspaceID: workspaceID, KnowledgeBaseID: allowedKB, Metadata: map[string]any{"workspace_id": workspaceID.String()}}
+	docSvc.items[deniedDoc] = &dto.Document{ID: deniedDoc, WorkspaceID: workspaceID, KnowledgeBaseID: deniedKB, Metadata: map[string]any{"workspace_id": workspaceID.String()}}
+	deps.Workspaces = wsSvc
+	deps.Documents = docSvc
+	deps.PublicURLs = mustPublicURLs(t)
+	deps.APIKeyAuth = &fakeAPIKeyAuthenticator{principal: value.NewAPIKeyAuthContext(uuid.New(), workspaceID, []value.APIScope{value.ScopeDocumentsRead, value.ScopeDocumentsWrite}, []uuid.UUID{allowedKB})}
+	router := NewRouter(deps)
+
+	request := func(method, documentID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/v1/workspaces/acme/documents/"+documentID, nil)
+		req.Header.Set("Authorization", "Bearer lhk_test")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := request(stdhttp.MethodGet, allowedDoc.String()); rec.Code != stdhttp.StatusOK {
+		t.Fatalf("allowed status query = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(stdhttp.MethodGet, deniedDoc.String()); rec.Code != stdhttp.StatusNotFound {
+		t.Fatalf("out-of-scope status query = %d, want 404", rec.Code)
+	}
+	if rec := request(stdhttp.MethodDelete, deniedDoc.String()); rec.Code != stdhttp.StatusNotFound {
+		t.Fatalf("out-of-scope delete = %d, want 404", rec.Code)
+	}
+	if _, ok := docSvc.items[deniedDoc]; !ok {
+		t.Fatal("out-of-scope delete removed the document")
+	}
+	if rec := request(stdhttp.MethodDelete, allowedDoc.String()); rec.Code != stdhttp.StatusNoContent {
+		t.Fatalf("allowed delete = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateKnowledgeBaseValidatesInput(t *testing.T) {
 	f := newSlugResourceFixtures(t, value.RoleMember, false)
 

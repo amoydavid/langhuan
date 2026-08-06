@@ -67,9 +67,9 @@ OpenAPI 文档（`GET /api/v1/openapi.json`）只收录上述支持 API Key 的�
 | `GET/PUT /workspaces/:slug/knowledge-bases/:id/documents/:document_id/faq` | `documents:read/write` | FAQ 读写；URL 必须携带 KB ID |
 | `GET /workspaces/:slug/knowledge-bases/:id/documents/:document_id/chunks` | `documents:read` | 文档分块 |
 | `GET /workspaces/:slug/models?type=embedding&status=active&scope=platform` | `knowledge_bases:write` | Bearer 仅可读取平台 active embedding 模型 |
-| `GET /workspaces/:slug/documents/:id` | Session-only | 既有文档状态入口；不在本次 KB-qualified Bearer 迁移范围 |
+| `GET /workspaces/:slug/documents/:id` | `documents:read` | 查询文档状态；Bearer 会校验文档所属知识库是否在 key 绑定范围内 |
 | `GET /workspaces/:slug/jobs/:id` | Session-only | 既有 Job 状态入口；不在本次 KB-qualified Bearer 迁移范围 |
-| `DELETE /workspaces/:slug/documents/:id` | Session-only | 既有软删除入口；不在本次 KB-qualified Bearer 迁移范围 |
+| `DELETE /workspaces/:slug/documents/:id` | `documents:write` | 软删除文档（FAQ 也通过此接口删除）；Bearer 会校验文档所属知识库是否在 key 绑定范围内 |
 | `GET /workspaces/:slug/knowledge-bases/:id/chunks/:chunk_id` | `documents:read` | 获取 Chunk |
 | `POST /workspaces/:slug/knowledge-bases/:id/search` | `search:read` | 单库检索 |
 | `POST /workspaces/:slug/search` | `search:read` | 多库检索（按 Embedding 模型分组） |

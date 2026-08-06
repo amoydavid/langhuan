@@ -343,9 +343,9 @@ func (b *specBuilder) documentOps() []op {
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents", tag: "文档", summary: "列出知识库文档",
 			respBody: []*dto.Document{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "kind", in: "query", typeName: "string", enum: []string{"file", "faq", "web"}}}},
 		{method: http.MethodGet, path: wsBase + "/documents/:document_id", tag: "文档", summary: "查询文档状态",
-			respBody: dto.Document{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.Document{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, description: "Bearer API Key 只能查询其绑定知识库内的文档；越界统一返回 404。"},
 		{method: http.MethodDelete, path: wsBase + "/documents/:document_id", tag: "文档", summary: "删除文档",
-			respBody: nil, status: http.StatusNoContent, sec: secSessionMember},
+			respBody: nil, status: http.StatusNoContent, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}, description: "FAQ 通过此文档删除接口移除；Bearer API Key 只能删除其绑定知识库内的文档，越界统一返回 404。"},
 	}
 }
 

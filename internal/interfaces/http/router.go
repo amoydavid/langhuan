@@ -323,13 +323,14 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			read := progGroup.Group("/knowledge-bases/:id/documents/:document_id/chunks", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
 			read.GET("", chunks.list)
 		}
-		// Document-only status/delete routes intentionally remain on their existing
-		// contract; this migration only opens KB-qualified document sub-resources.
+		// Document-only status/delete routes remain addressable by document ID. For
+		// Bearer callers, the document service verifies that the document's
+		// knowledge base belongs to the API key's allowed binding set.
 		if deps.Documents != nil {
 			doc := documentHandler{ingestService: deps.DocumentIngest, queryService: deps.Documents, maxFileSizeBytes: deps.MaxFileSizeBytes}
-			status := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireSessionOnly())
+			status := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
 			status.GET("/documents/:document_id", doc.get)
-			del := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsWrite), RequireSessionOnly())
+			del := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsWrite))
 			del.DELETE("/documents/:document_id", doc.delete)
 		}
 		if deps.ChunkRevisions != nil {
