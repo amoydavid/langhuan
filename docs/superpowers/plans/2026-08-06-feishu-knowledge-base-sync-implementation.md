@@ -241,7 +241,7 @@ git commit -m "feat(db): 建立飞书多应用连接与来源字段"
 
 > AAD 复用：`credential_cipher.go:71` 的 `credentialAAD` 当前前缀是 `"model-provider:"`。飞书连接要么新增一个 `source-connection:` 前缀的 cipher 变体，要么把 AAD 函数参数化。**推荐**：新增 `db.NewSourceConnectionCredentialCipher` 复用同一 key 但 AAD 前缀为 `"source-connection:" + id`，与 model-provider 物理隔离（同一密文不可跨用途解密）。
 
-- [ ] **Step 1: 写 Service + Selector 失败测试。**
+- [x] **Step 1: 写 Service + Selector 失败测试。**
 
 ```go
 func TestCreateSourceConnectionEncryptsSecretAndHidesOnList(t *testing.T) {
@@ -262,23 +262,23 @@ func TestSelectorDecryptsSecretForRunner(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/application/service -run 'SourceConnection|SelectorDecrypts' -count=1`
 
 Expected: FAIL，Service/Selector 不存在。
 
-- [ ] **Step 3: 实现加密 Service + Selector + cipher 变体。**
+- [x] **Step 3: 实现加密 Service + Selector + cipher 变体。**
 
 Service `Create`：构造 SourceConnection（不含密文）→ 落库拿 connID → `cipher.Encrypt(connID, []byte(secret))` → 回写密文（同一 Workspace 事务）。Selector：`repo.Get` → `cipher.Decrypt(connID, ciphertext)` → 返回。新增 `db.NewSourceConnectionCredentialCipher(key)`，AAD 前缀 `source-connection:`。
 
-- [ ] **Step 4: 运行聚焦测试 + go vet。**
+- [x] **Step 4: 运行聚焦测试 + go vet。**
 
 Run: `go test ./internal/application/service ./internal/infrastructure/db -run 'SourceConnection|Selector' -count=1 && go vet ./internal/application/service/...`
 
 Expected: PASS；secret 不在 List 回显、不在日志/DOM、解密正确。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/application/service internal/infrastructure/db
