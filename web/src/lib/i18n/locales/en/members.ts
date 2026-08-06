@@ -19,6 +19,7 @@ export const members = {
     },
   },
   actions: {
+    manageInvitationsButton: 'Manage invitations',
     adjustRoleButton: 'Adjust role',
     removeMemberButton: 'Remove member',
     resetPasswordButton: 'Reset password',

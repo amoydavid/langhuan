@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useTranslation } from 'react-i18next'
 import { Main } from '@/components/layout/main'
 import { meQueryOptions } from '@/features/auth/queries'
 import { MemberList } from '@/features/members/member-list'
+import { MemberPageHeader } from '@/features/members/member-page-header'
 import { membersQueryOptions } from '@/features/members/queries'
 
 export const Route = createFileRoute(
@@ -24,7 +24,6 @@ export const Route = createFileRoute(
 })
 
 function MembersPage() {
-  const { t } = useTranslation()
   const me = Route.useLoaderData()
   const { workspaceSlug } = Route.useParams()
   const membership = me.workspaces.find((item) => item.slug === workspaceSlug)
@@ -33,17 +32,10 @@ function MembersPage() {
   return (
     <Main>
       <div className='space-y-6'>
-        <div>
-          <p className='page-eyebrow'>
-            {t('routes.workspaces.members.eyebrow')}
-          </p>
-          <h1 className='font-semibold text-2xl tracking-tight'>
-            {t('routes.workspaces.members.title')}
-          </h1>
-          <p className='mt-2 text-muted-foreground'>
-            {t('routes.workspaces.members.description')}
-          </p>
-        </div>
+        <MemberPageHeader
+          workspaceSlug={workspaceSlug}
+          actorRole={membership.role}
+        />
         <MemberList
           workspaceSlug={workspaceSlug}
           actorRole={membership.role}

@@ -13,6 +13,7 @@ export const members = {
     },
   },
   actions: {
+    manageInvitationsButton: '管理邀请',
     adjustRoleButton: '调整角色',
     removeMemberButton: '移除成员',
     resetPasswordButton: '重置密码',
