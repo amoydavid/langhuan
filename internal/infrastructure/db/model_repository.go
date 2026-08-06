@@ -309,5 +309,10 @@ func (r *ModelRepository) CountGenerationReferences(ctx context.Context, modelID
 		Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("统计模型知识库引用失败: %w", err)
 	}
-	return count, nil
+	var settingsCount int64
+	if err := r.db.WithContext(ctx).Model(&WorkspaceSearchSettingsRow{}).
+		Where("rerank_model_id = ?", modelID).Count(&settingsCount).Error; err != nil {
+		return 0, fmt.Errorf("统计模型 Workspace 检索策略引用失败: %w", err)
+	}
+	return count + settingsCount, nil
 }

@@ -296,4 +296,4 @@ duration 必须大于 0；batch 必须为 1–10000。Cleanup service 已在 run
 
 当前非目标：正式 RLS policy、crawler、LLM 回答生成与图查询。
 
-> Rerank 已于当前版本交付：检索在 Vector/FTS + RRF + parent 聚合后，按 active Generation 的可选不可变 Rerank 快照执行一次重排，返回 `rerank_score` 与 `ranking_stage`（`rrf`/`rerank`/`rrf_fallback`）。多知识库检索要求所有 active Generation 的 Rerank 快照完全一致或全部关闭，否则在模型调用前返回 `rerank_configuration_conflict`。Rerank 模型身份、config hash、候选数与失败策略作为 Generation 快照固化，运行时与快照不一致时拒绝执行。
+> Rerank 检索策略由 Workspace 默认 Search Settings 管理：Vector/FTS + RRF + parent 聚合后，单库和多库都读取同一个 Workspace Rerank 快照执行一次重排，返回 `rerank_score` 与 `ranking_stage`（`rrf`/`rerank`/`rrf_fallback`）。多库可混用不同 Embedding Generation；各库先独立召回和 RRF，再在全局候选上统一 Rerank。不再要求各 Generation 的 Rerank 快照一致；历史 Generation 字段仅作兼容保留，不是搜索决策来源。只有 Workspace owner/admin 可以修改 Search Settings。

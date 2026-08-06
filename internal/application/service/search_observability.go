@@ -20,7 +20,8 @@ type searchRunStats struct {
 	rerankEnabled,
 	rerankApplied,
 	rerankFallback bool
-	rankingStage string
+	rerankModelID, rerankProviderID uuid.UUID
+	rankingStage                    string
 	// 召回与重排阶段计数，证明重排实际参与排序。
 	vectorCandidateCount,
 	keywordCandidateCount,
@@ -53,6 +54,9 @@ func (s *SearchService) logTerminal(ctx context.Context, stats *searchRunStats, 
 		slog.Bool("rerank_enabled", stats.rerankEnabled),
 		slog.Bool("rerank_applied", stats.rerankApplied),
 		slog.Bool("rerank_fallback", stats.rerankFallback),
+		slog.String("rerank_profile", "default"),
+		slog.String("rerank_model_id", stats.rerankModelID.String()),
+		slog.String("rerank_provider_id", stats.rerankProviderID.String()),
 		slog.Int("rerank_candidate_count", stats.rerankCandidateCount),
 		slog.Int("result_count", stats.resultCount),
 		slog.String("ranking_stage", stats.rankingStage),
@@ -81,6 +85,8 @@ func errorClassOf(err error) string {
 		return "rerank_configuration_conflict"
 	case errors.Is(err, domainerrors.ErrRerankSnapshotMismatch):
 		return "rerank_snapshot_mismatch"
+	case errors.Is(err, domainerrors.ErrEmbeddingSnapshotMismatch):
+		return "embedding_snapshot_mismatch"
 	case errors.Is(err, domainerrors.ErrRerankUnavailable):
 		return "rerank_unavailable"
 	case errors.Is(err, domainerrors.ErrRerankRateLimited):
@@ -116,6 +122,7 @@ func isInternalError(err error) bool {
 		domainerrors.ErrRerankInputTooLarge,
 		domainerrors.ErrRerankConfigurationConflict,
 		domainerrors.ErrRerankSnapshotMismatch,
+		domainerrors.ErrEmbeddingSnapshotMismatch,
 		domainerrors.ErrValidation,
 		domainerrors.ErrForbidden,
 		domainerrors.ErrUnauthorized,

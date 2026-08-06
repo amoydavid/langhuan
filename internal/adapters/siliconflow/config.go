@@ -67,6 +67,11 @@ func DecodeProvider(scope value.ModelScope, rawConfig, rawCredentials json.RawMe
 	if err := validateEndpointPath("rerank_endpoint_path", config.RerankEndpointPath, "/rerank"); err != nil {
 		return nil, nil, err
 	}
+	config.BaseURL = normalizeRepeatedEndpointPrefix(
+		config.BaseURL,
+		config.EmbeddingEndpointPath,
+		config.RerankEndpointPath,
+	)
 	if err := providerutil.ValidateTimeout(config.TimeoutSeconds); err != nil {
 		return nil, nil, err
 	}
@@ -116,6 +121,11 @@ func decodeNormalized(config map[string]any, credentialsJSON []byte) (ProviderCo
 	if err := providerutil.DecodeMap(config, &typedConfig); err != nil {
 		return ProviderConfig{}, Credentials{}, err
 	}
+	typedConfig.BaseURL = normalizeRepeatedEndpointPrefix(
+		typedConfig.BaseURL,
+		typedConfig.EmbeddingEndpointPath,
+		typedConfig.RerankEndpointPath,
+	)
 	var credentials Credentials
 	if err := providerutil.DecodeStrict(credentialsJSON, &credentials, domainerrors.ErrInvalidProviderConfig); err != nil {
 		return ProviderConfig{}, Credentials{}, err
@@ -126,4 +136,27 @@ func decodeNormalized(config map[string]any, credentialsJSON []byte) (ProviderCo
 func embeddingBaseURL(config ProviderConfig) string {
 	path := strings.TrimSuffix(strings.TrimRight(config.EmbeddingEndpointPath, "/"), "/embeddings")
 	return strings.TrimRight(config.BaseURL, "/") + path
+}
+
+// normalizeRepeatedEndpointPrefix 兼容旧 OpenAI-compatible 连接：旧配置的
+// base_url 常以 /v1 结尾，而 SiliconFlow 的两条 endpoint path 也以 /v1 开头。
+// 当两条能力共享同一前缀且 base_url 已包含它时，只保留一份，避免请求落到
+// /v1/v1/embeddings 或 /v1/v1/rerank。自定义反向代理前缀会被保留。
+func normalizeRepeatedEndpointPrefix(baseURL, embeddingPath, rerankPath string) string {
+	embeddingPrefix := strings.TrimSuffix(strings.TrimRight(embeddingPath, "/"), "/embeddings")
+	rerankPrefix := strings.TrimSuffix(strings.TrimRight(rerankPath, "/"), "/rerank")
+	if embeddingPrefix == "" || embeddingPrefix != rerankPrefix {
+		return baseURL
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	if !strings.HasSuffix(basePath, embeddingPrefix) {
+		return baseURL
+	}
+	parsed.Path = strings.TrimSuffix(basePath, embeddingPrefix)
+	parsed.RawPath = ""
+	return strings.TrimRight(parsed.String(), "/")
 }

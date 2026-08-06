@@ -15,6 +15,7 @@ import { members } from './members'
 import { models } from './models'
 import { retrieval } from './retrieval'
 import { routes } from './routes'
+import { searchSettings } from './searchSettings'
 import { settings } from './settings'
 import { ui } from './ui'
 import { workspaceReadiness } from './workspaceReadiness'
@@ -44,6 +45,7 @@ export const en = {
   members,
   models,
   retrieval,
+  searchSettings,
   routes,
   settings,
   workspaceReadiness,

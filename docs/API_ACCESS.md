@@ -108,7 +108,9 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 }
 ```
 
-`score` 始终是 RRF 融合分数；`rerank_score` 仅在 active Generation 启用 Rerank 且成功应用时出现；`ranking_stage` 为 `rrf`（未启用重排）、`rerank`（成功重排）或 `rrf_fallback`（重排远端失败后回退到 RRF 顺序）。多知识库检索要求所有 active Generation 的 Rerank 快照完全一致或全部关闭，否则在模型调用前返回 `409 rerank_configuration_conflict`。
+`score` 始终是 RRF 融合分数；`rerank_score` 仅在 Workspace Search Settings 启用 Rerank 且成功应用时出现；`ranking_stage` 为 `rrf`（未启用重排）、`rerank`（成功重排）或 `rrf_fallback`（重排远端失败后回退到 RRF 顺序）。多知识库可以混用不同 Embedding Generation，各库召回后统一使用 Workspace Search Settings 指定的 Rerank 模型。
+
+Workspace 管理员可通过 `GET /api/v1/workspaces/:workspace_slug/search-settings` 查看默认策略，并通过 `PUT` 更新。PUT 仅接受 Session owner/admin；Bearer API Key 只能执行搜索。未配置策略时默认关闭 Rerank。
 
 ## 6. MCP
 

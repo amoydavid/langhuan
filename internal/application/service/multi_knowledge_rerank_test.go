@@ -1,84 +1,75 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/dajee/langhuan/internal/application/dto"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-func sameRerank() *model.RerankSnapshot {
-	return &model.RerankSnapshot{
-		ModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "rerank",
-		ModelConfigHash: "hash", CandidateTopK: 50, FailureMode: value.RerankFailureFallback,
-	}
+type multiRerankResolverStub struct {
+	workspaceID uuid.UUID
+	client      *ResolvedRerankClient
+	err         error
 }
 
-func otherRerank() *model.RerankSnapshot {
-	return &model.RerankSnapshot{
-		ModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "rerank-other",
-		ModelConfigHash: "otherhash", CandidateTopK: 100, FailureMode: value.RerankFailureFail,
-	}
+func (r *multiRerankResolverStub) Resolve(_ context.Context, workspaceID, _ uuid.UUID) (*ResolvedRerankClient, error) {
+	r.workspaceID = workspaceID
+	return r.client, r.err
 }
 
-func snapshotWith(kbID uuid.UUID, gen *model.IndexGeneration) knowledgeBaseSearchSnapshot {
-	return knowledgeBaseSearchSnapshot{knowledgeBaseID: kbID, name: "kb", generation: gen}
-}
-
-func TestPlanMultiKnowledgeRerankAllDisabled(t *testing.T) {
+func TestApplyMultiKnowledgeRerankUsesWorkspaceAndQuery(t *testing.T) {
 	t.Parallel()
-	kb1, kb2 := uuid.New(), uuid.New()
-	snapshots := map[uuid.UUID]knowledgeBaseSearchSnapshot{
-		kb1: snapshotWith(kb1, &model.IndexGeneration{Rerank: nil}),
-		kb2: snapshotWith(kb2, &model.IndexGeneration{Rerank: nil}),
+	workspaceID, modelID, providerID := uuid.New(), uuid.New(), uuid.New()
+	clientSpy := &recordingRerankClientForSearch{scores: []float64{0.9}}
+	resolver := &multiRerankResolverStub{client: &ResolvedRerankClient{
+		Client: clientSpy, ModelID: modelID, ProviderID: providerID, ModelName: "rerank", ModelConfigHash: "hash", MaxDocumentChars: 8192,
+	}}
+	service := &MultiKnowledgeSearchService{rerankResolver: resolver, logger: slog.Default()}
+	results, err := service.applyMultiKnowledgeRerank(context.Background(), workspaceID, "查询问题", []*dto.SearchResult{{ChunkID: uuid.New(), Content: "候选正文"}}, &model.RerankSnapshot{
+		ModelID: modelID, ProviderID: providerID, ModelName: "rerank", ModelConfigHash: "hash", CandidateTopK: 50, FailureMode: value.RerankFailureFail,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	plan, err := planMultiKnowledgeRerank(snapshots)
-	if err != nil || plan.enabled {
-		t.Fatalf("plan = %+v err = %v", plan, err)
-	}
-}
-
-func TestPlanMultiKnowledgeRerankSameSnapshot(t *testing.T) {
-	t.Parallel()
-	kb1, kb2 := uuid.New(), uuid.New()
-	rerank := sameRerank()
-	snapshots := map[uuid.UUID]knowledgeBaseSearchSnapshot{
-		kb1: snapshotWith(kb1, &model.IndexGeneration{Rerank: rerank}),
-		kb2: snapshotWith(kb2, &model.IndexGeneration{Rerank: rerank.Clone()}),
-	}
-	plan, err := planMultiKnowledgeRerank(snapshots)
-	if err != nil || !plan.enabled || plan.snapshot == nil {
-		t.Fatalf("plan = %+v err = %v", plan, err)
+	if resolver.workspaceID != workspaceID || clientSpy.input.Query != "查询问题" || results[0].RankingStage != value.RankingStageRerank {
+		t.Fatalf("workspace=%s query=%q stage=%s", resolver.workspaceID, clientSpy.input.Query, results[0].RankingStage)
 	}
 }
 
-func TestPlanMultiKnowledgeRerankMixedEnabledConflict(t *testing.T) {
+func TestApplyMultiKnowledgeRerankFailPropagatesError(t *testing.T) {
 	t.Parallel()
-	kb1, kb2 := uuid.New(), uuid.New()
-	rerank := sameRerank()
-	snapshots := map[uuid.UUID]knowledgeBaseSearchSnapshot{
-		kb1: snapshotWith(kb1, &model.IndexGeneration{Rerank: rerank}),
-		kb2: snapshotWith(kb2, &model.IndexGeneration{Rerank: nil}),
-	}
-	_, err := planMultiKnowledgeRerank(snapshots)
-	if !errors.Is(err, domainerrors.ErrRerankConfigurationConflict) {
-		t.Fatalf("mixed conflict err = %v", err)
+	workspaceID, modelID, providerID := uuid.New(), uuid.New(), uuid.New()
+	resolver := &multiRerankResolverStub{client: &ResolvedRerankClient{
+		Client: &recordingRerankClientForSearch{err: domainerrors.ErrRerankUnavailable}, ModelID: modelID, ProviderID: providerID, ModelName: "rerank", ModelConfigHash: "hash", MaxDocumentChars: 8192,
+	}}
+	service := &MultiKnowledgeSearchService{rerankResolver: resolver, logger: slog.Default()}
+	_, err := service.applyMultiKnowledgeRerank(context.Background(), workspaceID, "q", []*dto.SearchResult{{ChunkID: uuid.New(), Content: "doc"}}, &model.RerankSnapshot{
+		ModelID: modelID, ProviderID: providerID, ModelName: "rerank", ModelConfigHash: "hash", CandidateTopK: 50, FailureMode: value.RerankFailureFail,
+	})
+	if !errors.Is(err, domainerrors.ErrRerankUnavailable) {
+		t.Fatalf("err = %v, want rerank unavailable", err)
 	}
 }
 
-func TestPlanMultiKnowledgeRerankDifferentSnapshotConflict(t *testing.T) {
+func TestApplyMultiKnowledgeRerankFallbackReturnsRRF(t *testing.T) {
 	t.Parallel()
-	kb1, kb2 := uuid.New(), uuid.New()
-	snapshots := map[uuid.UUID]knowledgeBaseSearchSnapshot{
-		kb1: snapshotWith(kb1, &model.IndexGeneration{Rerank: sameRerank()}),
-		kb2: snapshotWith(kb2, &model.IndexGeneration{Rerank: otherRerank()}),
-	}
-	_, err := planMultiKnowledgeRerank(snapshots)
-	if !errors.Is(err, domainerrors.ErrRerankConfigurationConflict) {
-		t.Fatalf("different snapshot conflict err = %v", err)
+	workspaceID, modelID, providerID := uuid.New(), uuid.New(), uuid.New()
+	resolver := &multiRerankResolverStub{client: &ResolvedRerankClient{
+		Client: &recordingRerankClientForSearch{err: domainerrors.ErrRerankUnavailable}, ModelID: modelID, ProviderID: providerID, ModelName: "rerank", ModelConfigHash: "hash", MaxDocumentChars: 8192,
+	}}
+	service := &MultiKnowledgeSearchService{rerankResolver: resolver, logger: slog.Default()}
+	results, err := service.applyMultiKnowledgeRerank(context.Background(), workspaceID, "q", []*dto.SearchResult{{ChunkID: uuid.New(), Content: "doc"}}, &model.RerankSnapshot{
+		ModelID: modelID, ProviderID: providerID, ModelName: "rerank", ModelConfigHash: "hash", CandidateTopK: 50, FailureMode: value.RerankFailureFallback,
+	})
+	if err != nil || results[0].RankingStage != value.RankingStageRRFFallback {
+		t.Fatalf("results=%#v err=%v", results, err)
 	}
 }

@@ -233,5 +233,10 @@ func (r *ModelProviderRepository) CountGenerationReferences(ctx context.Context,
 		Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("统计 Provider Generation 引用失败: %w", err)
 	}
-	return count, nil
+	var settingsCount int64
+	if err := r.db.WithContext(ctx).Model(&WorkspaceSearchSettingsRow{}).
+		Where("rerank_provider_id = ?", providerID).Count(&settingsCount).Error; err != nil {
+		return 0, fmt.Errorf("统计 Provider Workspace 检索策略引用失败: %w", err)
+	}
+	return count + settingsCount, nil
 }

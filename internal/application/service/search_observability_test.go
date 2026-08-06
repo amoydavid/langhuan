@@ -58,6 +58,15 @@ func newCaptureLogger() (*slog.Logger, *memorySlogHandler) {
 	return slog.New(handler), handler
 }
 
+type stubSearchProfileResolver struct {
+	snapshot *model.RerankSnapshot
+	err      error
+}
+
+func (r *stubSearchProfileResolver) Resolve(context.Context, uuid.UUID) (*model.RerankSnapshot, error) {
+	return r.snapshot, r.err
+}
+
 func TestSearchLogsOneTerminalEventWithoutSensitiveText(t *testing.T) {
 	workspaceID, kbID := uuid.New(), uuid.New()
 	embeddingModelID, embeddingProviderID := uuid.New(), uuid.New()
@@ -136,10 +145,6 @@ func TestSearchLogsRerankCallDebugEvent(t *testing.T) {
 		ModelName: "embed", EmbeddingDimension: 1024, ModelConfigHash: "ehash",
 		ChunkerVersion: 1, RetrievalConfig: map[string]any{"fts_config": "simple", "vector_top_k": 30, "keyword_top_k": 30, "final_top_k": 10, "rrf_k": 60},
 		Status: value.IndexGenerationReady,
-		Rerank: &model.RerankSnapshot{
-			ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank",
-			ModelConfigHash: "rhash", CandidateTopK: 50, FailureMode: value.RerankFailureFallback,
-		},
 	}
 	entryID := uuid.New()
 	repo := &searchRepositoryFake{
@@ -160,7 +165,11 @@ func TestSearchLogsRerankCallDebugEvent(t *testing.T) {
 	}}
 	logger, handler := newCaptureLogger()
 	svc := NewSearchService(SearchServiceDeps{
-		Repository: repo, Resolver: embeddingResolver, RerankResolver: rerankResolver, Logger: logger,
+		Repository: repo, Resolver: embeddingResolver, RerankResolver: rerankResolver,
+		SearchProfile: &stubSearchProfileResolver{snapshot: &model.RerankSnapshot{
+			ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank",
+			ModelConfigHash: "rhash", CandidateTopK: 50, FailureMode: value.RerankFailureFallback,
+		}}, Logger: logger,
 	})
 
 	_, err := svc.Search(context.Background(), SearchInput{

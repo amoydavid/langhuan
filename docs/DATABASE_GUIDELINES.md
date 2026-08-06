@@ -308,6 +308,13 @@ Cleanup 仍然必须进入 `WithinWorkspace`，不允许用无租户的全表后
 - Row codec 把 `*model.RerankSnapshot` 映射为四列 + `{"candidate_top_k":N,"failure_mode":"..."}`；`nil` 快照写全空。
 - `CountGenerationReferences`（Model）使用 `embedding_model_id = ? OR rerank_model_id = ?`；Provider 使用 `provider_id = ? OR rerank_provider_id = ?`，被引用时 Provider config 语义变更返回 `ErrImmutableModelField`，只允许轮换凭证。
 
+### 9.y Workspace Search Settings（迁移 000015）
+
+- `workspace_search_settings` 一 Workspace 一行，以 `workspace_id` 为主键；保存查询阶段默认 Rerank 的 model/provider/name/config hash 快照和 `candidate_top_k`、`failure_mode`。
+- 没有配置行等价于关闭 Rerank；配置更新必须在 Workspace transaction 内完成，应用层先解析当前 Workspace 可见的 active `type=rerank` 模型，再原子 upsert。
+- Model/Provider 引用统计同时覆盖 `workspace_search_settings.rerank_model_id` / `rerank_provider_id`，避免配置引用被删除保护遗漏。
+- Index Generation 旧 Rerank 快照列仍用于历史兼容，但 SearchService/MultiKnowledgeSearchService 的决策来源是 Workspace Search Settings。
+
 ## 10. 迁移与测试
 
 - 迁移位于 `internal/infrastructure/migrate/migrations/`，版本严格递增，每个 up 有对应 down。

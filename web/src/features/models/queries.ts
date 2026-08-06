@@ -7,7 +7,7 @@ import {
   listProviderModelCatalog,
   type ModelCatalogFilters,
 } from './api'
-import type { ModelScope } from './types'
+import type { ModelScope, ModelType } from './types'
 
 export function modelProvidersQueryOptions(
   scope: ModelScope,
@@ -78,9 +78,15 @@ export function modelsQueryOptions(
   })
 }
 
-export function selectableModelsQueryOptions(workspaceSlug: string) {
+export function selectableModelsQueryOptions(
+  workspaceSlug: string,
+  type: ModelType = 'embedding'
+) {
   return queryOptions({
-    queryKey: ['models', 'workspace', workspaceSlug, 'selectable'],
+    queryKey:
+      type === 'embedding'
+        ? ['models', 'workspace', workspaceSlug, 'selectable']
+        : ['models', 'workspace', workspaceSlug, 'selectable', type],
     queryFn: async () => {
       const providers = await listModelProviders('workspace', workspaceSlug)
       const activeProviders = providers.filter(
@@ -95,7 +101,7 @@ export function selectableModelsQueryOptions(workspaceSlug: string) {
         .flat()
         .filter(
           (model) =>
-            model.type === 'embedding' &&
+            model.type === type &&
             model.status === 'active' &&
             model.provider.status === 'active' &&
             model.available

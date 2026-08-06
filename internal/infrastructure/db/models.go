@@ -178,6 +178,7 @@ func AutoMigratedModels() []any {
 		&InvitationRow{},
 		&ModelProviderRow{},
 		&ModelRow{},
+		&WorkspaceSearchSettingsRow{},
 		&KnowledgeBaseRow{},
 		&IndexGenerationRow{},
 		&DocumentRow{},

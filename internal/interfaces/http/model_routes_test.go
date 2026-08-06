@@ -539,6 +539,7 @@ func TestModelErrorMappingUsesStableSafeCodes(t *testing.T) {
 		{"provider_in_use", domainerrors.ErrProviderInUse, 409, "provider_in_use"},
 		{"rerank_configuration_conflict", domainerrors.ErrRerankConfigurationConflict, 409, "rerank_configuration_conflict"},
 		{"rerank_snapshot_mismatch", domainerrors.ErrRerankSnapshotMismatch, 409, "rerank_snapshot_mismatch"},
+		{"embedding_snapshot_mismatch", domainerrors.ErrEmbeddingSnapshotMismatch, 409, "embedding_snapshot_mismatch"},
 		{"rerank_unavailable", domainerrors.ErrRerankUnavailable, 503, "rerank_unavailable"},
 		{"rerank_rate_limited", domainerrors.ErrRerankRateLimited, 503, "rerank_rate_limited"},
 		{"invalid_rerank_response", domainerrors.ErrInvalidRerankResponse, 502, "invalid_rerank_response"},

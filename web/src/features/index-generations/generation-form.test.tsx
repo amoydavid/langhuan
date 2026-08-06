@@ -96,7 +96,6 @@ describe('GenerationForm', () => {
         final_top_k: 8,
         rrf_k: 60,
       },
-      rerank: { enabled: false },
     })
   })
 

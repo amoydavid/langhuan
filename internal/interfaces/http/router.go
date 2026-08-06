@@ -26,29 +26,30 @@ type Dependencies struct {
 	APIKeyAuth    APIKeyAuthenticator       // Bearer API Key 鉴权器（SessionOrAPIKeyAuth / APIKeyOnlyAuth 共用）
 
 	// resource (workspace-scoped)
-	Workspaces           WorkspaceService
-	WorkspaceReadiness   WorkspaceReadinessHTTPService
-	KnowledgeBases       KnowledgeBaseService
-	KnowledgeBaseSummary KnowledgeBaseSummaryHTTPService
-	DocumentChunks       DocumentChunksHTTPService
-	ModelProviders       ModelProviderHTTPService
-	Models               ModelHTTPService
-	ModelConnectionTests ModelConnectionTestHTTPService
-	DocumentIngest       DocumentIngestService
-	Documents            DocumentQueryService
-	DocumentAssets       DocumentAssetListService
-	AssetGetter          DocumentAssetGetter
-	AssetContentStore    AssetContentStore
-	FAQDocuments         FAQDocumentHTTPService
-	FileTree             FileTreeHTTPService
-	ChunkRevisions       ChunkRevisionHTTPService
-	IndexGenerations     IndexGenerationHTTPService
-	Search               SearchHTTPService
-	MultiSearch          MultiSearchHTTPService
-	Jobs                 JobQueryService
-	MCPHandler           stdhttp.Handler
-	SPA                  fs.FS
-	MaxFileSizeBytes     int64
+	Workspaces              WorkspaceService
+	WorkspaceReadiness      WorkspaceReadinessHTTPService
+	WorkspaceSearchSettings WorkspaceSearchSettingsHTTPService
+	KnowledgeBases          KnowledgeBaseService
+	KnowledgeBaseSummary    KnowledgeBaseSummaryHTTPService
+	DocumentChunks          DocumentChunksHTTPService
+	ModelProviders          ModelProviderHTTPService
+	Models                  ModelHTTPService
+	ModelConnectionTests    ModelConnectionTestHTTPService
+	DocumentIngest          DocumentIngestService
+	Documents               DocumentQueryService
+	DocumentAssets          DocumentAssetListService
+	AssetGetter             DocumentAssetGetter
+	AssetContentStore       AssetContentStore
+	FAQDocuments            FAQDocumentHTTPService
+	FileTree                FileTreeHTTPService
+	ChunkRevisions          ChunkRevisionHTTPService
+	IndexGenerations        IndexGenerationHTTPService
+	Search                  SearchHTTPService
+	MultiSearch             MultiSearchHTTPService
+	Jobs                    JobQueryService
+	MCPHandler              stdhttp.Handler
+	SPA                     fs.FS
+	MaxFileSizeBytes        int64
 }
 
 // NewRouter builds the gin engine wiring:
@@ -186,6 +187,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				readiness := workspaceReadinessHandler{service: deps.WorkspaceReadiness}
 				memberGroup.GET("/readiness", readiness.get)
 			}
+			if deps.WorkspaceSearchSettings != nil {
+				settings := workspaceSearchSettingsHandler{service: deps.WorkspaceSearchSettings}
+				memberGroup.GET("/search-settings", settings.get)
+			}
 			if deps.Memberships != nil {
 				mbH := membershipHandler{memberships: deps.Memberships}
 				memberGroup.GET("/members", mbH.list)
@@ -306,7 +311,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			jobGroup.GET("/jobs/:id", job.get)
 		}
 
-		if deps.ModelProviders != nil || deps.Models != nil || deps.ModelConnectionTests != nil ||
+		if deps.ModelProviders != nil || deps.Models != nil || deps.ModelConnectionTests != nil || deps.WorkspaceSearchSettings != nil ||
 			deps.KnowledgeBases != nil || deps.ChunkRevisions != nil || deps.IndexGenerations != nil {
 			adminGroup := wsGroup.Group("")
 			adminGroup.Use(RequireWorkspaceRole(value.RoleAdmin))
@@ -325,6 +330,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			if deps.ModelConnectionTests != nil {
 				modelH := modelHandler{models: deps.Models, connections: deps.ModelConnectionTests}
 				adminGroup.POST("/models/:model_id/test", modelH.testWorkspace)
+			}
+			if deps.WorkspaceSearchSettings != nil {
+				settings := workspaceSearchSettingsHandler{service: deps.WorkspaceSearchSettings}
+				adminGroup.PUT("/search-settings", settings.update)
 			}
 			if deps.ChunkRevisions != nil {
 				chunks := chunkRevisionHandler{service: deps.ChunkRevisions}

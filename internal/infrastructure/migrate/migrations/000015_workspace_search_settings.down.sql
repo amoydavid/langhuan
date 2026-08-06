@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_workspace_search_settings_rerank_provider;
+DROP INDEX IF EXISTS idx_workspace_search_settings_rerank_model;
+DROP TABLE IF EXISTS workspace_search_settings;

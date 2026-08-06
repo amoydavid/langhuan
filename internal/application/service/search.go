@@ -32,6 +32,7 @@ type SearchServiceDeps struct {
 	Repository     indexport.SearchRepository
 	Resolver       EmbeddingClientResolver
 	RerankResolver RerankClientResolver
+	SearchProfile  SearchProfileResolver
 	Logger         *slog.Logger
 }
 
@@ -40,6 +41,7 @@ type SearchService struct {
 	repository     indexport.SearchRepository
 	resolver       EmbeddingClientResolver
 	rerankResolver RerankClientResolver
+	searchProfile  SearchProfileResolver
 	logger         *slog.Logger
 }
 
@@ -49,7 +51,7 @@ func NewSearchService(deps SearchServiceDeps) *SearchService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SearchService{repository: deps.Repository, resolver: deps.Resolver, rerankResolver: deps.RerankResolver, logger: logger}
+	return &SearchService{repository: deps.Repository, resolver: deps.Resolver, rerankResolver: deps.RerankResolver, searchProfile: deps.SearchProfile, logger: logger}
 }
 
 // Search returns evidence from the active Generation without generating an answer.
@@ -84,23 +86,32 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		return nil, domainerrors.ErrDimensionMismatch
 	}
 	if resolved.ModelConfigHash != "" && generation.ModelConfigHash != "" && resolved.ModelConfigHash != generation.ModelConfigHash {
-		return nil, domainerrors.ErrRerankSnapshotMismatch
+		return nil, domainerrors.ErrEmbeddingSnapshotMismatch
 	}
-	// 启用 Rerank 时解析并校验快照（仅构造客户端，不发远端请求）。
+	// 查询阶段 Rerank 使用 Workspace Search Profile，而不是某个 KnowledgeBase Generation。
+	var rerankSnapshot *model.RerankSnapshot
 	var rerankClient *ResolvedRerankClient
-	if generation.Rerank != nil {
-		stats.rerankEnabled = true
-		if s.rerankResolver == nil {
-			return nil, fmt.Errorf("%w: Rerank resolver 不能为空", domainerrors.ErrValidation)
-		}
-		rerankClient, err = s.rerankResolver.Resolve(ctx, input.WorkspaceID, generation.Rerank.ModelID)
+	if s.searchProfile != nil {
+		rerankSnapshot, err = s.searchProfile.Resolve(ctx, input.WorkspaceID)
 		if err != nil {
 			return nil, err
 		}
-		if rerankClient == nil || rerankClient.ModelID != generation.Rerank.ModelID ||
-			rerankClient.ProviderID != generation.Rerank.ProviderID ||
-			rerankClient.ModelName != generation.Rerank.ModelName ||
-			rerankClient.ModelConfigHash != generation.Rerank.ModelConfigHash {
+	}
+	if rerankSnapshot != nil {
+		stats.rerankEnabled = true
+		stats.rerankModelID = rerankSnapshot.ModelID
+		stats.rerankProviderID = rerankSnapshot.ProviderID
+		if s.rerankResolver == nil {
+			return nil, fmt.Errorf("%w: Rerank resolver 不能为空", domainerrors.ErrValidation)
+		}
+		rerankClient, err = s.rerankResolver.Resolve(ctx, input.WorkspaceID, rerankSnapshot.ModelID)
+		if err != nil {
+			return nil, err
+		}
+		if rerankClient == nil || rerankClient.ModelID != rerankSnapshot.ModelID ||
+			rerankClient.ProviderID != rerankSnapshot.ProviderID ||
+			rerankClient.ModelName != rerankSnapshot.ModelName ||
+			rerankClient.ModelConfigHash != rerankSnapshot.ModelConfigHash {
 			return nil, domainerrors.ErrRerankSnapshotMismatch
 		}
 	}
@@ -194,11 +205,11 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		// Rerank：在 parent grouping 之后、final truncate 之前执行一次重排。
 		stats.groupedCandidateCount = len(results)
 		rankingStage := value.RankingStageRRF
-		if generation.Rerank != nil && rerankClient != nil {
+		if rerankSnapshot != nil && rerankClient != nil {
 			rankables := buildRankablesWithContent(results, groupedSearchContent)
-			candidateTopK := generation.Rerank.CandidateTopK
+			candidateTopK := rerankSnapshot.CandidateTopK
 			rerankStarted := time.Now()
-			ranked, stage, rerankErr := applyRerank(txCtx, rerankClient, rankables, candidateTopK, rerankClient.MaxDocumentChars)
+			ranked, stage, rerankErr := applyRerank(txCtx, rerankClient, query, rankables, candidateTopK, rerankClient.MaxDocumentChars)
 			rerankMS := time.Since(rerankStarted).Milliseconds()
 			rerankCandidateCount := len(rankables)
 			if rerankCandidateCount > candidateTopK {
@@ -215,7 +226,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 					slog.Int64("duration_ms", rerankMS),
 					slog.String("error_class", errorClassOf(rerankErr)),
 				)
-				if generation.Rerank.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
+				if rerankSnapshot.FailureMode == value.RerankFailureFallback && isRerankRecoverable(rerankErr) {
 					rankingStage = value.RankingStageRRFFallback
 					stats.rerankFallback = true
 					s.logger.WarnContext(txCtx, "search.rerank_fallback",

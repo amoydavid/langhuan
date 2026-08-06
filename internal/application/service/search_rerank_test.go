@@ -94,7 +94,7 @@ func TestApplyRerankStableOrderByScoreThenRRF(t *testing.T) {
 		{Result: resultHigh, MatchedSearchContent: []string{"a"}},
 	}
 	client := &ResolvedRerankClient{Client: &recordingRerankClientForSearch{scores: []float64{low, high}}, MaxDocumentChars: 8192}
-	ranked, stage, err := applyRerank(context.Background(), client, rankables, 50, 8192)
+	ranked, stage, err := applyRerank(context.Background(), client, "如何退款", rankables, 50, 8192)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +106,21 @@ func TestApplyRerankStableOrderByScoreThenRRF(t *testing.T) {
 	}
 	if ranked[0].Result.RerankScore == nil || *ranked[0].Result.RerankScore != high {
 		t.Fatalf("result rerank score not written = %#v", ranked[0].Result)
+	}
+}
+
+func TestApplyRerankPassesQueryToClient(t *testing.T) {
+	t.Parallel()
+	clientSpy := &recordingRerankClientForSearch{}
+	client := &ResolvedRerankClient{Client: clientSpy, MaxDocumentChars: 8192}
+	_, _, err := applyRerank(context.Background(), client, "如何配置", []*rankableSearchResult{{
+		Result: &dto.SearchResult{ChunkID: uuid.New()}, MatchedSearchContent: []string{"配置说明"},
+	}}, 50, 8192)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clientSpy.input.Query != "如何配置" {
+		t.Fatalf("query = %q, want original query", clientSpy.input.Query)
 	}
 }
 

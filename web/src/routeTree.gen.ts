@@ -29,6 +29,7 @@ import { Route as authInvitationsTokenRouteImport } from './routes/(auth)/invita
 import { Route as AuthenticatedWorkspacesWorkspaceSlugRouteRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/route'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/index'
 import { Route as AuthenticatedAdminModelsIndexRouteImport } from './routes/_authenticated/admin/models/index'
+import { Route as AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/search-settings'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugMembersRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/members'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugInvitationsRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/invitations'
 import { Route as AuthenticatedAdminModelsProviderIdRouteImport } from './routes/_authenticated/admin/models/$providerId'
@@ -169,6 +170,12 @@ const AuthenticatedAdminModelsIndexRoute =
     id: '/models/',
     path: '/models/',
     getParentRoute: () => AuthenticatedAdminRouteRoute,
+  } as any)
+const AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute =
+  AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRouteImport.update({
+    id: '/search-settings',
+    path: '/search-settings',
+    getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugRouteRoute,
   } as any)
 const AuthenticatedWorkspacesWorkspaceSlugMembersRoute =
   AuthenticatedWorkspacesWorkspaceSlugMembersRouteImport.update({
@@ -411,6 +418,7 @@ export interface FileRoutesByFullPath {
   '/admin/models/$providerId': typeof AuthenticatedAdminModelsProviderIdRoute
   '/workspaces/$workspaceSlug/invitations': typeof AuthenticatedWorkspacesWorkspaceSlugInvitationsRoute
   '/workspaces/$workspaceSlug/members': typeof AuthenticatedWorkspacesWorkspaceSlugMembersRoute
+  '/workspaces/$workspaceSlug/search-settings': typeof AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute
   '/admin/models/': typeof AuthenticatedAdminModelsIndexRoute
   '/workspaces/$workspaceSlug/': typeof AuthenticatedWorkspacesWorkspaceSlugIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteWithChildren
@@ -461,6 +469,7 @@ export interface FileRoutesByTo {
   '/admin/models/$providerId': typeof AuthenticatedAdminModelsProviderIdRoute
   '/workspaces/$workspaceSlug/invitations': typeof AuthenticatedWorkspacesWorkspaceSlugInvitationsRoute
   '/workspaces/$workspaceSlug/members': typeof AuthenticatedWorkspacesWorkspaceSlugMembersRoute
+  '/workspaces/$workspaceSlug/search-settings': typeof AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute
   '/admin/models': typeof AuthenticatedAdminModelsIndexRoute
   '/workspaces/$workspaceSlug': typeof AuthenticatedWorkspacesWorkspaceSlugIndexRoute
   '/workspaces/$workspaceSlug/api-keys/$apiKeyId': typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysApiKeyIdRoute
@@ -513,6 +522,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/models/$providerId': typeof AuthenticatedAdminModelsProviderIdRoute
   '/_authenticated/workspaces/$workspaceSlug/invitations': typeof AuthenticatedWorkspacesWorkspaceSlugInvitationsRoute
   '/_authenticated/workspaces/$workspaceSlug/members': typeof AuthenticatedWorkspacesWorkspaceSlugMembersRoute
+  '/_authenticated/workspaces/$workspaceSlug/search-settings': typeof AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute
   '/_authenticated/admin/models/': typeof AuthenticatedAdminModelsIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/': typeof AuthenticatedWorkspacesWorkspaceSlugIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteWithChildren
@@ -568,6 +578,7 @@ export interface FileRouteTypes {
     | '/admin/models/$providerId'
     | '/workspaces/$workspaceSlug/invitations'
     | '/workspaces/$workspaceSlug/members'
+    | '/workspaces/$workspaceSlug/search-settings'
     | '/admin/models/'
     | '/workspaces/$workspaceSlug/'
     | '/workspaces/$workspaceSlug/kb/$kbId'
@@ -618,6 +629,7 @@ export interface FileRouteTypes {
     | '/admin/models/$providerId'
     | '/workspaces/$workspaceSlug/invitations'
     | '/workspaces/$workspaceSlug/members'
+    | '/workspaces/$workspaceSlug/search-settings'
     | '/admin/models'
     | '/workspaces/$workspaceSlug'
     | '/workspaces/$workspaceSlug/api-keys/$apiKeyId'
@@ -669,6 +681,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/models/$providerId'
     | '/_authenticated/workspaces/$workspaceSlug/invitations'
     | '/_authenticated/workspaces/$workspaceSlug/members'
+    | '/_authenticated/workspaces/$workspaceSlug/search-settings'
     | '/_authenticated/admin/models/'
     | '/_authenticated/workspaces/$workspaceSlug/'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId'
@@ -855,6 +868,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/models/'
       preLoaderRoute: typeof AuthenticatedAdminModelsIndexRouteImport
       parentRoute: typeof AuthenticatedAdminRouteRoute
+    }
+    '/_authenticated/workspaces/$workspaceSlug/search-settings': {
+      id: '/_authenticated/workspaces/$workspaceSlug/search-settings'
+      path: '/search-settings'
+      fullPath: '/workspaces/$workspaceSlug/search-settings'
+      preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRouteImport
+      parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugRouteRoute
     }
     '/_authenticated/workspaces/$workspaceSlug/members': {
       id: '/_authenticated/workspaces/$workspaceSlug/members'
@@ -1233,6 +1253,7 @@ interface AuthenticatedWorkspacesWorkspaceSlugRouteRouteChildren {
   AuthenticatedWorkspacesWorkspaceSlugApiKeysRouteRoute: typeof AuthenticatedWorkspacesWorkspaceSlugApiKeysRouteRouteWithChildren
   AuthenticatedWorkspacesWorkspaceSlugInvitationsRoute: typeof AuthenticatedWorkspacesWorkspaceSlugInvitationsRoute
   AuthenticatedWorkspacesWorkspaceSlugMembersRoute: typeof AuthenticatedWorkspacesWorkspaceSlugMembersRoute
+  AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute: typeof AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute
   AuthenticatedWorkspacesWorkspaceSlugIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugIndexRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteWithChildren
   AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute: typeof AuthenticatedWorkspacesWorkspaceSlugDocumentsDocumentIdRoute
@@ -1251,6 +1272,8 @@ const AuthenticatedWorkspacesWorkspaceSlugRouteRouteChildren: AuthenticatedWorks
       AuthenticatedWorkspacesWorkspaceSlugInvitationsRoute,
     AuthenticatedWorkspacesWorkspaceSlugMembersRoute:
       AuthenticatedWorkspacesWorkspaceSlugMembersRoute,
+    AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute:
+      AuthenticatedWorkspacesWorkspaceSlugSearchSettingsRoute,
     AuthenticatedWorkspacesWorkspaceSlugIndexRoute:
       AuthenticatedWorkspacesWorkspaceSlugIndexRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute:

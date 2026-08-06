@@ -126,12 +126,7 @@ export const indexGenerations = {
       manualEdits: '{{count}} manual edits',
       disabledChunks: '{{count}} disabled',
     },
-    rerankDisabled: 'Rerank: off',
-    rerankCandidate: 'candidate {{count}}',
-    rerankFailure: {
-      fallback: 'fallback to RRF',
-      fail: 'fail on error',
-    },
+    rerankManagedByWorkspace: 'Rerank: controlled by Workspace search settings',
     dialog: {
       title: 'Compare and activate index version',
       description:

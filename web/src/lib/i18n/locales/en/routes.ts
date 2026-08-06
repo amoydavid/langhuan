@@ -111,6 +111,13 @@ export const routes = {
       breadcrumb: 'Models',
       detail: { breadcrumb: 'Connection Details' },
     },
+    searchSettings: {
+      breadcrumb: 'Search settings',
+      eyebrow: 'Workspace configuration',
+      title: 'Search settings',
+      description:
+        'Configure the global Rerank strategy used by single- and multi-KnowledgeBase searches in this Workspace.',
+    },
     apiKeys: {
       breadcrumb: 'API Key',
       new: { breadcrumb: 'Create API Key' },

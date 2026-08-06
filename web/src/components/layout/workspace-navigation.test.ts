@@ -37,15 +37,22 @@ describe('buildWorkspaceNavigation', () => {
             title: 'API Key',
             url: '/workspaces/acme/api-keys',
           }),
+          expect.objectContaining({
+            title: '检索策略',
+            url: '/workspaces/acme/search-settings',
+          }),
         ])
       )
     }
   })
 
-  it('hides the API Key entry from workspace members', () => {
+  it('hides configuration entries from workspace members', () => {
     const groups = buildWorkspaceNavigation('acme', 'member', false)
     expect(groups[0]?.items).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ title: 'API Key' })])
+    )
+    expect(groups[0]?.items).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ title: '检索策略' })])
     )
   })
 })

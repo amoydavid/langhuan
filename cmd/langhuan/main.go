@@ -113,35 +113,36 @@ type runtimeServices struct {
 	chunkRevisionStore   *db.ChunkRevisionDBStore
 	indexGenerationStore *db.IndexGenerationDBStore
 
-	workspaces             *service.WorkspaceService
-	workspaceReadiness     *service.WorkspaceReadinessService
-	knowledgeBaseSummary   *service.KnowledgeBaseSummaryService
-	knowledgeBases         *service.KnowledgeBaseService
-	modelProviders         *service.ModelProviderService
-	models                 *service.ModelService
-	modelConnectionTests   *service.ModelConnectionTestService
-	documents              *service.DocumentService
-	documentAssets         *service.DocumentAssetService
-	jobs                   *service.JobService
-	documentIngest         *service.DocumentIngestService
-	faqDocuments           *service.FAQDocumentService
-	embeddingResolver      service.EmbeddingClientResolver
-	fileTree               *service.FileTreeService
-	chunkRevisions         *service.ChunkRevisionService
-	documentChunks         *service.DocumentChunksService
-	chunkRevisionIndexer   *service.ChunkRevisionIndexService
-	indexGenerations       *service.IndexGenerationService
-	indexGenerationBuilder *service.IndexGenerationBuildService
-	search                 *service.SearchService
-	multiSearch            *service.MultiKnowledgeSearchService
-	retrievalCleanup       *service.RetrievalCleanupService
-	pipeline               *pipeline.DocumentPipeline
-	rawStore               storageport.RawDocumentStore
-	parserRegistry         *parseradapter.Registry
-	assetStore             storageport.AssetStore
-	maxFileSize            int64
-	apiKeys                *service.APIKeyService
-	mcpInlineLimit         int64
+	workspaces              *service.WorkspaceService
+	workspaceReadiness      *service.WorkspaceReadinessService
+	workspaceSearchSettings *service.WorkspaceSearchSettingsService
+	knowledgeBaseSummary    *service.KnowledgeBaseSummaryService
+	knowledgeBases          *service.KnowledgeBaseService
+	modelProviders          *service.ModelProviderService
+	models                  *service.ModelService
+	modelConnectionTests    *service.ModelConnectionTestService
+	documents               *service.DocumentService
+	documentAssets          *service.DocumentAssetService
+	jobs                    *service.JobService
+	documentIngest          *service.DocumentIngestService
+	faqDocuments            *service.FAQDocumentService
+	embeddingResolver       service.EmbeddingClientResolver
+	fileTree                *service.FileTreeService
+	chunkRevisions          *service.ChunkRevisionService
+	documentChunks          *service.DocumentChunksService
+	chunkRevisionIndexer    *service.ChunkRevisionIndexService
+	indexGenerations        *service.IndexGenerationService
+	indexGenerationBuilder  *service.IndexGenerationBuildService
+	search                  *service.SearchService
+	multiSearch             *service.MultiKnowledgeSearchService
+	retrievalCleanup        *service.RetrievalCleanupService
+	pipeline                *pipeline.DocumentPipeline
+	rawStore                storageport.RawDocumentStore
+	parserRegistry          *parseradapter.Registry
+	assetStore              storageport.AssetStore
+	maxFileSize             int64
+	apiKeys                 *service.APIKeyService
+	mcpInlineLimit          int64
 }
 
 type embeddingFactoryCatalog interface {
@@ -375,6 +376,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	indexGenerationStore := db.NewIndexGenerationStore(gormDB)
 	jobRepo := db.NewJobRepository(gormDB)
 	workspaceReadinessRepo := db.NewWorkspaceReadinessRepository(gormDB)
+	workspaceSearchSettingsRepo := db.NewWorkspaceSearchSettingsRepository(gormDB)
 	knowledgeBaseSummaryRepo := db.NewKnowledgeBaseSummaryRepository(gormDB)
 	documentChunksRepo := db.NewDocumentChunksRepository(gormDB)
 
@@ -467,11 +469,12 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Store: indexGenerationStore, Chunker: documentPipeline, Sources: chunkSetRepo,
 		Resolver: embeddingResolver, Index: retrievalRepo,
 	})
+	workspaceSearchSettings := service.NewWorkspaceSearchSettingsService(workspaceSearchSettingsRepo, kbRepo)
 	search := service.NewSearchService(service.SearchServiceDeps{
-		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver, Logger: log,
+		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver, SearchProfile: workspaceSearchSettings, Logger: log,
 	})
 	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
-	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, rerankResolver, apiKeyNameStore, cfg.Search, log)
+	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, rerankResolver, workspaceSearchSettings, apiKeyNameStore, cfg.Search, log)
 	retrievalCleanup := service.NewRetrievalCleanupService(retrievalCleanupRepo, service.RetrievalCleanupOptions{
 		FailedStagingRetention:     cfg.Retrieval.FailedStagingRetention,
 		RetiredGenerationRetention: cfg.Retrieval.RetiredGenerationRetention,
@@ -504,26 +507,27 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		sessionCfg:     cfg.Auth.Session,
 		publicURLs:     publicURLs,
 
-		workspaceRepo:        wsRepo,
-		knowledgeBaseRepo:    kbRepo,
-		modelProviderRepo:    modelProviderRepo,
-		modelRepo:            modelRepo,
-		documentRepo:         documentRepo,
-		documentTaskStore:    db.NewDocumentTaskStore(gormDB),
-		chunkRevisionStore:   chunkRevisionStore,
-		indexGenerationStore: indexGenerationStore,
-		faqRepo:              faqRepo,
-		retrievalRepo:        retrievalRepo,
-		workspaces:           service.NewWorkspaceService(wsRepo),
-		workspaceReadiness:   service.NewWorkspaceReadinessService(workspaceReadinessRepo),
-		knowledgeBaseSummary: service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
-		knowledgeBases:       service.NewKnowledgeBaseService(kbRepo, kbRepo),
-		modelProviders:       service.NewModelProviderService(modelProviderRepo, credentialCipher, providerResolver),
-		models:               service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry, rerankRegistry, providerDescriptors),
-		modelConnectionTests: service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry, rerankRegistry),
-		documents:            service.NewDocumentService(documentRepo, kbRepo),
-		documentAssets:       service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
-		jobs:                 service.NewJobService(jobRepo),
+		workspaceRepo:           wsRepo,
+		knowledgeBaseRepo:       kbRepo,
+		modelProviderRepo:       modelProviderRepo,
+		modelRepo:               modelRepo,
+		documentRepo:            documentRepo,
+		documentTaskStore:       db.NewDocumentTaskStore(gormDB),
+		chunkRevisionStore:      chunkRevisionStore,
+		indexGenerationStore:    indexGenerationStore,
+		faqRepo:                 faqRepo,
+		retrievalRepo:           retrievalRepo,
+		workspaces:              service.NewWorkspaceService(wsRepo),
+		workspaceReadiness:      service.NewWorkspaceReadinessService(workspaceReadinessRepo),
+		workspaceSearchSettings: workspaceSearchSettings,
+		knowledgeBaseSummary:    service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),
+		knowledgeBases:          service.NewKnowledgeBaseService(kbRepo, kbRepo),
+		modelProviders:          service.NewModelProviderService(modelProviderRepo, credentialCipher, providerResolver),
+		models:                  service.NewModelService(modelProviderRepo, modelRepo, embeddingRegistry, rerankRegistry, providerDescriptors),
+		modelConnectionTests:    service.NewModelConnectionTestService(modelRepo, credentialCipher, embeddingRegistry, rerankRegistry),
+		documents:               service.NewDocumentService(documentRepo, kbRepo),
+		documentAssets:          service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
+		jobs:                    service.NewJobService(jobRepo),
 		documentIngest: service.NewDocumentIngestService(service.DocumentIngestServiceDeps{
 			Store:            db.NewDocumentIngestDBStore(gormDB),
 			RawStore:         rawStore,
@@ -700,29 +704,30 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		APIKeyAuth:    services.apiKeys,
 
 		// resource (workspace-scoped)
-		Workspaces:           services.workspaces,
-		WorkspaceReadiness:   services.workspaceReadiness,
-		KnowledgeBaseSummary: services.knowledgeBaseSummary,
-		KnowledgeBases:       services.knowledgeBases,
-		ModelProviders:       services.modelProviders,
-		Models:               services.models,
-		ModelConnectionTests: services.modelConnectionTests,
-		DocumentIngest:       services.documentIngest,
-		Documents:            services.documents,
-		DocumentAssets:       services.documentAssets,
-		AssetGetter:          services.documentAssets,
-		AssetContentStore:    services.assetStore,
-		FAQDocuments:         services.faqDocuments,
-		FileTree:             services.fileTree,
-		ChunkRevisions:       services.chunkRevisions,
-		DocumentChunks:       services.documentChunks,
-		IndexGenerations:     services.indexGenerations,
-		Search:               services.search,
-		MultiSearch:          services.multiSearch,
-		Jobs:                 services.jobs,
-		MCPHandler:           mcpServer.Handler(),
-		SPA:                  webspa.SPA,
-		MaxFileSizeBytes:     services.maxFileSize,
+		Workspaces:              services.workspaces,
+		WorkspaceReadiness:      services.workspaceReadiness,
+		WorkspaceSearchSettings: services.workspaceSearchSettings,
+		KnowledgeBaseSummary:    services.knowledgeBaseSummary,
+		KnowledgeBases:          services.knowledgeBases,
+		ModelProviders:          services.modelProviders,
+		Models:                  services.models,
+		ModelConnectionTests:    services.modelConnectionTests,
+		DocumentIngest:          services.documentIngest,
+		Documents:               services.documents,
+		DocumentAssets:          services.documentAssets,
+		AssetGetter:             services.documentAssets,
+		AssetContentStore:       services.assetStore,
+		FAQDocuments:            services.faqDocuments,
+		FileTree:                services.fileTree,
+		ChunkRevisions:          services.chunkRevisions,
+		DocumentChunks:          services.documentChunks,
+		IndexGenerations:        services.indexGenerations,
+		Search:                  services.search,
+		MultiSearch:             services.multiSearch,
+		Jobs:                    services.jobs,
+		MCPHandler:              mcpServer.Handler(),
+		SPA:                     webspa.SPA,
+		MaxFileSizeBytes:        services.maxFileSize,
 	})
 }
 

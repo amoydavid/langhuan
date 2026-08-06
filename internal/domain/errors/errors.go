@@ -55,4 +55,5 @@ var (
 	ErrRerankInputTooLarge         = stderrors.New("重排输入超过模型限制")
 	ErrRerankConfigurationConflict = stderrors.New("所选知识库的重排配置不一致")
 	ErrRerankSnapshotMismatch      = stderrors.New("重排模型配置与索引快照不一致")
+	ErrEmbeddingSnapshotMismatch   = stderrors.New("Embedding 模型配置与索引快照不一致")
 )

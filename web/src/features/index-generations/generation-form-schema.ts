@@ -43,10 +43,6 @@ export const generationFormSchema = z
     keyword_top_k: z.number().int().min(1).max(200),
     final_top_k: z.number().int().min(1).max(50),
     rrf_k: z.number().int().min(1),
-    rerank_enabled: z.boolean(),
-    rerank_model_id: z.string().optional(),
-    rerank_candidate_top_k: z.number().int().min(50).max(200).optional(),
-    rerank_failure_mode: z.enum(['fallback', 'fail']).optional(),
   })
   .superRefine((values, context) => {
     const maximum = values.enable_parent_child
@@ -72,30 +68,6 @@ export const generationFormSchema = z
           'indexGenerations.generationForm.validation.childLargerThanParent'
         ),
       })
-    }
-    if (values.rerank_enabled) {
-      if (!values.rerank_model_id) {
-        context.addIssue({
-          code: 'custom',
-          path: ['rerank_model_id'],
-          message: i18n.t(
-            'indexGenerations.generationForm.validation.selectRerankModel'
-          ),
-        })
-      }
-      if (
-        typeof values.rerank_candidate_top_k !== 'number' ||
-        values.rerank_candidate_top_k < 50 ||
-        values.rerank_candidate_top_k > 200
-      ) {
-        context.addIssue({
-          code: 'custom',
-          path: ['rerank_candidate_top_k'],
-          message: i18n.t(
-            'indexGenerations.generationForm.validation.candidateTopKRange'
-          ),
-        })
-      }
     }
   })
 
@@ -172,10 +144,6 @@ export function generationFormDefaults(
       8
     ),
     rrf_k: configNumber(baseGeneration.retrieval_config, 'rrf_k', 60),
-    rerank_enabled: baseGeneration.rerank != null,
-    rerank_model_id: baseGeneration.rerank?.model_id,
-    rerank_candidate_top_k: baseGeneration.rerank?.candidate_top_k ?? 50,
-    rerank_failure_mode: baseGeneration.rerank?.failure_mode ?? 'fallback',
   }
 }
 
@@ -199,16 +167,6 @@ export function toCreateGenerationInput(
       final_top_k: values.final_top_k,
       rrf_k: values.rrf_k,
     },
-  }
-  if (values.rerank_enabled) {
-    input.rerank = {
-      enabled: true,
-      model_id: values.rerank_model_id,
-      candidate_top_k: values.rerank_candidate_top_k,
-      failure_mode: values.rerank_failure_mode,
-    }
-  } else {
-    input.rerank = { enabled: false }
   }
   return input
 }

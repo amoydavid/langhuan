@@ -72,6 +72,31 @@ func TestSearchRejectsGenerationSwitchAfterEmbedding(t *testing.T) {
 	}
 }
 
+func TestSearchClassifiesEmbeddingSnapshotDriftSeparatelyFromRerank(t *testing.T) {
+	workspaceID, knowledgeBaseID := uuid.New(), uuid.New()
+	modelID, providerID := uuid.New(), uuid.New()
+	generation := &model.IndexGeneration{
+		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID,
+		EmbeddingModelID: modelID, ProviderID: providerID, ModelName: "embed",
+		EmbeddingDimension: 1024, ModelConfigHash: "stored-embedding-config", Status: value.IndexGenerationReady,
+		RetrievalConfig: map[string]any{"fts_config": "simple", "vector_top_k": 2, "keyword_top_k": 2, "final_top_k": 10, "rrf_k": 60},
+	}
+	service := NewSearchService(SearchServiceDeps{
+		Repository: &searchRepositoryFake{generation: generation},
+		Resolver: &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{
+			Client: &chunkRevisionEmbeddingSpy{dimension: 1024}, ModelID: modelID, ProviderID: providerID,
+			ModelName: "embed", ModelConfigHash: "current-embedding-config", Dimensions: 1024,
+		}},
+	})
+
+	_, err := service.Search(context.Background(), SearchInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID, Query: "query",
+	})
+	if !errors.Is(err, domainerrors.ErrEmbeddingSnapshotMismatch) {
+		t.Fatalf("Search error = %v, want ErrEmbeddingSnapshotMismatch", err)
+	}
+}
+
 func TestSearchUsesActiveGenerationDefaultsAndReturnsFusedEvidence(t *testing.T) {
 	workspaceID, knowledgeBaseID, generationID := uuid.New(), uuid.New(), uuid.New()
 	modelID, providerID := uuid.New(), uuid.New()

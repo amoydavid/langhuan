@@ -38,6 +38,7 @@ export const common = {
     navKnowledgeBases: '知识库',
     navModels: '模型',
     navMembers: '成员',
+    navSearchSettings: '检索策略',
     navInvitations: '邀请',
     navWorkspace: '工作区',
     navPlatformAdmin: '平台管理',

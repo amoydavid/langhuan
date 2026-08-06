@@ -4,6 +4,7 @@ import {
   KeyRound,
   LayoutDashboard,
   MailPlus,
+  SlidersHorizontal,
   Users,
 } from 'lucide-react'
 import type { Role } from '@/features/auth/types'
@@ -47,6 +48,11 @@ export function buildWorkspaceNavigation(
       icon: MailPlus,
     })
     items.push({ title: 'API Key', url: `${base}/api-keys`, icon: KeyRound })
+    items.push({
+      title: i18n.t('common.layout.navSearchSettings'),
+      url: `${base}/search-settings`,
+      icon: SlidersHorizontal,
+    })
   }
   return [
     { title: i18n.t('common.layout.navWorkspace'), items },

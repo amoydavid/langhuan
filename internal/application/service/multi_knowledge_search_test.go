@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 
@@ -14,6 +15,22 @@ import (
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
 	indexport "github.com/dajee/langhuan/internal/ports/index"
 )
+
+type multiSearchProfileStub struct{ snapshot *model.RerankSnapshot }
+
+func (r *multiSearchProfileStub) Resolve(context.Context, uuid.UUID) (*model.RerankSnapshot, error) {
+	return r.snapshot.Clone(), nil
+}
+
+type multiSearchRerankResolverStub struct {
+	workspaceID uuid.UUID
+	client      *ResolvedRerankClient
+}
+
+func (r *multiSearchRerankResolverStub) Resolve(_ context.Context, workspaceID, _ uuid.UUID) (*ResolvedRerankClient, error) {
+	r.workspaceID = workspaceID
+	return r.client, nil
+}
 
 // fakeMultiSearchRepository 记录 embedding 调用次数与每库候选。
 type fakeMultiSearchRepository struct {
@@ -116,7 +133,7 @@ func newMultiSearchFixture(groupKeys []embeddingGroupKey) (*MultiKnowledgeSearch
 		}
 	}
 	names := &fakeAPIKeyNameStore{kbNames: map[uuid.UUID]string{}}
-	svc := NewMultiKnowledgeSearchService(repo, resolver, nil, names, config.SearchConfig{
+	svc := NewMultiKnowledgeSearchService(repo, resolver, nil, nil, names, config.SearchConfig{
 		MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60,
 	}, nil)
 	return svc, repo, resolver
@@ -152,6 +169,37 @@ func TestMultiSearchEmbedsOncePerSnapshotGroup(t *testing.T) {
 	// 每条结果带 KB 来源。
 	for _, r := range results {
 		require.NotEqual(t, uuid.Nil, r.KnowledgeBaseID)
+	}
+}
+
+func TestMultiSearchDifferentEmbeddingsUseOneWorkspaceRerank(t *testing.T) {
+	workspaceID := uuid.New()
+	groupA := embeddingGroupKey{EmbeddingModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "model-a", EmbeddingDimension: 4, ModelConfigHash: "hash-a"}
+	groupB := embeddingGroupKey{EmbeddingModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "model-b", EmbeddingDimension: 3, ModelConfigHash: "hash-b"}
+	repo := &fakeMultiSearchRepository{activeGens: map[uuid.UUID]*model.IndexGeneration{}, vectorByKB: map[uuid.UUID][]indexport.SearchCandidate{}, keywordByKB: map[uuid.UUID][]indexport.SearchCandidate{}, evidenceByEntry: map[uuid.UUID]indexport.SearchEvidence{}}
+	resolver := &fakeMultiResolver{byModel: map[uuid.UUID]*ResolvedEmbeddingClient{}}
+	for _, group := range []embeddingGroupKey{groupA, groupB} {
+		vector := make([]float32, group.EmbeddingDimension)
+		resolver.byModel[group.EmbeddingModelID] = &ResolvedEmbeddingClient{Client: &countingEmbeddingClient{vector: vector}, ModelID: group.EmbeddingModelID, ProviderID: group.ProviderID, ModelName: group.ModelName, Dimensions: group.EmbeddingDimension}
+	}
+	names := &fakeAPIKeyNameStore{kbNames: map[uuid.UUID]string{}}
+	rerankModelID, rerankProviderID := uuid.New(), uuid.New()
+	rerankClient := &recordingRerankClientForSearch{scores: []float64{0.9, 0.8}}
+	rerankResolver := &multiSearchRerankResolverStub{client: &ResolvedRerankClient{Client: rerankClient, ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank", ModelConfigHash: "rhash", MaxDocumentChars: 8192}}
+	service := NewMultiKnowledgeSearchService(repo, resolver, rerankResolver, &multiSearchProfileStub{snapshot: &model.RerankSnapshot{ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank", ModelConfigHash: "rhash", CandidateTopK: 50, FailureMode: value.RerankFailureFail}}, names, config.SearchConfig{MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60}, slog.Default())
+	kbA, kbB, entryA, entryB := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	repo.activeGens[kbA] = makeGeneration(workspaceID, kbA, groupA)
+	repo.activeGens[kbB] = makeGeneration(workspaceID, kbB, groupB)
+	repo.vectorByKB[kbA] = []indexport.SearchCandidate{{EntryID: entryA, Score: 0.9}}
+	repo.vectorByKB[kbB] = []indexport.SearchCandidate{{EntryID: entryB, Score: 0.8}}
+	repo.evidenceByEntry[entryA] = indexport.SearchEvidence{EntryID: entryA, ChunkID: uuid.New(), Content: "候选 A", SearchContent: "候选 A"}
+	repo.evidenceByEntry[entryB] = indexport.SearchEvidence{EntryID: entryB, ChunkID: uuid.New(), Content: "候选 B", SearchContent: "候选 B"}
+	results, err := service.Search(context.Background(), MultiKnowledgeSearchInput{WorkspaceID: workspaceID, Access: value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, KnowledgeBaseIDs: []uuid.UUID{kbA, kbB}, Query: "跨模型查询"})
+	if err != nil || len(results) != 2 {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	if rerankResolver.workspaceID != workspaceID || rerankClient.calls != 1 || rerankClient.input.Query != "跨模型查询" {
+		t.Fatalf("workspace=%s calls=%d query=%q", rerankResolver.workspaceID, rerankClient.calls, rerankClient.input.Query)
 	}
 }
 

@@ -160,6 +160,7 @@ func modelErrorDetails(err error) (int, string, string, bool) {
 		{domainerrors.ErrProviderInUse, stdhttp.StatusConflict, "provider_in_use"},
 		{domainerrors.ErrRerankConfigurationConflict, stdhttp.StatusConflict, "rerank_configuration_conflict"},
 		{domainerrors.ErrRerankSnapshotMismatch, stdhttp.StatusConflict, "rerank_snapshot_mismatch"},
+		{domainerrors.ErrEmbeddingSnapshotMismatch, stdhttp.StatusConflict, "embedding_snapshot_mismatch"},
 		{domainerrors.ErrRerankUnavailable, stdhttp.StatusServiceUnavailable, "rerank_unavailable"},
 		{domainerrors.ErrRerankRateLimited, stdhttp.StatusServiceUnavailable, "rerank_rate_limited"},
 		{domainerrors.ErrInvalidRerankResponse, stdhttp.StatusBadGateway, "invalid_rerank_response"},

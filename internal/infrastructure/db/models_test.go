@@ -46,6 +46,7 @@ func TestAutoMigratedModelsCoverRequiredTables(t *testing.T) {
 		"sessions",
 		"workspace_memberships",
 		"workspace_invitations",
+		"workspace_search_settings",
 	}
 	if len(got) != len(requiredTables) {
 		t.Fatalf("AutoMigratedModels returned %d tables, want exactly %d: %v", len(got), len(requiredTables), got)

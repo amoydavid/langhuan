@@ -64,6 +64,7 @@ type MultiKnowledgeSearchService struct {
 	repository       indexport.SearchRepository
 	resolver         EmbeddingClientResolver
 	rerankResolver   RerankClientResolver
+	searchProfile    SearchProfileResolver
 	names            APIKeyNameStore
 	logger           *slog.Logger
 	multiLimit       int
@@ -76,6 +77,7 @@ func NewMultiKnowledgeSearchService(
 	repository indexport.SearchRepository,
 	resolver EmbeddingClientResolver,
 	rerankResolver RerankClientResolver,
+	searchProfile SearchProfileResolver,
 	names APIKeyNameStore,
 	cfg config.SearchConfig,
 	logger *slog.Logger,
@@ -96,7 +98,7 @@ func NewMultiKnowledgeSearchService(
 		logger = slog.Default()
 	}
 	return &MultiKnowledgeSearchService{
-		repository: repository, resolver: resolver, rerankResolver: rerankResolver, names: names,
+		repository: repository, resolver: resolver, rerankResolver: rerankResolver, searchProfile: searchProfile, names: names,
 		logger: logger, multiLimit: limit, multiConcurrency: concurrency, mergeRRFK: rrfK,
 	}
 }
@@ -143,10 +145,13 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 		return nil, err
 	}
 
-	// 在发起 embedding 或检索前，校验多库 Rerank 配置一致性。
-	rerankPlan, err := planMultiKnowledgeRerank(snapshots)
-	if err != nil {
-		return nil, err
+	// 查询阶段 Rerank 只读取 Workspace Search Profile；各知识库可使用不同 Embedding。
+	var rerankSnapshot *model.RerankSnapshot
+	if s.searchProfile != nil {
+		rerankSnapshot, err = s.searchProfile.Resolve(ctx, input.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 按五元组分组。
@@ -173,8 +178,11 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 		return nil, err
 	}
 	results = groupMultiSearchResults(results)
-	// 全局一次重排：所有启用 KB 的 Rerank 快照完全一致时才调用。
-	results = s.applyMultiKnowledgeRerank(ctx, results, rerankPlan)
+	// 全局一次重排：所有知识库共享 Workspace Search Profile 的 Rerank 模型。
+	results, err = s.applyMultiKnowledgeRerank(ctx, input.WorkspaceID, query, results, rerankSnapshot)
+	if err != nil {
+		return nil, err
+	}
 	if finalTopK < len(results) {
 		results = results[:finalTopK]
 	}

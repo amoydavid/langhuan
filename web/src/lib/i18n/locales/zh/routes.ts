@@ -94,6 +94,13 @@ export const routes = {
       breadcrumb: '模型',
       detail: { breadcrumb: '连接详情' },
     },
+    searchSettings: {
+      breadcrumb: '检索策略',
+      eyebrow: 'Workspace 配置',
+      title: '检索策略',
+      description:
+        '配置此 Workspace 单库和多库 knowledge_search 使用的全局 Rerank 策略。',
+    },
     apiKeys: {
       breadcrumb: 'API Key',
       new: { breadcrumb: '创建 API Key' },

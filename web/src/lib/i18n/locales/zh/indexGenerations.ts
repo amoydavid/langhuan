@@ -108,12 +108,7 @@ export const indexGenerations = {
       manualEdits: '{{count}} 条人工修订',
       disabledChunks: '{{count}} 条停用',
     },
-    rerankDisabled: 'Rerank：关闭',
-    rerankCandidate: '候选 {{count}}',
-    rerankFailure: {
-      fallback: '回退到 RRF',
-      fail: '失败即报错',
-    },
+    rerankManagedByWorkspace: 'Rerank：由 Workspace 检索策略控制',
     dialog: {
       title: '比较并激活索引版本',
       description: '激活后，新的检索请求会使用候选版本；历史版本仍保留。',

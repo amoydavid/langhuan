@@ -28,6 +28,21 @@ func TestDecodeProviderNormalizesSiliconFlowOnce(t *testing.T) {
 	}
 }
 
+func TestDecodeProviderNormalizesLegacyVersionedBaseURL(t *testing.T) {
+	t.Parallel()
+	config, _, err := DecodeProvider(
+		value.ModelScopePlatform,
+		json.RawMessage(`{"base_url":"https://api.siliconflow.cn/v1"}`),
+		json.RawMessage(`{"api_key":"secret"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config["base_url"] != "https://api.siliconflow.cn" {
+		t.Fatalf("base_url = %#v, want origin without duplicated /v1 prefix", config["base_url"])
+	}
+}
+
 func TestDecodeProviderRejectsUnknownAndUnsafeConfiguration(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
