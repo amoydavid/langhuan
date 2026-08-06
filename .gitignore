@@ -17,5 +17,3 @@ tmp/
 .data
 .codex/
 .reasonix/
-# 内部 AI 辅助开发文档：本地保留，不随开源仓库发布
-docs/superpowers/
