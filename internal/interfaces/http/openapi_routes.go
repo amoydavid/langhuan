@@ -233,9 +233,11 @@ func (b *specBuilder) securityFor(sec opSec) *openapi3.SecurityRequirements {
 		return openapi3.NewSecurityRequirements().With(openapi3.SecurityRequirement{secSessionCookie: []string{}})
 	case secBearerOrSession:
 		// 任一凭证即可：两个独立 requirement（OR 语义）。
+		// Bearer 放在第一项，让 Scalar/Swagger 这类 UI 为程序化入口
+		// 默认生成 Authorization: Bearer 示例；Session 仍作为兼容选项保留。
 		reqs := openapi3.NewSecurityRequirements()
-		reqs.With(openapi3.SecurityRequirement{secSessionCookie: []string{}})
 		reqs.With(openapi3.SecurityRequirement{secBearer: []string{}})
+		reqs.With(openapi3.SecurityRequirement{secSessionCookie: []string{}})
 		return reqs
 	}
 	return nil

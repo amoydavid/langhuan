@@ -167,6 +167,13 @@ func TestSecurityRequirements(t *testing.T) {
 	kb := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/knowledge-bases").Post
 	if kb.Security == nil || len(*kb.Security) != 2 {
 		t.Errorf("bearer-or-session 路由应有 2 条 OR requirement，实际 %d", lenOfSec(kb.Security))
+	} else {
+		if _, ok := (*kb.Security)[0][secBearer]; !ok {
+			t.Errorf("程序化路由的第一 security requirement 应为 BearerAuth，实际 %v", *kb.Security)
+		}
+		if _, ok := (*kb.Security)[1][secSessionCookie]; !ok {
+			t.Errorf("程序化路由的第二 security requirement 应为 SessionCookie，实际 %v", *kb.Security)
+		}
 	}
 }
 
