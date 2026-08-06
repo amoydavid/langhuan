@@ -139,6 +139,21 @@ type=embedding&status=active&scope=platform
 
 服务端强制构造 `ModelListFilter{Type: embedding, Status: active, Scope: platform}`；Bearer 传入 `type=rerank`、`status=disabled`、`scope=workspace`、`management=true` 或 `type=all` 均返回 `400 validation_error`。响应不返回 Provider config 或 credentials。
 
+### 4.4 OpenAPI 声明
+
+这些接口是对外 REST 合同，路由实现和 OpenAPI 文档必须同一提交更新。当前 OpenAPI 的维护入口是 `internal/interfaces/http/openapi_routes.go`，字段 schema 由 `openapi_spec.go` 反射生成，不能只修改 Gin `router.go`。
+
+OpenAPI 声明必须覆盖：
+
+- 新增/迁移接口的 method、完整 workspace/KB-qualified path、summary、request body、成功 status、response DTO 和 `secBearerOrSession` security（旧 FAQ 无 KB 路径删除）。
+- Bearer 路由的所需 scope；由于当前 Bearer scheme 是 HTTP bearer 而非 OAuth2，使用 operation extension `x-langhuan-required-scopes` 表达 `knowledge_bases:read`、`knowledge_bases:write`、`documents:read` 或 `documents:write`，同时在 description 保留 Session 兼容说明。
+- 所有 path 参数：`workspace_slug`、`id`、`document_id`、`node_id`；以及查询参数的名称、位置、类型、枚举、默认值和是否必填。
+- `kind=file|faq|web`；chunks 的 `enabled`、`cursor`、`limit`；jobs 的 `document_id`、`status`、`cursor`、`limit`；models 的 `type`、`status`、`scope`，并说明 Bearer 精确组合约束。
+- `createTextDocumentRequest` 的 Markdown 字段 schema；复用现有 `IngestDocumentResult`、FAQ、FileTree、Summary、ChunkPage、JobSummaryPage、Model DTO schema，不重复手写字段结构。
+- 通用 `400/401/403/404/409/500` 错误响应及 `errorBody` schema；Bearer 路由的 `401/403/404` 必须在文档中可见。
+
+为承载这些元数据，`op` 需要增加轻量的 query/path parameter 和 required scope 描述字段；`add` 负责将其转换为 OpenAPI Parameter/extension。`openapi_spec.go` 的 `APIScope` enum 必须加入 `ScopeKnowledgeBasesRead`。新增或迁移的每条路由都必须在 `openapi_test.go` 中有 path、method、security、参数和 schema 断言。
+
 ## 5. 分层改造合同
 
 ### 5.1 KnowledgeBase
@@ -200,4 +215,5 @@ E2E 至少覆盖以下完整链路：
 - Session 既有行为不回归，Bearer 的 scope、绑定范围和稳定错误码全部通过测试。
 - 文本导入复用现有异步流水线，无同步解析或重复数据库状态机。
 - 文档 kind 过滤下推到 Repository，模型列表 Bearer 过滤由 service 强制执行。
+- 每条对外路由都有对应 OpenAPI operation；OpenAPI path、security、scope extension、参数枚举和 DTO schema 与实际路由一致。
 - `go test ./...`、`go test -tags=integration ./...`、`go vet ./...`、`git diff --check` 通过；集成测试只使用临时容器。

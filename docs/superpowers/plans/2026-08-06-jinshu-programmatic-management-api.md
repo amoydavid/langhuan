@@ -18,6 +18,7 @@
 - 文本导入只支持 Markdown，使用 ingest.max_file_size_bytes，必须复用 DocumentIngestService.Ingest，HTTP 不等待解析完成。
 - 数据库集成/E2E 测试只能使用测试运行期临时 Docker PostgreSQL（pgvector + zhparser）和 Redis；未设置 LANGHUAN_TEST_DATABASE_DSN 时不得回退到 config.yaml。
 - 不新增数据库迁移，不实现 KnowledgeBase 删除、Chunk 写、Generation 写或 search-settings 写。
+- 每条对外 REST 路由必须同步维护 internal/interfaces/http/openapi_routes.go；OpenAPI 的 security、required scope extension、path/query 参数、request/response schema 与 Gin 路由保持一致。
 
 ---
 
@@ -35,6 +36,8 @@
 | internal/interfaces/http/knowledge_base.go、document.go、faq_document_handler.go、model_handler.go | 请求解析、主体分流、DTO 响应 |
 | internal/interfaces/http/file_tree_handler.go、knowledge_base_summary_handler.go、document_chunks_handler.go | KB 子资源入口统一 |
 | internal/interfaces/http/*_test.go | handler/service 合同测试 |
+| internal/interfaces/http/openapi_routes.go、openapi_spec.go | 对外路由 operation、参数、scope extension 与反射 schema |
+| internal/interfaces/http/openapi_test.go | OpenAPI path/security/parameter/schema 一致性测试 |
 | cmd/langhuan/jinshu_management_api_e2e_test.go | 真实 HTTP/worker/数据库/Redis E2E |
 | docs/API_ACCESS.md | 程序化 API 使用合同 |
 
@@ -170,7 +173,25 @@ Interfaces:
 - [ ] Step 5: Run go test ./internal/application/service ./internal/interfaces/http -run 'Model.*Selectable|Model.*List' -count=1. Expected: PASS.
 - [ ] Step 6: Commit with: feat(model): 开放受限 Bearer Embedding 模型列表.
 
-### Task 7: HTTP route matrix and error-contract tests
+### Task 7: OpenAPI 声明与一致性测试
+
+Files:
+- Modify: internal/interfaces/http/openapi_routes.go
+- Modify: internal/interfaces/http/openapi_spec.go
+- Modify: internal/interfaces/http/openapi_test.go
+
+Interfaces:
+- Extend the hand-written op metadata with path/query parameters and required scopes, while keeping field schemas generated from Go structs.
+- Keep secBearerOrSession for every Session/Bearer route and expose required scopes through operation extension x-langhuan-required-scopes.
+
+- [ ] Step 1: Add a route metadata type for parameters. It must represent name, in=path/query, required, scalar schema type/format, enum values and description; path parameters are required, kind/type/status/scope enums are explicit.
+- [ ] Step 2: Add required scope metadata and attach x-langhuan-required-scopes in specBuilder.add. Add knowledge_bases:read to schemaCustomizer's APIScope enum.
+- [ ] Step 3: Update knowledgeBaseOps, documentOps, faqOps, fileTreeOps, chunkOps, jobOps and modelOps. Use the KB-qualified FAQ paths; declare text request/response; declare kind, enabled/cursor/limit, document_id/status/cursor/limit and model type/status/scope parameters.
+- [ ] Step 4: Add tests in openapi_test.go for every new/migrated path: operation exists, old FAQ path is absent, security has the Session/Bearer OR pair, required scope extension is exact, path parameters are required, query enums/defaults are present, and response/request schemas resolve to the expected DTO shapes.
+- [ ] Step 5: Run go test ./internal/interfaces/http -run 'OpenAPI|Spec' -count=1. Expected: PASS and kin-openapi loader accepts the generated document.
+- [ ] Step 6: Commit with: feat(openapi): 声明 jinshu 程序化接口合同.
+
+### Task 8: HTTP route matrix and error-contract tests
 
 Files:
 - Modify: internal/interfaces/http/router_test.go
@@ -184,7 +205,7 @@ Files:
 - [ ] Step 4: Run go test ./internal/interfaces/http -count=1. Expected: PASS.
 - [ ] Step 5: Commit with: test(http): 覆盖 jinshu Bearer 路由与错误合同.
 
-### Task 8: 完整 HTTP/Worker/Database/Redis E2E（必须新增）
+### Task 9: 完整 HTTP/Worker/Database/Redis E2E（必须新增）
 
 Files:
 - Create: cmd/langhuan/jinshu_management_api_e2e_test.go with //go:build integration
@@ -205,7 +226,7 @@ Interfaces:
 - [ ] Step 8: Run make test-image && go test -tags=integration ./cmd/langhuan -run 'JinshuManagementAPI' -count=1. Expected: PASS against disposable PostgreSQL + Redis.
 - [ ] Step 9: Commit with: test(e2e): 覆盖 jinshu 管理面程序化 API 全链路.
 
-### Task 9: 更新程序化访问文档
+### Task 10: 更新程序化访问文档
 
 Files:
 - Modify: docs/API_ACCESS.md
@@ -216,7 +237,7 @@ Files:
 - [ ] Step 3: Cross-check every documented method/path/scope against route registration and a test row.
 - [ ] Step 4: Commit with: docs(api): 补充 jinshu 程序化管理接口合同.
 
-### Task 10: 全量验证与交付检查
+### Task 11: 全量验证与交付检查
 
 Files:
 - Modify: none unless a preceding test or documentation check identifies a concrete defect.
