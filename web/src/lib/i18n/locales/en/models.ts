@@ -94,7 +94,7 @@ export const models = {
     credentialSeparator: ', ',
     credentialsNote:
       'The API never returns credential plaintext; new credentials are written only when you explicitly choose to replace them.',
-    modelsTitle: 'Embedding models',
+    modelsTitle: 'Models',
     modelsDescription:
       'Only models under the current connection are listed; disabled records keep their reference information.',
     addModelButton: 'Add model',

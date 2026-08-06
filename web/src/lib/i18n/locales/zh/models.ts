@@ -86,7 +86,7 @@ export const models = {
     credentialSeparator: '、',
     credentialsNote:
       'API 不返回凭证明文；编辑时只有主动选择替换才会写入新凭证。',
-    modelsTitle: 'Embedding 模型',
+    modelsTitle: '模型',
     modelsDescription: '仅列出当前连接下的模型；已停用记录仍保留引用信息。',
     addModelButton: '添加模型',
     testPassed: '连接测试通过',

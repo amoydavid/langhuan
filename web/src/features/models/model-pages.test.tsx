@@ -56,6 +56,12 @@ describe('ModelProviderDetailContent', () => {
       />
     )
     await expect.element(screen.getByText('此连接下还没有模型。')).toBeVisible()
+    await expect
+      .element(screen.getByRole('heading', { name: '模型' }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole('heading', { name: 'Embedding 模型' }))
+      .not.toBeInTheDocument()
     await expect.element(screen.getByText('连接配置')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '连接设置' }))
     await expect.element(screen.getByText('连接配置')).toBeVisible()
