@@ -137,6 +137,18 @@ func (h modelHandler) listSelectable(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if authCtx.IsAPIKey() {
+		if c.Query("management") != "" || c.Query("type") != string(value.ModelTypeEmbedding) || c.Query("status") != string(value.ModelStatusActive) || c.Query("scope") != string(value.ModelScopePlatform) || c.Query("q") != "" || c.Query("provider_id") != "" {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "Bearer 模型列表仅支持 type=embedding、status=active、scope=platform")
+			return
+		}
+		embedding, active, platform := value.ModelTypeEmbedding, value.ModelStatusActive, value.ModelScopePlatform
+		items, err := h.models.ListPlatformModels(c.Request.Context(), service.ModelListFilter{
+			Type: &embedding, Status: &active, Scope: &platform,
+		})
+		writeModelList(c, items, err)
+		return
+	}
 	rawType := strings.TrimSpace(c.Query("type"))
 	management, err := parseOptionalBool(c.DefaultQuery("management", "false"))
 	if err != nil {

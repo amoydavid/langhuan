@@ -25,7 +25,7 @@ type DocumentIngestService interface {
 
 type DocumentQueryService interface {
 	Get(ctx context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.Document, error)
-	List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*dto.Document, error)
+	List(ctx context.Context, filter service.DocumentListFilter) ([]*dto.Document, error)
 	Delete(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) error
 }
 
@@ -53,6 +53,55 @@ type documentHandler struct {
 	maxFileSizeBytes  int64
 }
 
+type ingestTextDocumentRequest struct {
+	Title        string     `json:"title"`
+	Content      string     `json:"content"`
+	ContentType  string     `json:"content_type"`
+	ParentNodeID *uuid.UUID `json:"parent_node_id"`
+}
+
+func (h documentHandler) ingestText(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	kbID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
+		return
+	}
+	var req ingestTextDocumentRequest
+	if err := decodeStrictJSON(c, &req); err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "请求 JSON 无效")
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Content) == "" || strings.TrimSpace(req.ContentType) != "markdown" {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "title、content 和 content_type=markdown 为必填")
+		return
+	}
+	content := []byte(req.Content)
+	limit := h.maxFileSizeBytes
+	if limit <= 0 {
+		limit = defaultMaxFileSizeBytes
+	}
+	if int64(len(content)) > limit {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "content 超过大小限制")
+		return
+	}
+	result, err := h.ingestService.Ingest(c.Request.Context(), service.IngestDocumentInput{
+		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: kbID,
+		Title: strings.TrimSpace(req.Title), FileName: strings.TrimSpace(req.Title) + ".md",
+		ContentType: "text/markdown", SourceType: "api", Reader: strings.NewReader(req.Content),
+		SizeBytes: int64(len(content)), ParentNodeID: req.ParentNodeID, NodeName: strings.TrimSpace(req.Title),
+	})
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusCreated, result)
+}
+
 func (h documentHandler) list(c *gin.Context) {
 	authCtx, ok := authFromContext(c)
 	if !ok {
@@ -64,7 +113,16 @@ func (h documentHandler) list(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
 		return
 	}
-	items, err := h.queryService.List(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID)
+	filter := service.DocumentListFilter{WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID}
+	if raw := strings.TrimSpace(c.Query("kind")); raw != "" {
+		kind := value.DocumentKind(raw)
+		if err := kind.Validate(); err != nil {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "kind 必须是 file、faq 或 web")
+			return
+		}
+		filter.Kind = &kind
+	}
+	items, err := h.queryService.List(c.Request.Context(), filter)
 	if err != nil {
 		writeServiceError(c, err)
 		return

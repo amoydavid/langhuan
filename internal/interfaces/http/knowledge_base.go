@@ -15,8 +15,8 @@ import (
 
 type KnowledgeBaseService interface {
 	Create(ctx context.Context, input service.CreateKnowledgeBaseInput) (*dto.KnowledgeBase, error)
-	Get(ctx context.Context, workspaceID uuid.UUID, id uuid.UUID) (*dto.KnowledgeBase, error)
-	List(ctx context.Context, workspaceID uuid.UUID) ([]*dto.KnowledgeBase, error)
+	Get(ctx context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.KnowledgeBase, error)
+	List(ctx context.Context, access value.ResourceAccess) ([]*dto.KnowledgeBase, error)
 	UpdateBasics(ctx context.Context, input service.UpdateKnowledgeBaseBasicsInput) (*dto.KnowledgeBase, error)
 }
 
@@ -102,7 +102,7 @@ func (h knowledgeBaseHandler) list(c *gin.Context) {
 		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
-	items, err := h.service.List(c.Request.Context(), authCtx.WorkspaceID)
+	items, err := h.service.List(c.Request.Context(), authCtx.ResourceAccess())
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -126,7 +126,7 @@ func (h knowledgeBaseHandler) get(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
 		return
 	}
-	kb, err := h.service.Get(c.Request.Context(), authCtx.WorkspaceID, id)
+	kb, err := h.service.Get(c.Request.Context(), authCtx.ResourceAccess(), id)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -161,6 +161,7 @@ func (h knowledgeBaseHandler) patch(c *gin.Context) {
 	result, err := h.service.UpdateBasics(c.Request.Context(), service.UpdateKnowledgeBaseBasicsInput{
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: id,
 		Name: req.Name, Description: req.Description, ActorRole: authCtx.Role,
+		Access: authCtx.ResourceAccess(), IsAPIKey: authCtx.IsAPIKey(),
 	})
 	if err != nil {
 		writeServiceError(c, err)

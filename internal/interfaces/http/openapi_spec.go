@@ -116,7 +116,7 @@ func schemaCustomizer(name string, t reflect.Type, tag reflect.StructTag, schema
 		applyStringEnum(schema, value.RoleMember, value.RoleAdmin, value.RoleOwner)
 	case reflect.TypeFor[value.APIScope]():
 		applyStringEnum(schema,
-			value.ScopeKnowledgeBasesWrite, value.ScopeDocumentsRead,
+			value.ScopeKnowledgeBasesRead, value.ScopeKnowledgeBasesWrite, value.ScopeDocumentsRead,
 			value.ScopeDocumentsWrite, value.ScopeSearchRead)
 	case reflect.TypeFor[value.ChunkRole]():
 		applyStringEnum(schema, value.ChunkRoleParent, value.ChunkRoleChild, value.ChunkRoleFlat)

@@ -116,10 +116,17 @@ func (r *fakeKnowledgeBaseRepository) GetResolved(ctx context.Context, workspace
 	return &model.ResolvedKnowledgeBase{KnowledgeBase: kb, EmbeddingModel: r.models[kb.EmbeddingModelID]}, nil
 }
 
-func (r *fakeKnowledgeBaseRepository) ListResolved(_ context.Context, workspaceID uuid.UUID) ([]*model.ResolvedKnowledgeBase, error) {
+func (r *fakeKnowledgeBaseRepository) ListResolved(_ context.Context, workspaceID uuid.UUID, allowedIDs []uuid.UUID) ([]*model.ResolvedKnowledgeBase, error) {
 	result := make([]*model.ResolvedKnowledgeBase, 0)
 	for _, kb := range r.items {
-		if kb.WorkspaceID == workspaceID {
+		allowed := allowedIDs == nil
+		for _, allowedID := range allowedIDs {
+			if allowedID == kb.ID {
+				allowed = true
+				break
+			}
+		}
+		if kb.WorkspaceID == workspaceID && allowed {
 			result = append(result, &model.ResolvedKnowledgeBase{KnowledgeBase: kb, EmbeddingModel: r.models[kb.EmbeddingModelID]})
 		}
 	}
@@ -240,8 +247,35 @@ func TestKnowledgeBaseServiceGetRejectsCrossWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Get(context.Background(), uuid.New(), created.ID); !errors.Is(err, domainerrors.ErrNotFound) {
+	if _, err := service.Get(context.Background(), value.ResourceAccess{WorkspaceID: uuid.New(), Unrestricted: true}, created.ID); !errors.Is(err, domainerrors.ErrNotFound) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestKnowledgeBaseServiceListAndGetRestrictAPIKeyToBoundKnowledgeBases(t *testing.T) {
+	t.Parallel()
+	workspaceID := uuid.New()
+	repository := newFakeKnowledgeBaseRepository()
+	modelA := fakeResolvedEmbeddingModel(t, value.ModelScopePlatform, nil, value.ModelStatusActive, value.ModelStatusActive)
+	modelB := fakeResolvedEmbeddingModel(t, value.ModelScopePlatform, nil, value.ModelStatusActive, value.ModelStatusActive)
+	repository.models[modelA.Model.ID] = modelA
+	repository.models[modelB.Model.ID] = modelB
+	kbA := &model.KnowledgeBase{ID: uuid.New(), WorkspaceID: workspaceID, Name: "A", EmbeddingModelID: modelA.Model.ID}
+	kbB := &model.KnowledgeBase{ID: uuid.New(), WorkspaceID: workspaceID, Name: "B", EmbeddingModelID: modelB.Model.ID}
+	repository.items[kbA.ID] = kbA
+	repository.items[kbB.ID] = kbB
+	svc := NewKnowledgeBaseService(repository)
+	access := value.NewAPIKeyAuthContext(uuid.New(), workspaceID, []value.APIScope{value.ScopeKnowledgeBasesRead}, []uuid.UUID{kbB.ID})
+
+	items, err := svc.List(context.Background(), access.ResourceAccess())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != kbB.ID {
+		t.Fatalf("restricted list = %#v, want only %s", items, kbB.ID)
+	}
+	if _, err := svc.Get(context.Background(), access.ResourceAccess(), kbA.ID); !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("unbound get error = %v, want not found", err)
 	}
 }
 
@@ -271,6 +305,21 @@ func TestUpdateKnowledgeBaseBasicsRequiresAdminAndTypedFields(t *testing.T) {
 	}
 	if repository.updateInput.Name == nil || *repository.updateInput.Name != "新名称" || repository.updateInput.Description != nil {
 		t.Fatalf("repository input = %#v", repository.updateInput)
+	}
+	apiName := "API 名称"
+	apiAccess := value.NewAPIKeyAuthContext(uuid.New(), workspaceID, []value.APIScope{value.ScopeKnowledgeBasesWrite}, []uuid.UUID{created.ID}).ResourceAccess()
+	if _, err := service.UpdateBasics(context.Background(), UpdateKnowledgeBaseBasicsInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: created.ID, Name: &apiName,
+		Access: apiAccess, IsAPIKey: true,
+	}); err != nil {
+		t.Fatalf("bound API key patch error = %v", err)
+	}
+	unboundAccess := value.NewAPIKeyAuthContext(uuid.New(), workspaceID, []value.APIScope{value.ScopeKnowledgeBasesWrite}, []uuid.UUID{uuid.New()}).ResourceAccess()
+	if _, err := service.UpdateBasics(context.Background(), UpdateKnowledgeBaseBasicsInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: created.ID, Name: &apiName,
+		Access: unboundAccess, IsAPIKey: true,
+	}); !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("unbound API key patch error = %v, want not found", err)
 	}
 
 	for _, input := range []UpdateKnowledgeBaseBasicsInput{

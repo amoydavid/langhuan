@@ -13,5 +13,5 @@ type KnowledgeBaseModelBinder interface {
 	Create(context.Context, *model.KnowledgeBase) (*model.ResolvedModel, error)
 	ResolveSelectable(context.Context, uuid.UUID, uuid.UUID) (*model.ResolvedModel, error)
 	GetResolved(context.Context, uuid.UUID, uuid.UUID) (*model.ResolvedKnowledgeBase, error)
-	ListResolved(context.Context, uuid.UUID) ([]*model.ResolvedKnowledgeBase, error)
+	ListResolved(context.Context, uuid.UUID, []uuid.UUID) ([]*model.ResolvedKnowledgeBase, error)
 }

@@ -159,8 +159,11 @@ func (s *FAQDocumentService) Update(ctx context.Context, input UpdateFAQDocument
 // Get returns the currently active complete FAQ revision.
 func (s *FAQDocumentService) Get(
 	ctx context.Context,
-	workspaceID, documentID uuid.UUID,
+	workspaceID, knowledgeBaseID, documentID uuid.UUID,
 ) (*dto.FAQDocument, error) {
+	if workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil || documentID == uuid.Nil {
+		return nil, fmt.Errorf("%w: FAQ lineage 无效", domainerrors.ErrValidation)
+	}
 	var document *model.Document
 	var faq *model.FAQRevision
 	err := s.store.WithinWorkspace(ctx, workspaceID, func(txCtx context.Context, tx FAQRevisionTx) error {
@@ -170,6 +173,9 @@ func (s *FAQDocumentService) Get(
 			return err
 		}
 		if document.Kind != value.DocumentKindFAQ || document.ActiveRevisionID == nil {
+			return domainerrors.ErrNotFound
+		}
+		if document.KnowledgeBaseID != knowledgeBaseID {
 			return domainerrors.ErrNotFound
 		}
 		faq, err = tx.GetFAQRevision(txCtx, *document.ActiveRevisionID)

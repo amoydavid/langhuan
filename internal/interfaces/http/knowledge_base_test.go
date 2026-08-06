@@ -76,11 +76,11 @@ func (*patchKnowledgeBaseServiceContract) Create(context.Context, service.Create
 	return nil, nil
 }
 
-func (*patchKnowledgeBaseServiceContract) Get(context.Context, uuid.UUID, uuid.UUID) (*dto.KnowledgeBase, error) {
+func (*patchKnowledgeBaseServiceContract) Get(context.Context, value.ResourceAccess, uuid.UUID) (*dto.KnowledgeBase, error) {
 	return nil, nil
 }
 
-func (*patchKnowledgeBaseServiceContract) List(context.Context, uuid.UUID) ([]*dto.KnowledgeBase, error) {
+func (*patchKnowledgeBaseServiceContract) List(context.Context, value.ResourceAccess) ([]*dto.KnowledgeBase, error) {
 	return nil, nil
 }
 

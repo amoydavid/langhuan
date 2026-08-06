@@ -203,14 +203,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				memberGroup.GET("/members", mbH.list)
 			}
 			if deps.KnowledgeBases != nil {
-				kb := knowledgeBaseHandler{service: deps.KnowledgeBases}
-				memberGroup.GET("/knowledge-bases", kb.list)
-				memberGroup.GET("/knowledge-bases/:id", kb.get)
+				// KB list/get are registered in progGroup so Session and Bearer share one contract.
 			}
 			if deps.KnowledgeBaseSummary != nil {
-				summary := knowledgeBaseSummaryHandler{service: deps.KnowledgeBaseSummary}
-				memberGroup.GET("/knowledge-bases/:id/summary", summary.getSummary)
-				memberGroup.GET("/knowledge-bases/:id/jobs", summary.listJobs)
+				// Summary/jobs are registered in progGroup with knowledge-bases:read.
 			}
 			if deps.ModelProviders != nil {
 				providerH := modelProviderHandler{service: deps.ModelProviders}
@@ -224,7 +220,6 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				modelH := modelHandler{models: deps.Models, connections: deps.ModelConnectionTests}
 				memberGroup.GET("/model-providers/:provider_id/models", modelH.listWorkspace)
 				// /models 必须注册在 /models/:model_id 之前，Gin 静态优先
-				memberGroup.GET("/models", modelH.listSelectable)
 				memberGroup.GET("/models/:model_id", modelH.getWorkspace)
 			}
 			if deps.Documents != nil {
@@ -236,30 +231,21 @@ func NewRouter(deps Dependencies) *gin.Engine {
 					assetContentStore: deps.AssetContentStore,
 					maxFileSizeBytes:  deps.MaxFileSizeBytes,
 				}
-				memberGroup.GET("/knowledge-bases/:id/documents", doc.list)
 				memberGroup.GET("/documents/:document_id/assets", doc.assets)
 				memberGroup.GET("/documents/:document_id/assets/:asset_id", doc.assetContent)
 			}
 			if deps.FAQDocuments != nil {
-				faq := faqDocumentHandler{service: deps.FAQDocuments}
-				memberGroup.POST("/knowledge-bases/:id/documents/faq", faq.create)
-				memberGroup.GET("/documents/:document_id/faq", faq.get)
-				memberGroup.PUT("/documents/:document_id/faq", faq.update)
+				// FAQ routes are registered in progGroup with a KB-qualified URL.
 			}
 			if deps.FileTree != nil {
-				tree := fileTreeHandler{service: deps.FileTree}
-				memberGroup.GET("/knowledge-bases/:id/file-tree", tree.list)
-				memberGroup.POST("/knowledge-bases/:id/file-tree/folders", tree.createFolder)
-				memberGroup.PATCH("/knowledge-bases/:id/file-tree/nodes/:node_id", tree.update)
-				memberGroup.DELETE("/knowledge-bases/:id/file-tree/nodes/:node_id", tree.delete)
+				// File-tree routes are registered in progGroup.
 			}
 			if deps.ChunkRevisions != nil {
 				chunks := chunkRevisionHandler{service: deps.ChunkRevisions}
 				memberGroup.GET("/knowledge-bases/:id/chunks/:chunk_id/revisions", chunks.list)
 			}
 			if deps.DocumentChunks != nil {
-				chunks := documentChunksHandler{service: deps.DocumentChunks}
-				memberGroup.GET("/knowledge-bases/:id/documents/:document_id/chunks", chunks.list)
+				// Document chunks list is registered in progGroup.
 			}
 			if deps.IndexGenerations != nil {
 				generations := indexGenerationHandler{service: deps.IndexGenerations}
@@ -281,18 +267,69 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			kb := knowledgeBaseHandler{service: deps.KnowledgeBases}
 			create := progGroup.Group("/knowledge-bases", RequireScopeForAPIKey(value.ScopeKnowledgeBasesWrite))
 			create.POST("", kb.create)
+			read := progGroup.Group("/knowledge-bases", RequireScopeForAPIKey(value.ScopeKnowledgeBasesRead))
+			read.GET("", kb.list)
+			read.GET("/:id", kb.get)
+			readSummary := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeKnowledgeBasesRead), RequireKnowledgeBaseForAPIKey("id"))
+			if deps.KnowledgeBaseSummary != nil {
+				summary := knowledgeBaseSummaryHandler{service: deps.KnowledgeBaseSummary}
+				readSummary.GET("/summary", summary.getSummary)
+				jobs := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
+				jobs.GET("/jobs", summary.listJobs)
+			}
+			write := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeKnowledgeBasesWrite), RequireKnowledgeBaseForAPIKey("id"), RequireAdminForSession())
+			write.PATCH("", kb.patch)
+		} else if deps.KnowledgeBaseSummary != nil {
+			readSummary := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeKnowledgeBasesRead), RequireKnowledgeBaseForAPIKey("id"))
+			summary := knowledgeBaseSummaryHandler{service: deps.KnowledgeBaseSummary}
+			readSummary.GET("/summary", summary.getSummary)
+			jobs := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
+			jobs.GET("/jobs", summary.listJobs)
 		}
-		if deps.DocumentIngest != nil {
-			doc := documentHandler{ingestService: deps.DocumentIngest, queryService: deps.Documents, maxFileSizeBytes: deps.MaxFileSizeBytes}
-			ingest := progGroup.Group("/knowledge-bases/:id/documents",
-				RequireScopeForAPIKey(value.ScopeDocumentsWrite), RequireKnowledgeBaseForAPIKey("id"))
-			ingest.POST("", doc.ingest)
+		if deps.Models != nil {
+			modelH := modelHandler{models: deps.Models, connections: deps.ModelConnectionTests}
+			models := progGroup.Group("", RequireScopeForAPIKey(value.ScopeKnowledgeBasesWrite))
+			models.GET("/models", modelH.listSelectable)
 		}
 		if deps.Documents != nil {
 			doc := documentHandler{ingestService: deps.DocumentIngest, queryService: deps.Documents, maxFileSizeBytes: deps.MaxFileSizeBytes}
-			status := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
+			list := progGroup.Group("/knowledge-bases/:id/documents", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
+			list.GET("", doc.list)
+			if deps.DocumentIngest != nil {
+				write := progGroup.Group("/knowledge-bases/:id/documents", RequireScopeForAPIKey(value.ScopeDocumentsWrite), RequireKnowledgeBaseForAPIKey("id"))
+				write.POST("", doc.ingest)
+				write.POST("/text", doc.ingestText)
+			}
+		}
+		if deps.FAQDocuments != nil {
+			faq := faqDocumentHandler{service: deps.FAQDocuments}
+			read := progGroup.Group("/knowledge-bases/:id/documents/:document_id/faq", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
+			read.GET("", faq.get)
+			write := progGroup.Group("/knowledge-bases/:id/documents", RequireScopeForAPIKey(value.ScopeDocumentsWrite), RequireKnowledgeBaseForAPIKey("id"))
+			write.POST("/faq", faq.create)
+			write.PUT("/:document_id/faq", faq.update)
+		}
+		if deps.FileTree != nil {
+			tree := fileTreeHandler{service: deps.FileTree}
+			read := progGroup.Group("/knowledge-bases/:id/file-tree", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
+			read.GET("", tree.list)
+			write := progGroup.Group("/knowledge-bases/:id/file-tree", RequireScopeForAPIKey(value.ScopeDocumentsWrite), RequireKnowledgeBaseForAPIKey("id"))
+			write.POST("/folders", tree.createFolder)
+			write.PATCH("/nodes/:node_id", tree.update)
+			write.DELETE("/nodes/:node_id", tree.delete)
+		}
+		if deps.DocumentChunks != nil {
+			chunks := documentChunksHandler{service: deps.DocumentChunks}
+			read := progGroup.Group("/knowledge-bases/:id/documents/:document_id/chunks", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"))
+			read.GET("", chunks.list)
+		}
+		// Document-only status/delete routes intentionally remain on their existing
+		// contract; this migration only opens KB-qualified document sub-resources.
+		if deps.Documents != nil {
+			doc := documentHandler{ingestService: deps.DocumentIngest, queryService: deps.Documents, maxFileSizeBytes: deps.MaxFileSizeBytes}
+			status := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireSessionOnly())
 			status.GET("/documents/:document_id", doc.get)
-			del := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsWrite))
+			del := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsWrite), RequireSessionOnly())
 			del.DELETE("/documents/:document_id", doc.delete)
 		}
 		if deps.ChunkRevisions != nil {
@@ -314,7 +351,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		}
 		if deps.Jobs != nil {
 			job := jobHandler{service: deps.Jobs}
-			jobGroup := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
+			jobGroup := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireSessionOnly())
 			jobGroup.GET("/jobs/:id", job.get)
 		}
 
@@ -345,10 +382,6 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			if deps.ChunkRevisions != nil {
 				chunks := chunkRevisionHandler{service: deps.ChunkRevisions}
 				adminGroup.POST("/knowledge-bases/:id/chunks/:chunk_id/revisions", chunks.create)
-			}
-			if deps.KnowledgeBases != nil {
-				kb := knowledgeBaseHandler{service: deps.KnowledgeBases}
-				adminGroup.PATCH("/knowledge-bases/:id", kb.patch)
 			}
 			if deps.IndexGenerations != nil {
 				generations := indexGenerationHandler{service: deps.IndexGenerations}

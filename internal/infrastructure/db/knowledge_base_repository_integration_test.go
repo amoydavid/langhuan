@@ -66,7 +66,7 @@ func TestKnowledgeBaseBinderCreatesUpdatesAndLoadsModelSummary(t *testing.T) {
 	if loaded.RetrievalConfig["fts_config"] != "zhparser" || loaded.RetrievalConfig["final_top_k"] != float64(10) {
 		t.Fatalf("active retrieval config = %#v", loaded.RetrievalConfig)
 	}
-	listed, err := repository.ListResolved(ctx, workspaceID)
+	listed, err := repository.ListResolved(ctx, workspaceID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestKnowledgeBaseRepositoryPropagatesCancelledContext(t *testing.T) {
 	ctx, tx := newAuthTestDB(t)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := NewKnowledgeBaseRepository(tx).ListResolved(cancelled, uuid.New()); err == nil {
+	if _, err := NewKnowledgeBaseRepository(tx).ListResolved(cancelled, uuid.New(), nil); err == nil {
 		t.Fatal("expected cancelled query")
 	}
 }

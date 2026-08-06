@@ -112,9 +112,13 @@ func (r *KnowledgeBaseRepository) GetResolved(ctx context.Context, workspaceID, 
 }
 
 // ListResolved lists KnowledgeBases and bound models, including disabled bindings.
-func (r *KnowledgeBaseRepository) ListResolved(ctx context.Context, workspaceID uuid.UUID) ([]*model.ResolvedKnowledgeBase, error) {
+func (r *KnowledgeBaseRepository) ListResolved(ctx context.Context, workspaceID uuid.UUID, allowedIDs []uuid.UUID) ([]*model.ResolvedKnowledgeBase, error) {
 	var rows []knowledgeBaseResolvedRow
-	if err := r.resolvedQuery().WithContext(ctx).Where("knowledge_bases.workspace_id = ?", workspaceID).
+	query := r.resolvedQuery().WithContext(ctx).Where("knowledge_bases.workspace_id = ?", workspaceID)
+	if allowedIDs != nil {
+		query = query.Where("knowledge_bases.id IN ?", allowedIDs)
+	}
+	if err := query.
 		Order("knowledge_bases.created_at DESC, knowledge_bases.id DESC").Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("列出知识库模型失败: %w", err)
 	}

@@ -14,8 +14,15 @@ import (
 
 type DocumentRepository interface {
 	Get(ctx context.Context, workspaceID uuid.UUID, id uuid.UUID) (*model.Document, error)
-	List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*model.Document, error)
+	List(ctx context.Context, filter DocumentListFilter) ([]*model.Document, error)
 	Delete(ctx context.Context, workspaceID, documentID uuid.UUID) error
+}
+
+// DocumentListFilter scopes document listing and optionally narrows by kind.
+type DocumentListFilter struct {
+	WorkspaceID     uuid.UUID
+	KnowledgeBaseID uuid.UUID
+	Kind            *value.DocumentKind
 }
 
 // Delete soft-deletes a Document and atomically removes it from retrieval and the File Tree.
@@ -50,11 +57,19 @@ func NewDocumentService(repo DocumentRepository, knowledgeBases KnowledgeBaseRea
 	return &DocumentService{repo: repo, knowledgeBases: knowledgeBases}
 }
 
-func (s *DocumentService) List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*dto.Document, error) {
-	if _, err := s.knowledgeBases.Get(ctx, workspaceID, knowledgeBaseID); err != nil {
+func (s *DocumentService) List(ctx context.Context, filter DocumentListFilter) ([]*dto.Document, error) {
+	if filter.WorkspaceID == uuid.Nil || filter.KnowledgeBaseID == uuid.Nil {
+		return nil, fmt.Errorf("%w: 文档列表 lineage 无效", domainerrors.ErrValidation)
+	}
+	if filter.Kind != nil {
+		if err := filter.Kind.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: 文档 kind 无效", domainerrors.ErrValidation)
+		}
+	}
+	if _, err := s.knowledgeBases.Get(ctx, filter.WorkspaceID, filter.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
-	items, err := s.repo.List(ctx, workspaceID, knowledgeBaseID)
+	items, err := s.repo.List(ctx, filter)
 	if err != nil {
 		return nil, err
 	}

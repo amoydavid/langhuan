@@ -161,6 +161,44 @@ func RequireScopeForAPIKey(required value.APIScope) gin.HandlerFunc {
 	}
 }
 
+// RequireAdminForSession permits API keys (which are governed by scopes) while
+// retaining the existing admin requirement for browser Session principals.
+func RequireAdminForSession() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authCtx, exists := authFromContext(c)
+		if !exists {
+			writeError(c, stdhttp.StatusInternalServerError, "internal_error", internalErrorMessage)
+			c.Abort()
+			return
+		}
+		if !authCtx.IsAPIKey() && !authCtx.Role.AtLeast(value.RoleAdmin) {
+			writeError(c, stdhttp.StatusForbidden, "forbidden", domainerrors.ErrForbidden.Error())
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireSessionOnly keeps legacy document-only endpoints out of the
+// programmatic contract when they cannot carry KnowledgeBase lineage.
+func RequireSessionOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authCtx, exists := authFromContext(c)
+		if !exists {
+			writeError(c, stdhttp.StatusInternalServerError, "internal_error", internalErrorMessage)
+			c.Abort()
+			return
+		}
+		if authCtx.IsAPIKey() {
+			writeError(c, stdhttp.StatusForbidden, "forbidden", domainerrors.ErrForbidden.Error())
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // RequireKnowledgeBaseForAPIKey 要求 API Key 主体只能访问绑定的知识库。
 // paramKey 是 URL 中知识库 ID 的参数名（如 "id" 或 "knowledge_base_id"）；
 // Session 主体直接通过。

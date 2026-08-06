@@ -169,6 +169,36 @@ func TestSecurityRequirements(t *testing.T) {
 	}
 }
 
+func TestJinshuRoutesExposeScopesAndLineageParameters(t *testing.T) {
+	spec := buildSpec()
+	path := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/documents/{document_id}/faq")
+	if path == nil || path.Get == nil {
+		t.Fatal("带知识库 lineage 的 FAQ GET 未声明")
+	}
+	if _, old := spec.Paths.Map()["/api/v1/workspaces/{workspace_slug}/documents/{document_id}/faq"]; old {
+		t.Fatal("旧 FAQ 路径不应出现在 OpenAPI")
+	}
+	if got := path.Get.Extensions["x-langhuan-required-scopes"]; got == nil {
+		t.Fatal("FAQ GET 缺少 required scopes extension")
+	}
+	seen := map[string]bool{}
+	for _, p := range path.Get.Parameters {
+		seen[p.Value.Name] = true
+	}
+	for _, name := range []string{"workspace_slug", "id", "document_id"} {
+		if !seen[name] {
+			t.Errorf("FAQ GET 缺少 path parameter %q", name)
+		}
+	}
+	docs := spec.Paths.Find("/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/documents")
+	if docs == nil || docs.Get == nil {
+		t.Fatal("文档列表未声明")
+	}
+	if len(docs.Get.Parameters) == 0 {
+		t.Fatal("文档列表缺少 kind/query 或 path 参数")
+	}
+}
+
 // TestMultipartUploadRoute 验证文件上传路由标记为 multipart/form-data。
 func TestMultipartUploadRoute(t *testing.T) {
 	spec := buildSpec()

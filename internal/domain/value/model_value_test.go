@@ -59,3 +59,20 @@ func TestModelValueObjectsValidateKnownValues(t *testing.T) {
 		t.Fatal("unknown model type should be invalid")
 	}
 }
+
+func TestAPIScopeKnowledgeBasesReadIsValidAndListedOnce(t *testing.T) {
+	t.Parallel()
+
+	if !IsValidAPIScope(ScopeKnowledgeBasesRead) {
+		t.Fatalf("scope %q should be valid", ScopeKnowledgeBasesRead)
+	}
+	count := 0
+	for _, scope := range AllAPIScopes() {
+		if scope == ScopeKnowledgeBasesRead {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("scope %q appears %d times, want once", ScopeKnowledgeBasesRead, count)
+	}
+}

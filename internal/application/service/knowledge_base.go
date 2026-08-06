@@ -37,6 +37,8 @@ type UpdateKnowledgeBaseBasicsInput struct {
 	WorkspaceID, KnowledgeBaseID uuid.UUID
 	Name, Description            *string
 	ActorRole                    value.WorkspaceRole
+	Access                       value.ResourceAccess
+	IsAPIKey                     bool
 }
 
 // KnowledgeBaseBasicsUpdater persists a typed basic-information patch.
@@ -61,7 +63,11 @@ func (s *KnowledgeBaseService) UpdateBasics(ctx context.Context, input UpdateKno
 	if input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil {
 		return nil, fmt.Errorf("%w: KnowledgeBase lineage 无效", domainerrors.ErrValidation)
 	}
-	if !input.ActorRole.AtLeast(value.RoleAdmin) {
+	if input.IsAPIKey {
+		if input.Access.WorkspaceID != input.WorkspaceID || input.Access.Unrestricted || !input.Access.AllowsKnowledgeBase(input.KnowledgeBaseID) {
+			return nil, domainerrors.ErrNotFound
+		}
+	} else if !input.ActorRole.AtLeast(value.RoleAdmin) {
 		return nil, domainerrors.ErrForbidden
 	}
 	if input.Name == nil && input.Description == nil {
@@ -121,8 +127,14 @@ func (s *KnowledgeBaseService) Create(ctx context.Context, input CreateKnowledge
 }
 
 // Get gets a KnowledgeBase with its bound model summary.
-func (s *KnowledgeBaseService) Get(ctx context.Context, workspaceID, id uuid.UUID) (*dto.KnowledgeBase, error) {
-	resolved, err := s.binder.GetResolved(ctx, workspaceID, id)
+func (s *KnowledgeBaseService) Get(ctx context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.KnowledgeBase, error) {
+	if access.WorkspaceID == uuid.Nil || id == uuid.Nil {
+		return nil, fmt.Errorf("%w: KnowledgeBase access 参数无效", domainerrors.ErrValidation)
+	}
+	if !access.Unrestricted && !access.AllowsKnowledgeBase(id) {
+		return nil, domainerrors.ErrNotFound
+	}
+	resolved, err := s.binder.GetResolved(ctx, access.WorkspaceID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +142,15 @@ func (s *KnowledgeBaseService) Get(ctx context.Context, workspaceID, id uuid.UUI
 }
 
 // List lists KnowledgeBases with bound model summaries.
-func (s *KnowledgeBaseService) List(ctx context.Context, workspaceID uuid.UUID) ([]*dto.KnowledgeBase, error) {
-	items, err := s.binder.ListResolved(ctx, workspaceID)
+func (s *KnowledgeBaseService) List(ctx context.Context, access value.ResourceAccess) ([]*dto.KnowledgeBase, error) {
+	if access.WorkspaceID == uuid.Nil {
+		return nil, fmt.Errorf("%w: KnowledgeBase access workspace 无效", domainerrors.ErrValidation)
+	}
+	var allowedIDs []uuid.UUID
+	if !access.Unrestricted {
+		allowedIDs = append([]uuid.UUID(nil), access.AllowedKnowledgeBaseIDs...)
+	}
+	items, err := s.binder.ListResolved(ctx, access.WorkspaceID, allowedIDs)
 	if err != nil {
 		return nil, err
 	}

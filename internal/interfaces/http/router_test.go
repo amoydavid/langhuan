@@ -144,18 +144,18 @@ func (s *fakeWorkspaceService) GetBySlug(_ context.Context, slug string) (*dto.W
 	return ws, nil
 }
 
-func (s *fakeKnowledgeBaseService) Get(_ context.Context, workspaceID uuid.UUID, id uuid.UUID) (*dto.KnowledgeBase, error) {
+func (s *fakeKnowledgeBaseService) Get(_ context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.KnowledgeBase, error) {
 	kb, ok := s.items[id]
-	if !ok || kb.WorkspaceID != workspaceID {
+	if !ok || kb.WorkspaceID != access.WorkspaceID || (!access.Unrestricted && !access.AllowsKnowledgeBase(id)) {
 		return nil, domainerrors.ErrNotFound
 	}
 	return kb, nil
 }
 
-func (s *fakeKnowledgeBaseService) List(_ context.Context, workspaceID uuid.UUID) ([]*dto.KnowledgeBase, error) {
+func (s *fakeKnowledgeBaseService) List(_ context.Context, access value.ResourceAccess) ([]*dto.KnowledgeBase, error) {
 	result := make([]*dto.KnowledgeBase, 0)
 	for _, kb := range s.items {
-		if kb.WorkspaceID == workspaceID {
+		if kb.WorkspaceID == access.WorkspaceID && (access.Unrestricted || access.AllowsKnowledgeBase(kb.ID)) {
 			result = append(result, kb)
 		}
 	}
@@ -232,10 +232,10 @@ func (s *fakeDocumentQueryService) Get(_ context.Context, access value.ResourceA
 	return doc, nil
 }
 
-func (s *fakeDocumentQueryService) List(_ context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*dto.Document, error) {
+func (s *fakeDocumentQueryService) List(_ context.Context, filter service.DocumentListFilter) ([]*dto.Document, error) {
 	result := make([]*dto.Document, 0)
 	for _, doc := range s.items {
-		if doc.KnowledgeBaseID == knowledgeBaseID && doc.Metadata["workspace_id"] == workspaceID.String() {
+		if doc.KnowledgeBaseID == filter.KnowledgeBaseID && doc.Metadata["workspace_id"] == filter.WorkspaceID.String() && (filter.Kind == nil || doc.Kind == *filter.Kind) {
 			result = append(result, doc)
 		}
 	}
@@ -1056,7 +1056,7 @@ func TestMemberCanCreateReadAndUpdateFAQDocument(t *testing.T) {
 		t.Fatalf("create input = %#v", f.faq.createInput)
 	}
 
-	documentPath := "/api/v1/workspaces/acme/documents/" + documentID.String() + "/faq"
+	documentPath := "/api/v1/workspaces/acme/knowledge-bases/" + knowledgeBaseID.String() + "/documents/" + documentID.String() + "/faq"
 	if recorder := f.authedRequest(stdhttp.MethodGet, documentPath, nil, ""); recorder.Code != stdhttp.StatusOK {
 		t.Fatalf("get status/body = %d %s", recorder.Code, recorder.Body.String())
 	}

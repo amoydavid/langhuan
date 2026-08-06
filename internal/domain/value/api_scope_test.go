@@ -8,6 +8,7 @@ import (
 
 func TestAllAPIScopesCoversExactSet(t *testing.T) {
 	want := []APIScope{
+		ScopeKnowledgeBasesRead,
 		ScopeKnowledgeBasesWrite,
 		ScopeDocumentsRead,
 		ScopeDocumentsWrite,

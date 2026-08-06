@@ -19,7 +19,7 @@
 在 Web Console（owner/admin）的「API Key」页面创建：
 
 - 绑定一个或多个知识库（创建后不可修改范围）。
-- 选择 scope（无隐式继承）：`knowledge_bases:write`、`documents:read`、`documents:write`、`search:read`。
+- 选择 scope（无隐式继承）：`knowledge_bases:read`、`knowledge_bases:write`、`documents:read`、`documents:write`、`search:read`。
 - 选择有效期：默认 90 天，或自定义 1..365 天，或不限期。
 
 创建响应返回一次性明文：
@@ -54,7 +54,17 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 | REST | Scope | 说明 |
 |---|---|---|
 | `POST /workspaces/:slug/knowledge-bases` | `knowledge_bases:write` | 创建知识库（新库原子加入 key 范围） |
+| `GET /workspaces/:slug/knowledge-bases` | `knowledge_bases:read` | 列出 API Key 已绑定知识库 |
+| `GET/PATCH /workspaces/:slug/knowledge-bases/:id` | `knowledge_bases:read/write` | 读取或更新已绑定知识库 |
+| `GET /workspaces/:slug/knowledge-bases/:id/summary` | `knowledge_bases:read` | 知识库摘要 |
 | `POST /workspaces/:slug/knowledge-bases/:id/documents` | `documents:write` | 导入文档 |
+| `POST /workspaces/:slug/knowledge-bases/:id/documents/text` | `documents:write` | 导入 Markdown 文本 |
+| `GET /workspaces/:slug/knowledge-bases/:id/documents?kind=file\|faq\|web` | `documents:read` | 按 kind 列出文档 |
+| `GET/POST/PATCH/DELETE /workspaces/:slug/knowledge-bases/:id/file-tree/...` | `documents:read/write` | 文件树读写 |
+| `POST /workspaces/:slug/knowledge-bases/:id/documents/faq` | `documents:write` | 创建 FAQ |
+| `GET/PUT /workspaces/:slug/knowledge-bases/:id/documents/:document_id/faq` | `documents:read/write` | FAQ 读写；URL 必须携带 KB ID |
+| `GET /workspaces/:slug/knowledge-bases/:id/documents/:document_id/chunks` | `documents:read` | 文档分块 |
+| `GET /workspaces/:slug/models?type=embedding&status=active&scope=platform` | `knowledge_bases:write` | Bearer 仅可读取平台 active embedding 模型 |
 | `GET /workspaces/:slug/documents/:id` | `documents:read` | 文档状态 |
 | `GET /workspaces/:slug/jobs/:id` | `documents:read` | Job 状态 |
 | `DELETE /workspaces/:slug/documents/:id` | `documents:write` | 软删除文档 |
@@ -62,7 +72,9 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 | `POST /workspaces/:slug/knowledge-bases/:id/search` | `search:read` | 单库检索 |
 | `POST /workspaces/:slug/search` | `search:read` | 多库检索（按 Embedding 模型分组） |
 
-越界（跨 Workspace、未绑定知识库或其下资源）统一返回 `404`，不泄漏存在性。成员、邀请、模型、设置、API Key 管理等路由仍为 Session-only，API Key 不可访问。
+越界（跨 Workspace、未绑定知识库或其下资源）统一返回 `404`，不泄漏存在性。成员、邀请、Provider、设置、API Key 管理等路由仍为 Session-only；模型选择仅开放上一行所述的 Bearer 精确过滤合同。
+
+FAQ 旧路径 `/workspaces/:slug/documents/:document_id/faq` 已移除；所有新增的知识库子资源 URL 均显式携带 `knowledge-bases/:id`。Bearer scope 不足返回 `403 insufficient_scope`，无效/过期/吊销凭证返回 `401 unauthorized`。
 
 ## 5. 分块与检索结果合同
 

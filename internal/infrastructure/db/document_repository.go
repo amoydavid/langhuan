@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	appservice "github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -59,12 +60,16 @@ func (r *DocumentRepository) Get(ctx context.Context, workspaceID uuid.UUID, id 
 	return document, nil
 }
 
-func (r *DocumentRepository) List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*model.Document, error) {
+func (r *DocumentRepository) List(ctx context.Context, filter appservice.DocumentListFilter) ([]*model.Document, error) {
 	result := make([]*model.Document, 0)
-	err := NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+	err := NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, filter.WorkspaceID, func(tx *gorm.DB) error {
 		var rows []DocumentRow
-		if err := tx.WithContext(ctx).
-			Where("workspace_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", workspaceID, knowledgeBaseID).
+		query := tx.WithContext(ctx).
+			Where("workspace_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", filter.WorkspaceID, filter.KnowledgeBaseID)
+		if filter.Kind != nil {
+			query = query.Where("kind = ?", *filter.Kind)
+		}
+		if err := query.
 			Order("documents.created_at DESC, documents.id DESC").
 			Find(&rows).Error; err != nil {
 			return fmt.Errorf("列出文档失败: %w", err)
@@ -77,7 +82,7 @@ func (r *DocumentRepository) List(ctx context.Context, workspaceID, knowledgeBas
 			}
 			result = append(result, document)
 		}
-		return loadDocumentActiveRevisions(ctx, tx, workspaceID, result)
+		return loadDocumentActiveRevisions(ctx, tx, filter.WorkspaceID, result)
 	})
 	if err != nil {
 		return nil, err

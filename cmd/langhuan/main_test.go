@@ -213,8 +213,8 @@ func TestRuntimeServicesWireFAQDocumentDependencies(t *testing.T) {
 		path   string
 	}{
 		{method: stdhttp.MethodPost, path: "/api/v1/workspaces/acme/knowledge-bases/" + uuid.NewString() + "/documents/faq"},
-		{method: stdhttp.MethodGet, path: "/api/v1/workspaces/acme/documents/" + uuid.NewString() + "/faq"},
-		{method: stdhttp.MethodPut, path: "/api/v1/workspaces/acme/documents/" + uuid.NewString() + "/faq"},
+		{method: stdhttp.MethodGet, path: "/api/v1/workspaces/acme/knowledge-bases/" + uuid.NewString() + "/documents/" + uuid.NewString() + "/faq"},
+		{method: stdhttp.MethodPut, path: "/api/v1/workspaces/acme/knowledge-bases/" + uuid.NewString() + "/documents/" + uuid.NewString() + "/faq"},
 	} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(request.method, request.path, nil))

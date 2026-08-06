@@ -73,7 +73,7 @@ func TestDocumentServiceListReturnsTypedFAQQuestionCount(t *testing.T) {
 	docRepo.items[document.ID] = document
 	docRepo.workspaceIDs[document.ID] = workspaceID
 
-	items, err := NewDocumentService(docRepo, kbRepo).List(context.Background(), workspaceID, kb.ID)
+	items, err := NewDocumentService(docRepo, kbRepo).List(context.Background(), DocumentListFilter{WorkspaceID: workspaceID, KnowledgeBaseID: kb.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,11 +130,11 @@ type fakeDocumentQueryRepository struct {
 	deletedDocumentID  uuid.UUID
 }
 
-func (r *fakeDocumentQueryRepository) List(_ context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*model.Document, error) {
+func (r *fakeDocumentQueryRepository) List(_ context.Context, filter DocumentListFilter) ([]*model.Document, error) {
 	r.listCalls++
 	result := make([]*model.Document, 0)
 	for id, doc := range r.items {
-		if r.workspaceIDs[id] == workspaceID && doc.KnowledgeBaseID == knowledgeBaseID {
+		if r.workspaceIDs[id] == filter.WorkspaceID && doc.KnowledgeBaseID == filter.KnowledgeBaseID && (filter.Kind == nil || doc.Kind == *filter.Kind) {
 			result = append(result, doc)
 		}
 	}
@@ -197,7 +197,7 @@ func TestDocumentServiceListValidatesKnowledgeBaseAndReturnsDTOs(t *testing.T) {
 	docRepo.items[doc.ID] = doc
 	docRepo.workspaceIDs[doc.ID] = workspaceID
 
-	got, err := NewDocumentService(docRepo, kbRepo).List(context.Background(), workspaceID, kb.ID)
+	got, err := NewDocumentService(docRepo, kbRepo).List(context.Background(), DocumentListFilter{WorkspaceID: workspaceID, KnowledgeBaseID: kb.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestDocumentServiceListRejectsKnowledgeBaseFromAnotherWorkspaceBeforeQuery(
 	kbRepo.items[kb.ID] = kb
 	docRepo := newFakeDocumentQueryRepository()
 
-	_, err = NewDocumentService(docRepo, kbRepo).List(context.Background(), uuid.New(), kb.ID)
+	_, err = NewDocumentService(docRepo, kbRepo).List(context.Background(), DocumentListFilter{WorkspaceID: uuid.New(), KnowledgeBaseID: kb.ID})
 	if !errors.Is(err, domainerrors.ErrNotFound) {
 		t.Fatalf("List() error = %v, want ErrNotFound", err)
 	}

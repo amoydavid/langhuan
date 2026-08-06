@@ -15,7 +15,7 @@ import (
 type FAQDocumentHTTPService interface {
 	Create(context.Context, service.CreateFAQDocumentInput) (*dto.FAQDocument, error)
 	Update(context.Context, service.UpdateFAQDocumentInput) (*dto.FAQDocument, error)
-	Get(context.Context, uuid.UUID, uuid.UUID) (*dto.FAQDocument, error)
+	Get(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*dto.FAQDocument, error)
 }
 
 type faqDocumentHandler struct {
@@ -52,10 +52,14 @@ func (h faqDocumentHandler) create(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", faqInvalidJSONMessage)
 		return
 	}
-	createdBy := authCtx.UserID
+	var createdBy *uuid.UUID
+	if !authCtx.IsAPIKey() {
+		id := authCtx.UserID
+		createdBy = &id
+	}
 	result, err := h.service.Create(c.Request.Context(), service.CreateFAQDocumentInput{
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID,
-		Title: request.Title, Questions: request.Questions, Answer: request.Answer, CreatedBy: &createdBy,
+		Title: request.Title, Questions: request.Questions, Answer: request.Answer, CreatedBy: createdBy,
 	})
 	if err != nil {
 		writeServiceError(c, err)
@@ -70,12 +74,17 @@ func (h faqDocumentHandler) get(c *gin.Context) {
 		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
+	knowledgeBaseID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
+		return
+	}
 	documentID, err := uuid.Parse(c.Param("document_id"))
 	if err != nil {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
 		return
 	}
-	result, err := h.service.Get(c.Request.Context(), authCtx.WorkspaceID, documentID)
+	result, err := h.service.Get(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, documentID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -89,6 +98,11 @@ func (h faqDocumentHandler) update(c *gin.Context) {
 		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
 		return
 	}
+	knowledgeBaseID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
+		return
+	}
 	documentID, err := uuid.Parse(c.Param("document_id"))
 	if err != nil {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
@@ -99,10 +113,14 @@ func (h faqDocumentHandler) update(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", faqInvalidJSONMessage)
 		return
 	}
-	createdBy := authCtx.UserID
+	var createdBy *uuid.UUID
+	if !authCtx.IsAPIKey() {
+		id := authCtx.UserID
+		createdBy = &id
+	}
 	result, err := h.service.Update(c.Request.Context(), service.UpdateFAQDocumentInput{
-		WorkspaceID: authCtx.WorkspaceID, DocumentID: documentID, BaseRevisionID: request.BaseRevisionID,
-		Questions: request.Questions, Answer: request.Answer, CreatedBy: &createdBy,
+		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, DocumentID: documentID, BaseRevisionID: request.BaseRevisionID,
+		Questions: request.Questions, Answer: request.Answer, CreatedBy: createdBy,
 	})
 	if err != nil {
 		writeServiceError(c, err)

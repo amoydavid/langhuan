@@ -249,11 +249,11 @@ func (s *fakeModelKnowledgeBaseHTTPService) Create(_ context.Context, input serv
 	return modelKnowledgeBaseDTO(input.WorkspaceID, uuid.New(), input.EmbeddingModelID), nil
 }
 
-func (s *fakeModelKnowledgeBaseHTTPService) Get(_ context.Context, workspaceID, id uuid.UUID) (*dto.KnowledgeBase, error) {
-	return modelKnowledgeBaseDTO(workspaceID, id, uuid.New()), nil
+func (s *fakeModelKnowledgeBaseHTTPService) Get(_ context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.KnowledgeBase, error) {
+	return modelKnowledgeBaseDTO(access.WorkspaceID, id, uuid.New()), nil
 }
 
-func (s *fakeModelKnowledgeBaseHTTPService) List(context.Context, uuid.UUID) ([]*dto.KnowledgeBase, error) {
+func (s *fakeModelKnowledgeBaseHTTPService) List(context.Context, value.ResourceAccess) ([]*dto.KnowledgeBase, error) {
 	return []*dto.KnowledgeBase{}, nil
 }
 

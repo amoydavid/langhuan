@@ -49,17 +49,17 @@ func TestFAQDocumentCreateMapsCompletePayload(t *testing.T) {
 
 func TestFAQDocumentUpdateMapsRevisionConflict(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	workspaceID, documentID, baseRevisionID := uuid.New(), uuid.New(), uuid.New()
+	workspaceID, knowledgeBaseID, documentID, baseRevisionID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	fake := &fakeFAQDocumentHTTPService{updateErr: domainerrors.ErrRevisionConflict}
 	handler := faqDocumentHandler{service: fake}
 	router := gin.New()
-	router.PUT("/documents/:document_id/faq", func(c *gin.Context) {
+	router.PUT("/knowledge-bases/:id/documents/:document_id/faq", func(c *gin.Context) {
 		c.Set(authContextKey, value.AuthContext{WorkspaceID: workspaceID, UserID: uuid.New()})
 		handler.update(c)
 	})
 
 	body := `{"base_revision_id":"` + baseRevisionID.String() + `","questions":["问题"],"answer":"回答"}`
-	req := httptest.NewRequest(http.MethodPut, "/documents/"+documentID.String()+"/faq", bytes.NewBufferString(body))
+	req := httptest.NewRequest(http.MethodPut, "/knowledge-bases/"+knowledgeBaseID.String()+"/documents/"+documentID.String()+"/faq", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
@@ -101,13 +101,13 @@ func TestFAQDocumentUpdateRejectsInvalidJSONWithStableMessage(t *testing.T) {
 	fake := &fakeFAQDocumentHTTPService{}
 	handler := faqDocumentHandler{service: fake}
 	router := gin.New()
-	router.PUT("/documents/:document_id/faq", func(c *gin.Context) {
+	router.PUT("/knowledge-bases/:id/documents/:document_id/faq", func(c *gin.Context) {
 		c.Set(authContextKey, value.AuthContext{WorkspaceID: uuid.New(), UserID: uuid.New()})
 		handler.update(c)
 	})
 	req := httptest.NewRequest(
 		http.MethodPut,
-		"/documents/"+uuid.NewString()+"/faq",
+		"/knowledge-bases/"+uuid.NewString()+"/documents/"+uuid.NewString()+"/faq",
 		bytes.NewBufferString(`{"base_revision_id":"`+uuid.NewString()+`","questions":["Q"],"answer":"A","unexpected":true}`),
 	)
 	req.Header.Set("Content-Type", "application/json")
@@ -153,7 +153,7 @@ func (s *fakeFAQDocumentHTTPService) Update(_ context.Context, input service.Upd
 	return s.result, s.updateErr
 }
 
-func (s *fakeFAQDocumentHTTPService) Get(_ context.Context, workspaceID, documentID uuid.UUID) (*dto.FAQDocument, error) {
+func (s *fakeFAQDocumentHTTPService) Get(_ context.Context, workspaceID, _ uuid.UUID, documentID uuid.UUID) (*dto.FAQDocument, error) {
 	s.getWorkspaceID = workspaceID
 	s.getDocumentID = documentID
 	return s.result, nil

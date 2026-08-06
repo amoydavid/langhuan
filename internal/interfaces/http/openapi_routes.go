@@ -10,6 +10,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // 本文件是 OpenAPI 文档唯一的"手写"部分：声明每条对外 REST 路由的绑定关系
@@ -22,16 +23,27 @@ import (
 
 // op 描述一条路由的文档元信息。只声明绑定，不含字段细节。
 type op struct {
-	method       string // HTTP 方法
-	path         string // Gin 风格路径（:param），op 注册时转换为 {param}
-	tag          string // OpenAPI tag，用于 UI 分组
-	summary      string // 一句话描述
-	reqBody      any    // 请求体类型示例值（reflect.TypeOf 用）；nil 表示无请求体
-	reqMultipart bool   // 是否 multipart/form-data（文件上传）
-	respBody     any    // 响应体类型示例值；nil 表示无响应体（204）
-	respType     string // 响应 Content-Type，默认 application/json；二进制用 application/octet-stream
-	status       int    // 成功响应状态码
-	sec          opSec  // 鉴权方式
+	method         string // HTTP 方法
+	path           string // Gin 风格路径（:param），op 注册时转换为 {param}
+	tag            string // OpenAPI tag，用于 UI 分组
+	summary        string // 一句话描述
+	reqBody        any    // 请求体类型示例值（reflect.TypeOf 用）；nil 表示无请求体
+	reqMultipart   bool   // 是否 multipart/form-data（文件上传）
+	respBody       any    // 响应体类型示例值；nil 表示无响应体（204）
+	respType       string // 响应 Content-Type，默认 application/json；二进制用 application/octet-stream
+	status         int    // 成功响应状态码
+	sec            opSec  // 鉴权方式
+	requiredScopes []value.APIScope
+	params         []openapiParam
+	description    string
+}
+
+type openapiParam struct {
+	name, in, description string
+	required              bool
+	typeName              string
+	format                string
+	enum                  []string
 }
 
 // registerRoutes 把全部 REST 路由注册进 spec。按资源组织，便于定位。
@@ -70,6 +82,42 @@ func (b *specBuilder) add(o op) {
 		Tags:      []string{o.tag},
 		Summary:   o.summary,
 		Responses: openapi3.NewResponses(),
+	}
+	if o.description != "" {
+		operation.Description = o.description
+	}
+	if len(o.requiredScopes) > 0 {
+		operation.Extensions = map[string]interface{}{"x-langhuan-required-scopes": o.requiredScopes}
+	}
+	params := append([]openapiParam(nil), o.params...)
+	for _, segment := range strings.Split(o.path, "/") {
+		if strings.HasPrefix(segment, ":") {
+			name := strings.TrimPrefix(segment, ":")
+			found := false
+			for _, existing := range params {
+				if existing.name == name && existing.in == "path" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				format := "uuid"
+				if name == "workspace_slug" {
+					format = ""
+				}
+				params = append(params, openapiParam{name: name, in: "path", typeName: "string", format: format, required: true})
+			}
+		}
+	}
+	for _, p := range params {
+		param := &openapi3.Parameter{Name: p.name, In: p.in, Description: p.description, Required: p.required, Schema: &openapi3.SchemaRef{Value: &openapi3.Schema{Type: &openapi3.Types{p.typeName}, Format: p.format}}}
+		if len(p.enum) > 0 {
+			param.Schema.Value.Enum = make([]interface{}, len(p.enum))
+			for i := range p.enum {
+				param.Schema.Value.Enum[i] = p.enum[i]
+			}
+		}
+		operation.Parameters = append(operation.Parameters, &openapi3.ParameterRef{Value: param})
 	}
 	// 请求体
 	if o.reqBody != nil {
@@ -141,11 +189,13 @@ func (b *specBuilder) add(o op) {
 // 复用 errorBody（errors.go 里的 {"error":{"code","message"}}）。
 func (b *specBuilder) attachCommonErrors(operation *openapi3.Operation, sec opSec) {
 	errCodes := map[int]string{}
+	errCodes[400] = "请求参数无效"
 	if sec != secPublic {
 		errCodes[401] = "未认证或会话过期"
 		errCodes[403] = "无权限"
 	}
 	errCodes[404] = "资源不存在"
+	errCodes[409] = "资源冲突"
 	errCodes[500] = "服务器内部错误"
 	// 仅当成功响应不是这些状态码时才挂，避免覆盖业务响应
 	for code, desc := range errCodes {
@@ -248,30 +298,32 @@ func (b *specBuilder) userAndInvitationOps() []op {
 func (b *specBuilder) knowledgeBaseOps() []op {
 	return []op{
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases", tag: "知识库", summary: "创建知识库",
-			reqBody: createKnowledgeBaseRequest{}, respBody: dto.KnowledgeBase{}, status: http.StatusCreated, sec: secBearerOrSession},
+			reqBody: createKnowledgeBaseRequest{}, respBody: dto.KnowledgeBase{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases", tag: "知识库", summary: "列出知识库",
-			respBody: []*dto.KnowledgeBase{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: []*dto.KnowledgeBase{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id", tag: "知识库", summary: "查询知识库",
-			respBody: dto.KnowledgeBase{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.KnowledgeBase{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
 		{method: http.MethodPatch, path: wsBase + "/knowledge-bases/:id", tag: "知识库", summary: "更新知识库名称与描述",
-			reqBody: updateKnowledgeBaseBasicsRequest{}, respBody: dto.KnowledgeBase{}, status: http.StatusOK, sec: secSessionAdminRole},
+			reqBody: updateKnowledgeBaseBasicsRequest{}, respBody: dto.KnowledgeBase{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/summary", tag: "知识库", summary: "查询知识库汇总",
-			respBody: dto.KnowledgeBaseSummary{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.KnowledgeBaseSummary{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/jobs", tag: "知识库", summary: "查询知识库任务列表",
-			respBody: dto.JobSummaryPage{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.JobSummaryPage{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "document_id", in: "query", typeName: "string", format: "uuid"}, {name: "status", in: "query", typeName: "string"}, {name: "cursor", in: "query", typeName: "string"}, {name: "limit", in: "query", typeName: "integer"}}},
 	}
 }
 
 func (b *specBuilder) documentOps() []op {
 	return []op{
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/documents", tag: "文档", summary: "上传并导入文档（multipart）",
-			reqMultipart: true, reqBody: documentIngestForm{}, respBody: service.IngestDocumentResult{}, status: http.StatusCreated, sec: secBearerOrSession},
+			reqMultipart: true, reqBody: documentIngestForm{}, respBody: service.IngestDocumentResult{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
+		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/documents/text", tag: "文档", summary: "导入 Markdown 文本",
+			reqBody: ingestTextDocumentRequest{}, respBody: service.IngestDocumentResult{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents", tag: "文档", summary: "列出知识库文档",
-			respBody: []*dto.Document{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: []*dto.Document{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "kind", in: "query", typeName: "string", enum: []string{"file", "faq", "web"}}}},
 		{method: http.MethodGet, path: wsBase + "/documents/:document_id", tag: "文档", summary: "查询文档状态",
-			respBody: dto.Document{}, status: http.StatusOK, sec: secBearerOrSession},
+			respBody: dto.Document{}, status: http.StatusOK, sec: secSessionMember},
 		{method: http.MethodDelete, path: wsBase + "/documents/:document_id", tag: "文档", summary: "删除文档",
-			respBody: nil, status: http.StatusNoContent, sec: secBearerOrSession},
+			respBody: nil, status: http.StatusNoContent, sec: secSessionMember},
 	}
 }
 
@@ -287,33 +339,33 @@ func (b *specBuilder) documentAssetOps() []op {
 func (b *specBuilder) faqOps() []op {
 	return []op{
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/documents/faq", tag: "FAQ", summary: "创建 FAQ 文档",
-			reqBody: createFAQRequest{}, respBody: dto.FAQDocument{}, status: http.StatusCreated, sec: secSessionMember},
-		{method: http.MethodGet, path: wsBase + "/documents/:document_id/faq", tag: "FAQ", summary: "查询 FAQ 文档",
-			respBody: dto.FAQDocument{}, status: http.StatusOK, sec: secSessionMember},
-		{method: http.MethodPut, path: wsBase + "/documents/:document_id/faq", tag: "FAQ", summary: "更新 FAQ 文档",
-			reqBody: updateFAQRequest{}, respBody: dto.FAQDocument{}, status: http.StatusAccepted, sec: secSessionMember},
+			reqBody: createFAQRequest{}, respBody: dto.FAQDocument{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents/:document_id/faq", tag: "FAQ", summary: "查询 FAQ 文档",
+			respBody: dto.FAQDocument{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}},
+		{method: http.MethodPut, path: wsBase + "/knowledge-bases/:id/documents/:document_id/faq", tag: "FAQ", summary: "更新 FAQ 文档",
+			reqBody: updateFAQRequest{}, respBody: dto.FAQDocument{}, status: http.StatusAccepted, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
 	}
 }
 
 func (b *specBuilder) fileTreeOps() []op {
 	return []op{
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/file-tree", tag: "文件树", summary: "查询文件树",
-			respBody: dto.FileTree{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.FileTree{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}},
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/file-tree/folders", tag: "文件树", summary: "创建文件夹",
-			reqBody: createFileTreeFolderRequest{}, respBody: dto.FileTreeNode{}, status: http.StatusCreated, sec: secSessionMember},
+			reqBody: createFileTreeFolderRequest{}, respBody: dto.FileTreeNode{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
 		{method: http.MethodPatch, path: wsBase + "/knowledge-bases/:id/file-tree/nodes/:node_id", tag: "文件树", summary: "更新文件树节点",
-			reqBody: updateFileTreeNodeRequest{}, respBody: nil, status: http.StatusNoContent, sec: secSessionMember},
+			reqBody: updateFileTreeNodeRequest{}, respBody: nil, status: http.StatusNoContent, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
 		{method: http.MethodDelete, path: wsBase + "/knowledge-bases/:id/file-tree/nodes/:node_id", tag: "文件树", summary: "删除文件树节点",
-			respBody: nil, status: http.StatusNoContent, sec: secSessionMember},
+			respBody: nil, status: http.StatusNoContent, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsWrite}},
 	}
 }
 
 func (b *specBuilder) chunkOps() []op {
 	return []op{
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents/:document_id/chunks", tag: "分块", summary: "查询文档分块列表",
-			respBody: dto.DocumentChunkPage{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.DocumentChunkPage{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, params: []openapiParam{{name: "enabled", in: "query", typeName: "boolean"}, {name: "cursor", in: "query", typeName: "string"}, {name: "limit", in: "query", typeName: "integer"}}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/chunks/:chunk_id", tag: "分块", summary: "查询单个分块",
-			respBody: dto.Chunk{}, status: http.StatusOK, sec: secBearerOrSession},
+			respBody: dto.Chunk{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/chunks/:chunk_id/revisions", tag: "分块", summary: "查询分块修订历史",
 			respBody: []*dto.ChunkRevision{}, status: http.StatusOK, sec: secSessionMember},
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/chunks/:chunk_id/revisions", tag: "分块", summary: "创建分块修订",
@@ -344,7 +396,7 @@ func (b *specBuilder) searchOps() []op {
 func (b *specBuilder) jobOps() []op {
 	return []op{
 		{method: http.MethodGet, path: wsBase + "/jobs/:id", tag: "任务", summary: "查询任务状态",
-			respBody: dto.Job{}, status: http.StatusOK, sec: secBearerOrSession},
+			respBody: dto.Job{}, status: http.StatusOK, sec: secSessionMember},
 	}
 }
 
@@ -390,7 +442,7 @@ func (b *specBuilder) modelOps() []op {
 		{method: http.MethodGet, path: wsBase + "/model-providers/:provider_id/models", tag: "模型", summary: "列出供应商模型",
 			respBody: []*dto.Model{}, status: http.StatusOK, sec: secSessionMember},
 		{method: http.MethodGet, path: wsBase + "/models", tag: "模型", summary: "列出可选模型",
-			respBody: []*dto.Model{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: []*dto.Model{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}, params: []openapiParam{{name: "type", in: "query", typeName: "string", enum: []string{"embedding", "rerank", "all"}}, {name: "status", in: "query", typeName: "string", enum: []string{"active", "disabled", "all"}}, {name: "scope", in: "query", typeName: "string", enum: []string{"platform", "workspace", "all"}}}},
 		{method: http.MethodGet, path: wsBase + "/models/:model_id", tag: "模型", summary: "查询模型详情",
 			respBody: dto.Model{}, status: http.StatusOK, sec: secSessionMember},
 		{method: http.MethodPost, path: wsBase + "/model-providers/:provider_id/models", tag: "模型", summary: "创建 workspace 模型",

@@ -7,6 +7,8 @@ package value
 type APIScope string
 
 const (
+	// ScopeKnowledgeBasesRead 允许列出/查看 KnowledgeBase 及其统计与文件树。
+	ScopeKnowledgeBasesRead APIScope = "knowledge_bases:read"
 	// ScopeKnowledgeBasesWrite 允许创建 KnowledgeBase，并把新建项原子加入
 	// 当前 key 的知识库范围。
 	ScopeKnowledgeBasesWrite APIScope = "knowledge_bases:write"
@@ -21,6 +23,7 @@ const (
 // AllAPIScopes 返回全部合法 scope，供校验与文档复用。顺序固定。
 func AllAPIScopes() []APIScope {
 	return []APIScope{
+		ScopeKnowledgeBasesRead,
 		ScopeKnowledgeBasesWrite,
 		ScopeDocumentsRead,
 		ScopeDocumentsWrite,
