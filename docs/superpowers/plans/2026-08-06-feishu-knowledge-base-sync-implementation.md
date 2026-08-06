@@ -306,7 +306,7 @@ git commit -m "feat(source): 飞书应用凭证加密与选择器"
 - `SourceConnector.Fetch` 调 `/docx/v1/documents/:id/raw_content` 返回 `FetchedDocument{Markdown []byte, Title, EditTime, ObjType}`。
 - `token_client` 换 `tenant_access_token` + 内存缓存 + 过期刷新。
 
-- [ ] **Step 1: 写 fake server 驱动的适配器失败测试。**
+- [x] **Step 1: 写 fake server 驱动的适配器失败测试。**
 
 ```go
 func TestListTreeWalksWikiNodesRecursively(t *testing.T) {
@@ -330,23 +330,23 @@ func TestUrlParserExtractsWikiToken(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行并确认 RED。**
+- [x] **Step 2: 运行并确认 RED。**
 
 Run: `go test ./internal/adapters/source/feishu/... -count=1`
 
 Expected: FAIL，包不存在。
 
-- [ ] **Step 3: 实现 port + value + model + 飞书 client。**
+- [x] **Step 3: 实现 port + value + model + 飞书 client。**
 
 HTTP client 复用 SSRF-safe 配置（参考 `adapters/httpclient`）；token_client 缓存到 `sync.Map` 或 `sync.Mutex` 保护的 struct；ListTree 递归 wiki `/wiki/v2/spaces/:space/nodes` 与 drive `/drive/v1/files?folder_token=`；非 docx 节点记 warning 日志（不含正文）。
 
-- [ ] **Step 4: 运行适配器测试 + SSRSF 校验。**
+- [x] **Step 4: 运行适配器测试 + SSRSF 校验。**
 
 Run: `go test ./internal/adapters/source/feishu/... ./internal/adapters/httpclient -count=1`
 
 Expected: PASS；私网/redirect 拒绝、token 刷新、递归树、markdown 解析、URL 解析全部正确，无真实网络请求。
 
-- [ ] **Step 5: 提交。**
+- [x] **Step 5: 提交。**
 
 ```bash
 git add internal/ports/source internal/adapters/source
