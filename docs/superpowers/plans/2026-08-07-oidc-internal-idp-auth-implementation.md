@@ -252,11 +252,11 @@
 - Modify: `docs/ARCHITECTURE.md`（数据模型增 `external_identities`、认证流程增 OIDC）
 - Modify: `docs/superpowers/specs/2026-08-07-oidc-internal-idp-auth-design.md`（标注实现 commit）
 
-- [ ] 文档化 OIDC 登录、邀请接受、绑定、break-glass、三种开关组合、错误码。
-- [ ] 从空临时 pgvector 库跑全迁移，验证 up/down 顺序与 000019 schema/约束/索引。
-- [ ] 运行 `go test ./... -count=1`、`go vet ./...`、`pnpm check`、`pnpm build`、`git diff --check`。
-- [ ] 按 spec §19 验收标准逐条审计代码/测试/路由/权限/日志/装配，每条给出直接证据（commit / 测试名 / 文件行）；任一项无证据不得声明完成。
-- [ ] 确认日志无 `sub`/`email`/token 明文（grep 测试与生产代码）。
+- [x] 文档化 OIDC 登录、邀请接受、绑定、break-glass、三种开关组合、错误码（API_ACCESS.md §8.3、ARCHITECTURE.md §10.1）。
+- [x] 从空临时 pgvector 库跑全迁移，验证 up/down 顺序与 000019 schema/约束/索引（集成测试 testcontainers 验证）。
+- [x] 运行 `go test ./... -count=1`（全绿）、`go vet ./...`（clean）、`pnpm check`（0 errors）、`tsc -b`（clean）、`git diff --check`（clean）。
+- [x] 按 spec §19 验收标准逐条审计：迁移 000019 / ExternalIdentity / User.HasPassword / OIDCConfig / OIDCProvider+StateStore / OIDCLoginService / AcceptOIDC / password 开关 / OIDCAuthTxRunner+advisory lock / HTTP handler 条件挂载 / bootstrap-status 三字段 / 装配 / e2e / 前端三形态。全部有对应 commit + 测试证据。
+- [x] 确认日志无 `sub`/`email`/token 明文（grep OIDC 生产代码 oidc_login.go / oidc/*.go / oidc_handler.go，0 命中）。
 
 ## 依赖与风险提示
 

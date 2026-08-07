@@ -296,7 +296,7 @@ Document 删除在一个 Workspace transaction 中：
 
 ## 10. REST 与权限
 
-浏览器认证使用 HttpOnly session。跨 Workspace 资源统一隐藏为 404。当前知识路由包括：
+浏览器认证使用 HttpOnly session，v0.7.x 起支持 OIDC（内部 IdP）作为另一种 session 入口。跨 Workspace 资源统一隐藏为 404。当前知识路由包括：
 
 ```text
 POST   /api/v1/workspaces/:workspace_slug/knowledge-bases
@@ -331,6 +331,16 @@ GET    /api/v1/workspaces/:workspace_slug/models?type=embedding&status=active&sc
 Bearer 越界统一返回 `404 not_found`，缺 scope 返回 `403 insufficient_scope`，无效、过期或吊销凭证返回 `401 unauthorized`；Authorization 存在时不会回退 Session cookie。FAQ 旧的无 KnowledgeBase 路径已移除。
 
 member 可以读、上传、创建/更新 FAQ、操作允许的文件树、删除 Document 和 search；Chunk 编辑/启停、Generation 创建/激活要求 admin/owner。授权表和现有角色语义未改变。
+
+### 10.1 OIDC 登录（v0.7.x）
+
+接入企业内部受控 OIDC issuer 时，浏览器登录多一条 Authorization Code flow（PKCE + nonce + id_token 验签）路径，登录成功后复用既有 session cookie，`SessionAuth` 中间件零改动。`external_identities` 表记录 `(issuer, subject) → user` 绑定：
+
+- 复用：`(issuer, sub)` 已绑 user → 刷新 last_auth_at。
+- 合并：sub 未绑但 email 命中现有 user → 信任内部 IdP 邮箱，建 identity。
+- JIT：都未命中 → 建无密码 user + identity；空库首用户成为 platform_admin。
+
+所有建 user 路径（password 首注册、OIDC JIT、OIDC 邀请接受）共享 `pg_advisory_xact_lock('langhuan:auth-bootstrap')`，保证首管理员唯一。`auth.password.enabled` 与 `auth.oidc.enabled` 独立开关，支持 OIDC-first 形态（关 password、开 OIDC）。详见 `docs/superpowers/specs/2026-08-07-oidc-internal-idp-auth-design.md`。
 
 ## 11. 配置
 

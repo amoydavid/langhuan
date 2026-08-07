@@ -232,6 +232,53 @@ SiliconFlow 使用一个 `provider=siliconflow` 连接，同时承载 Embedding 
 - Bearer API Key 调用上述任一接口返回 `401 unauthorized`（路由不注册到 progGroup）。
 - `app_secret` 经 AES-256-GCM 加密落库，List/Get/PATCH 响应绝不回显明文；轮换只接受新值替换旧密文。
 
+## 8.3 OIDC 登录（内部 IdP、OIDC-first）
+
+琅嬛支持接入**企业内部受控 OIDC issuer**（Keycloak / Authentik / 自建 Dex 等），以 Authorization Code flow（PKCE S256 + OIDC nonce + id_token 验签）完成浏览器登录。OIDC 登录成功后复用既有 session cookie，`SessionAuth` 中间件与 API Key/MCP 程序化访问路径完全不变。
+
+### 配置形态
+
+`auth.password.enabled` 与 `auth.oidc.enabled` 是两个独立开关，至少开一个：
+
+| 形态 | `password.enabled` | `oidc.enabled` | 适用 |
+|---|---|---|---|
+| 全 OIDC（企业内部推荐） | false | true | 身份统一收归 IdP |
+| 并存（过渡/混合） | true | true | 两种登录入口 |
+| 纯 password（现状） | true | false | 未接入 OIDC |
+
+`oidc.enabled=true` 时 `issuer` / `client_id` / `client_secret` / `redirect_url` 必填（`redirect_url` 路径必须为 `/api/v1/auth/oidc/callback`）；`require_email_verified` 默认 true；discovery 采用 lazy（IdP 不可达不阻止服务启动）。
+
+### 路由
+
+| Method | Path | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/api/v1/auth/oidc/login` | 公开 | 普通登录/邀请接受发起；query 带 `next`、`invitation_token` |
+| GET | `/api/v1/auth/oidc/callback` | 公开 | IdP 回调；query 带 `code`/`state` 或 `error`/`state` |
+| POST | `/api/v1/auth/oidc/bind/start` | SessionAuth | 已登录用户绑定 OIDC |
+| GET | `/api/v1/auth/external-identities` | SessionAuth | 当前 user 外部身份非敏感摘要（不含 subject/raw_profile） |
+| GET | `/api/v1/auth/bootstrap-status` | 公开 | 返回 `{initialized, oidc_enabled, password_enabled}` |
+
+### 账号策略（内部 IdP，`trust_idp_email=true`）
+
+- `(issuer, sub)` 已绑 user → 复用，刷新 last_auth_at。
+- sub 未绑但 email 命中现有 user → **合并**（信任内部 IdP 邮箱），建 identity。
+- 都未命中 → JIT 建无密码 user + identity；空库首用户成为 platform_admin。
+- email 缺失/格式非法/`require_email_verified=true` 但未验证 → 拒绝。
+- 邀请接受：`profile.Email == invitation.InvitedEmail` 才建 membership。
+
+### bootstrap 与 break-glass
+
+- 所有建 user 路径（password 首注册、OIDC JIT、OIDC 邀请接受新建 user）共享 `pg_advisory_xact_lock('langhuan:auth-bootstrap')`，保证首管理员唯一。
+- `password.enabled=false` 时 `/auth/login` 返回 `403 password_login_disabled`，`/auth/register` 返回 `403 password_registration_disabled`（OIDC JIT 接管 bootstrap）。
+- IdP 宕机时运维把 `password.enabled` 改回 true 并重启即可 break-glass（保留一个本地 password platform_admin）。
+
+### 安全
+
+- state 存 Redis + 浏览器 nonce cookie 双绑，GETDEL 一次性消费；nonce 不匹配不删 state（防恶意消耗）。
+- `next` 拒绝开放重定向（`//` / 绝对 URL / 控制字符）。
+- `raw_profile` 只保存 whitelist claims（email/email_verified/preferred_username/name/picture），上限 16 KiB。
+- 日志只记 `provider=oidc, user_id, action`，不记 sub/email/id_token/access_token/raw_profile。
+
 ## 9. 安全须知
 
 - 生产环境必须使用 HTTPS。
