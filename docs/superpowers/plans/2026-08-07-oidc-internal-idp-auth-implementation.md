@@ -82,9 +82,9 @@
 - `OIDCAuthTxRunner{ WithinOIDCAuth(ctx, fn func(tx OIDCAuthTx) error) error }`（由 application 定义、infrastructure/db 实现）。
 - `OIDCAuthTx` 薄持久化接口（`AcquireBootstrapLock`、`CountUsers`、`FindIdentityByIssuerSubject`、`FindUserByID`、`FindUserByEmail`、`CreateUser`、`CreateIdentity`、`UpdateIdentityAuth`、`CreateSession`、`TouchLastLogin`、`FindActiveSession`、`FindPendingInvitationForUpdate`、`CreateMembership`、`MarkInvitationAccepted`）。
 
-- [ ] 确认接口签名与 spec §8 / §9.1 完全一致；`OIDCAuthTx` 方法命名与既有 repository 风格对齐（返回领域错误，`gorm.ErrRecordNotFound` 由实现层映射为 `ErrNotFound`）。
-- [ ] 在接口文件顶部注释写明：业务分支留在 service，runner 只建事务、提供 tx-bound 薄持久化；`AcquireBootstrapLock` 用 `pg_advisory_xact_lock(hashtextextended('langhuan:auth-bootstrap', 0))`。
-- [ ] 运行 `go vet ./internal/ports/...`、`gofmt`。
+- [x] 确认接口签名与 spec §8 / §9.1 完全一致；`OIDCAuthTx` 方法命名与既有 repository 风格对齐（返回领域错误，`gorm.ErrRecordNotFound` 由实现层映射为 `ErrNotFound`）。
+- [x] 在接口文件顶部注释写明：业务分支留在 service，runner 只建事务、提供 tx-bound 薄持久化；`AcquireBootstrapLock` 用 `pg_advisory_xact_lock(hashtextextended('langhuan:auth-bootstrap', 0))`。
+- [x] 运行 `go vet ./internal/ports/...`、`gofmt`。
 
 ### Task 3: OIDC adapter（provider + Redis state store）
 
