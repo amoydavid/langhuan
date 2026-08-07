@@ -378,6 +378,75 @@ func TestRegisterFirstUserRejectsWhenPasswordDisabled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// UserService.ChangePassword
+// ---------------------------------------------------------------------------
+
+func TestChangePasswordSuccess(t *testing.T) {
+	repo := newFakeUserRepository()
+	hasher := &fakePasswordHasher{}
+	svc := NewUserService(repo, hasher, true)
+	user := seedUser(repo, "alice@example.com", "Alice", "old-pw", false)
+
+	err := svc.ChangePassword(context.Background(), user.ID, "old-pw", "new-pw")
+	if err != nil {
+		t.Fatalf("ChangePassword error: %v", err)
+	}
+	if repo.users[user.ID].PasswordHash != "h:new-pw" {
+		t.Fatalf("password hash = %q, want h:new-pw", repo.users[user.ID].PasswordHash)
+	}
+}
+
+func TestChangePasswordRejectsWrongOldPassword(t *testing.T) {
+	repo := newFakeUserRepository()
+	hasher := &fakePasswordHasher{}
+	svc := NewUserService(repo, hasher, true)
+	user := seedUser(repo, "alice@example.com", "Alice", "old-pw", false)
+
+	err := svc.ChangePassword(context.Background(), user.ID, "wrong-old", "new-pw")
+	if !errors.Is(err, domainerrors.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized for wrong old password, got %v", err)
+	}
+}
+
+func TestChangePasswordRejectsEmptyInputs(t *testing.T) {
+	repo := newFakeUserRepository()
+	hasher := &fakePasswordHasher{}
+	svc := NewUserService(repo, hasher, true)
+	user := seedUser(repo, "alice@example.com", "Alice", "old-pw", false)
+
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{name: "empty old", old: "", new: "new-pw"},
+		{name: "empty new", old: "old-pw", new: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := svc.ChangePassword(context.Background(), user.ID, tt.old, tt.new)
+			if !errors.Is(err, domainerrors.ErrValidation) {
+				t.Fatalf("expected ErrValidation, got %v", err)
+			}
+		})
+	}
+}
+
+func TestChangePasswordRejectsPasswordlessAccount(t *testing.T) {
+	repo := newFakeUserRepository()
+	hasher := &fakePasswordHasher{}
+	svc := NewUserService(repo, hasher, true)
+	// 预置无密码账号（OIDC JIT）：seedUser 后清空 hash。
+	user := seedUser(repo, "ada@example.com", "Ada", "dummy", false)
+	repo.users[user.ID].PasswordHash = ""
+
+	err := svc.ChangePassword(context.Background(), user.ID, "anything", "new-pw")
+	if !errors.Is(err, domainerrors.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden for passwordless account, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // UserService.ResetPassword
 // ---------------------------------------------------------------------------
 

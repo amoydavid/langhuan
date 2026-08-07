@@ -129,3 +129,43 @@ func (s *UserService) GetByID(ctx context.Context, userID uuid.UUID) (*dto.Authe
 	}
 	return dto.AuthenticatedUserFromModel(user), nil
 }
+
+// ChangePassword 由已认证用户自助修改自己的密码。
+// 校验旧密码后更新为新密码；不撤销当前 session（用户在改密过程中保持登录）。
+// 无密码账号（OIDC JIT 建号）不允许走此路径，返回 ErrForbidden。
+func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, oldPassword, newPassword string) error {
+	oldPassword = strings.TrimSpace(oldPassword)
+	newPassword = strings.TrimSpace(newPassword)
+	if oldPassword == "" {
+		return fmt.Errorf("%w: 旧密码不能为空", domainerrors.ErrValidation)
+	}
+	if newPassword == "" {
+		return fmt.Errorf("%w: 新密码不能为空", domainerrors.ErrValidation)
+	}
+
+	user, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	// 无密码账号（OIDC JIT 建号）无旧密码可校验，禁止走此路径。
+	if !user.HasPassword() {
+		return domainerrors.ErrForbidden
+	}
+
+	ok, err := s.hasher.Verify(user.PasswordHash, oldPassword)
+	if err != nil {
+		return fmt.Errorf("旧密码校验失败: %w", err)
+	}
+	if !ok {
+		return domainerrors.ErrUnauthorized
+	}
+
+	hash, err := s.hasher.Hash(newPassword)
+	if err != nil {
+		return fmt.Errorf("密码哈希失败: %w", err)
+	}
+	if err := s.repo.UpdatePassword(ctx, userID, hash); err != nil {
+		return err
+	}
+	return nil
+}

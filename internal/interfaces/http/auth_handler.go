@@ -30,6 +30,7 @@ type UserService interface {
 	IsInitialized(ctx context.Context) (bool, error)
 	RegisterFirstUser(ctx context.Context, email, nickname, password string) (*dto.AuthenticatedUser, error)
 	ResetPassword(ctx context.Context, actorUserID uuid.UUID, actorIsPlatformAdmin bool, targetUserID uuid.UUID, newPassword string) error
+	ChangePassword(ctx context.Context, userID uuid.UUID, oldPassword, newPassword string) error
 	GetByID(ctx context.Context, userID uuid.UUID) (*dto.AuthenticatedUser, error)
 }
 
@@ -223,6 +224,31 @@ func (h authHandler) me(c *gin.Context) {
 		resp.Workspaces = summaries
 	}
 	c.JSON(stdhttp.StatusOK, resp)
+}
+
+type changePasswordRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+// changePassword 由已登录用户自助修改自己的密码（SessionAuth 已校验身份）。
+// 校验旧密码后更新；无密码账号（OIDC JIT）返回 403。
+func (h authHandler) changePassword(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusUnauthorized, "unauthorized", "unauthorized")
+		return
+	}
+	var req changePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "请求 JSON 无效")
+		return
+	}
+	if err := h.users.ChangePassword(c.Request.Context(), authCtx.UserID, req.OldPassword, req.NewPassword); err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.Status(stdhttp.StatusNoContent)
 }
 
 // setSessionCookie writes the hardened session cookie.

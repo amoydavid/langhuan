@@ -85,3 +85,13 @@ export async function getExternalIdentities() {
   )
   return response.data.identities
 }
+
+/**
+ * 已登录用户自助修改密码（验证旧密码 + 设新密码）。
+ */
+export async function changePassword(input: {
+  old_password: string
+  new_password: string
+}) {
+  await apiClient.post('/auth/change-password', input)
+}

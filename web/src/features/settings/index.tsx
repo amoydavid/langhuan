@@ -1,5 +1,5 @@
 import { Outlet } from '@tanstack/react-router'
-import { Languages, Palette } from 'lucide-react'
+import { Languages, Palette, UserCog } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Separator } from '@/components/ui/separator'
 import { SidebarNav } from './components/sidebar-nav'
@@ -7,6 +7,11 @@ import { SidebarNav } from './components/sidebar-nav'
 export function Settings() {
   const { t } = useTranslation()
   const sidebarNavItems = [
+    {
+      title: t('settings.nav.account'),
+      href: '/settings/account',
+      icon: <UserCog size={18} />,
+    },
     {
       title: t('settings.nav.appearance'),
       href: '/settings/appearance',

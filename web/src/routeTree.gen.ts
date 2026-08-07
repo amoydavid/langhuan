@@ -25,6 +25,7 @@ import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authen
 import { Route as AuthenticatedWorkspacesNewRouteImport } from './routes/_authenticated/workspaces/new'
 import { Route as AuthenticatedSettingsLanguageRouteImport } from './routes/_authenticated/settings/language'
 import { Route as AuthenticatedSettingsAppearanceRouteImport } from './routes/_authenticated/settings/appearance'
+import { Route as AuthenticatedSettingsAccountRouteImport } from './routes/_authenticated/settings/account'
 import { Route as authInvitationsTokenRouteImport } from './routes/(auth)/invitations/$token'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugRouteRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/route'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/index'
@@ -148,6 +149,12 @@ const AuthenticatedSettingsAppearanceRoute =
   AuthenticatedSettingsAppearanceRouteImport.update({
     id: '/appearance',
     path: '/appearance',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
+const AuthenticatedSettingsAccountRoute =
+  AuthenticatedSettingsAccountRouteImport.update({
+    id: '/account',
+    path: '/account',
     getParentRoute: () => AuthenticatedSettingsRouteRoute,
   } as any)
 const authInvitationsTokenRoute = authInvitationsTokenRouteImport.update({
@@ -423,6 +430,7 @@ export interface FileRoutesByFullPath {
   '/503': typeof errors503Route
   '/workspaces/$workspaceSlug': typeof AuthenticatedWorkspacesWorkspaceSlugRouteRouteWithChildren
   '/invitations/$token': typeof authInvitationsTokenRoute
+  '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
   '/settings/language': typeof AuthenticatedSettingsLanguageRoute
   '/workspaces/new': typeof AuthenticatedWorkspacesNewRoute
@@ -477,6 +485,7 @@ export interface FileRoutesByTo {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/invitations/$token': typeof authInvitationsTokenRoute
+  '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
   '/settings/language': typeof AuthenticatedSettingsLanguageRoute
   '/workspaces/new': typeof AuthenticatedWorkspacesNewRoute
@@ -531,6 +540,7 @@ export interface FileRoutesById {
   '/(errors)/503': typeof errors503Route
   '/_authenticated/workspaces/$workspaceSlug': typeof AuthenticatedWorkspacesWorkspaceSlugRouteRouteWithChildren
   '/(auth)/invitations/$token': typeof authInvitationsTokenRoute
+  '/_authenticated/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/_authenticated/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
   '/_authenticated/settings/language': typeof AuthenticatedSettingsLanguageRoute
   '/_authenticated/workspaces/new': typeof AuthenticatedWorkspacesNewRoute
@@ -589,6 +599,7 @@ export interface FileRouteTypes {
     | '/503'
     | '/workspaces/$workspaceSlug'
     | '/invitations/$token'
+    | '/settings/account'
     | '/settings/appearance'
     | '/settings/language'
     | '/workspaces/new'
@@ -643,6 +654,7 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/invitations/$token'
+    | '/settings/account'
     | '/settings/appearance'
     | '/settings/language'
     | '/workspaces/new'
@@ -696,6 +708,7 @@ export interface FileRouteTypes {
     | '/(errors)/503'
     | '/_authenticated/workspaces/$workspaceSlug'
     | '/(auth)/invitations/$token'
+    | '/_authenticated/settings/account'
     | '/_authenticated/settings/appearance'
     | '/_authenticated/settings/language'
     | '/_authenticated/workspaces/new'
@@ -865,6 +878,13 @@ declare module '@tanstack/react-router' {
       path: '/appearance'
       fullPath: '/settings/appearance'
       preLoaderRoute: typeof AuthenticatedSettingsAppearanceRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
+    '/_authenticated/settings/account': {
+      id: '/_authenticated/settings/account'
+      path: '/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof AuthenticatedSettingsAccountRouteImport
       parentRoute: typeof AuthenticatedSettingsRouteRoute
     }
     '/(auth)/invitations/$token': {
@@ -1161,6 +1181,7 @@ const AuthenticatedAdminRouteRouteWithChildren =
   )
 
 interface AuthenticatedSettingsRouteRouteChildren {
+  AuthenticatedSettingsAccountRoute: typeof AuthenticatedSettingsAccountRoute
   AuthenticatedSettingsAppearanceRoute: typeof AuthenticatedSettingsAppearanceRoute
   AuthenticatedSettingsLanguageRoute: typeof AuthenticatedSettingsLanguageRoute
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
@@ -1168,6 +1189,7 @@ interface AuthenticatedSettingsRouteRouteChildren {
 
 const AuthenticatedSettingsRouteRouteChildren: AuthenticatedSettingsRouteRouteChildren =
   {
+    AuthenticatedSettingsAccountRoute: AuthenticatedSettingsAccountRoute,
     AuthenticatedSettingsAppearanceRoute: AuthenticatedSettingsAppearanceRoute,
     AuthenticatedSettingsLanguageRoute: AuthenticatedSettingsLanguageRoute,
     AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,

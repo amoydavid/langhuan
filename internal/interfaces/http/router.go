@@ -147,6 +147,9 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		{
 			authed.POST("/auth/logout", authH.logout)
 			authed.GET("/auth/me", authH.me)
+			if deps.Users != nil {
+				authed.POST("/auth/change-password", authH.changePassword)
+			}
 			// OIDC 绑定发起 + 外部身份查询（条件挂载）。
 			if deps.OIDC != nil {
 				oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.Auth, deps.SessionConfig)

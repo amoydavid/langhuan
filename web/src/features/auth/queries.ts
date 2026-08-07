@@ -1,5 +1,10 @@
 import { queryOptions } from '@tanstack/react-query'
-import { getBootstrapStatus, getMe, getPublicInvitation } from './api'
+import {
+  getBootstrapStatus,
+  getExternalIdentities,
+  getMe,
+  getPublicInvitation,
+} from './api'
 
 export function meQueryOptions() {
   return queryOptions({
@@ -21,6 +26,14 @@ export function publicInvitationQueryOptions(token: string) {
   return queryOptions({
     queryKey: ['public-invitation', token],
     queryFn: () => getPublicInvitation(token),
+    staleTime: 30_000,
+  })
+}
+
+export function externalIdentitiesQueryOptions() {
+  return queryOptions({
+    queryKey: ['external-identities'],
+    queryFn: getExternalIdentities,
     staleTime: 30_000,
   })
 }

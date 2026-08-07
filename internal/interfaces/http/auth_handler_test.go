@@ -95,6 +95,12 @@ type fakeUserService struct {
 	resetAdmin    bool
 	resetPassword string
 
+	changePasswordCalled bool
+	changeUserID         uuid.UUID
+	changeOldPassword    string
+	changeNewPassword    string
+	changePasswordErr    error
+
 	byIDUser *dto.AuthenticatedUser
 	byIDErr  error
 }
@@ -125,6 +131,14 @@ func (s *fakeUserService) ResetPassword(_ context.Context, actorUserID uuid.UUID
 	s.resetTarget = targetUserID
 	s.resetPassword = newPassword
 	return s.resetErr
+}
+
+func (s *fakeUserService) ChangePassword(_ context.Context, userID uuid.UUID, oldPassword, newPassword string) error {
+	s.changePasswordCalled = true
+	s.changeUserID = userID
+	s.changeOldPassword = oldPassword
+	s.changeNewPassword = newPassword
+	return s.changePasswordErr
 }
 
 func (s *fakeUserService) GetByID(_ context.Context, userID uuid.UUID) (*dto.AuthenticatedUser, error) {
@@ -662,3 +676,30 @@ func TestPostAuthRegisterWithInvitationTokenSetsCookie(t *testing.T) {
 
 // keep imports referenced
 var _ = fmt.Sprintf
+
+func TestChangePasswordEndpoint(t *testing.T) {
+	deps, auth, users, _, _ := newAuthTestDeps()
+	userID := uuid.New()
+	auth.authUser = &model.User{ID: userID}
+	router := NewRouter(deps)
+
+	body := strings.NewReader(`{"old_password":"old","new_password":"new"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/change-password", body)
+	req.AddCookie(&stdhttp.Cookie{Name: testCookieName, Value: uuid.New().String()})
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != stdhttp.StatusNoContent {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !users.changePasswordCalled {
+		t.Fatal("ChangePassword was not called")
+	}
+	if users.changeUserID != userID {
+		t.Fatalf("changeUserID = %v, want %v", users.changeUserID, userID)
+	}
+	if users.changeOldPassword != "old" || users.changeNewPassword != "new" {
+		t.Fatalf("passwords = old=%q new=%q", users.changeOldPassword, users.changeNewPassword)
+	}
+}

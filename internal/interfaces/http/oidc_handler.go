@@ -36,7 +36,7 @@ const oidcNonceCookiePrefix = "oidc_nonce_"
 // 前端路由常量：登录失败/成功后重定向的目标路径，避免硬编码漂移。
 const (
 	loginRoute       = "/sign-in"
-	settingsRoute    = "/settings"
+	settingsRoute    = "/settings/account"
 	defaultNextRoute = "/"
 )
 
