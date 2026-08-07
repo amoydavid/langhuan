@@ -29,6 +29,7 @@ describe('AppHeader', () => {
     expect(header).not.toBeNull()
     expect(header?.className).toContain('sticky')
     expect(header?.className).toContain('h-14')
+    expect(header?.className).toContain('shrink-0')
     expect(
       Array.from(header?.querySelectorAll('[data-header-item]') ?? []).map(
         (element) => element.getAttribute('data-header-item')

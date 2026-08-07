@@ -22,7 +22,7 @@ export function AppHeader({
     <header
       data-testid='app-header'
       className={cn(
-        'z-40 h-14 border-b bg-background/90 backdrop-blur supports-backdrop-filter:bg-background/75',
+        'z-40 h-14 shrink-0 border-b bg-background/90 backdrop-blur supports-backdrop-filter:bg-background/75',
         fixed && 'header-fixed sticky top-0 w-full',
         className
       )}

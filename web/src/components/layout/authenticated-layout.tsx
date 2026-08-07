@@ -25,8 +25,12 @@ export function AuthenticatedLayout({ children }: AuthenticatedLayoutProps) {
             // Set content container, so we can use container queries
             '@container/content',
 
-            // If layout is fixed, set the height
-            // to 100svh to prevent overflow
+            // Keep page scrolling inside the app shell. Radix overlays lock
+            // body scrolling while open; an in-shell scroll host keeps the
+            // sticky header visible during that lock.
+            'h-svh min-h-0 overflow-auto',
+
+            // If layout is fixed, set the height to 100svh to prevent overflow
             'has-data-[layout=fixed]:h-svh',
 
             // If layout is fixed and sidebar is inset,
