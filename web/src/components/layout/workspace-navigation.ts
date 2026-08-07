@@ -17,7 +17,10 @@ export function buildWorkspaceNavigation(
   isPlatformAdmin: boolean
 ): NavGroup[] {
   const base = `/workspaces/${encodeURIComponent(workspaceSlug)}`
-  const items: NavGroup['items'] = [
+  const isAdminLike = role === 'owner' || role === 'admin'
+
+  // 业务区：所有成员可见的高频功能。
+  const workspaceItems: NavGroup['items'] = [
     {
       title: i18n.t('common.layout.navOverview'),
       url: base,
@@ -35,29 +38,45 @@ export function buildWorkspaceNavigation(
       url: `${base}/models`,
       icon: Boxes,
     },
-    {
-      title: i18n.t('common.layout.navMembers'),
-      url: `${base}/members`,
-      icon: Users,
-    },
   ]
-  if (role === 'owner' || role === 'admin') {
-    items.push({ title: 'API Key', url: `${base}/api-keys`, icon: KeyRound })
-    items.push({
-      title: i18n.t('common.layout.navIntegrations'),
-      url: `${base}/integrations`,
-      icon: Plug,
-    })
-    items.push({
-      title: i18n.t('common.layout.navSearchSettings'),
-      url: `${base}/search-settings`,
-      icon: SlidersHorizontal,
+
+  // 管理区：仅 owner/admin 可见的低频配置。
+  // 顺序按"资源/人"在前、"访问/算法"在后：成员 → 集成 → API 密钥 → 检索策略。
+  const adminItems: NavGroup['items'] = isAdminLike
+    ? [
+        {
+          title: i18n.t('common.layout.navMembers'),
+          url: `${base}/members`,
+          icon: Users,
+        },
+        {
+          title: i18n.t('common.layout.navIntegrations'),
+          url: `${base}/integrations`,
+          icon: Plug,
+        },
+        {
+          title: i18n.t('common.layout.navApiKeys'),
+          url: `${base}/api-keys`,
+          icon: KeyRound,
+        },
+        {
+          title: i18n.t('common.layout.navSearchSettings'),
+          url: `${base}/search-settings`,
+          icon: SlidersHorizontal,
+        },
+      ]
+    : []
+
+  const groups: NavGroup[] = [
+    { title: i18n.t('common.layout.navWorkspace'), items: workspaceItems },
+  ]
+  if (isAdminLike) {
+    groups.push({
+      title: i18n.t('common.layout.navWorkspaceManagement'),
+      items: adminItems,
     })
   }
-  return [
-    { title: i18n.t('common.layout.navWorkspace'), items },
-    ...buildPlatformNavigation(isPlatformAdmin),
-  ]
+  return [...groups, ...buildPlatformNavigation(isPlatformAdmin)]
 }
 
 export function buildPlatformNavigation(isPlatformAdmin: boolean): NavGroup[] {

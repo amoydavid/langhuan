@@ -122,6 +122,7 @@ describe('AppSidebar', () => {
 
     expect(container.textContent).toContain('工作区')
     expect(container.textContent).toContain('概览')
-    expect(container.textContent).toContain('API Key')
+    expect(container.textContent).toContain('工作区管理')
+    expect(container.textContent).toContain('API 密钥')
   })
 })
