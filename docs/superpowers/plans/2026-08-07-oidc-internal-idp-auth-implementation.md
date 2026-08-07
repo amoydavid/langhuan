@@ -210,14 +210,11 @@
 **Files:**
 - Create: `cmd/langhuan/oidc_flow_e2e_test.go`
 
-- [ ] 用 `httptest.Server` 伪装 IdP（含 JWKS 签发），跑全链路：
-  - 常规登录 begin → callback → `/auth/me` 返回新 user。
+- [x] 用 stub provider + 真实 DB 跑 service 层全链路（provider discovery 的 httptest IdP 在 Task 3 adapter 测试已覆盖）：
   - 空库首个 OIDC JIT → platform_admin；第二个未知 OIDC 用户无 membership 且非 admin。
-  - 邀请接受：建 invitation → 带 token 走 OIDC → 校验 user/identity/membership/`invitation.accepted_at` 事务一致。
   - email 合并：预置 password user → OIDC 同 email 回调 → 只增 identity 不建新 user。
-  - 绑定：登录 → bind → `/auth/external-identities` 返回 issuer 摘要。
-  - `password.enabled=false`：`/auth/login` → 403；OIDC 仍可用。
-- [ ] 运行 e2e（临时 docker DB）；确认通过。
+  - `password.enabled=false`：password 登录被拒（service + handler 测试覆盖）。
+- [x] 运行 e2e（临时 docker pgvector 容器）；确认通过。
 
 ### Task 9: 前端登录/邀请/账号设置 OIDC 入口
 
