@@ -19,10 +19,15 @@ type WorkspaceRepository interface {
 	GetDefault(ctx context.Context) (*model.Workspace, error)
 	GetBySlug(ctx context.Context, slug string) (*model.Workspace, error)
 	CreateWithOwner(ctx context.Context, ws *model.Workspace, ownerUserID uuid.UUID) error
+	// CreateWithOwnerIfEmpty 在单租户模式下原子地创建 workspace 与 owner 成员关系：
+	// 仅当平台尚无任何 workspace 时成功，否则返回 ErrWorkspaceLimitReached。
+	// 由实现方在事务内用锁保证并发安全（多租户模式不调用）。
+	CreateWithOwnerIfEmpty(ctx context.Context, ws *model.Workspace, ownerUserID uuid.UUID) error
 }
 
 type WorkspaceService struct {
-	repo WorkspaceRepository
+	repo         WorkspaceRepository
+	singleTenant bool
 }
 
 type CreateWorkspaceInput struct {
@@ -30,8 +35,8 @@ type CreateWorkspaceInput struct {
 	Slug string
 }
 
-func NewWorkspaceService(repo WorkspaceRepository) *WorkspaceService {
-	return &WorkspaceService{repo: repo}
+func NewWorkspaceService(repo WorkspaceRepository, singleTenant bool) *WorkspaceService {
+	return &WorkspaceService{repo: repo, singleTenant: singleTenant}
 }
 
 func (s *WorkspaceService) Create(ctx context.Context, input CreateWorkspaceInput) (*dto.Workspace, error) {
@@ -48,6 +53,8 @@ func (s *WorkspaceService) Create(ctx context.Context, input CreateWorkspaceInpu
 // CreateForPlatformAdmin 创建 workspace 并在同一事务内为发起者建立 owner 成员关系。
 // 仅 platform_admin 可调用（防御性校验：真正的鉴权由中间件完成）；
 // 非管理员一律 ErrForbidden。slug 唯一冲突由事务内唯一约束保证。
+// 单租户模式下（OIDC 开启）调用 CreateWithOwnerIfEmpty 原子地限制平台仅存在
+// 一个 workspace；已存在时返回 ErrWorkspaceLimitReached。
 func (s *WorkspaceService) CreateForPlatformAdmin(ctx context.Context, input CreateWorkspaceInput, creatorUserID uuid.UUID, creatorIsPlatformAdmin bool) (*dto.Workspace, error) {
 	if !creatorIsPlatformAdmin {
 		return nil, domainerrors.ErrForbidden
@@ -55,6 +62,12 @@ func (s *WorkspaceService) CreateForPlatformAdmin(ctx context.Context, input Cre
 	ws, err := model.NewWorkspace(input.Name, input.Slug, map[string]any{})
 	if err != nil {
 		return nil, err
+	}
+	if s.singleTenant {
+		if err := s.repo.CreateWithOwnerIfEmpty(ctx, ws, creatorUserID); err != nil {
+			return nil, err
+		}
+		return dto.WorkspaceFromModel(ws), nil
 	}
 	if err := s.repo.CreateWithOwner(ctx, ws, creatorUserID); err != nil {
 		return nil, err

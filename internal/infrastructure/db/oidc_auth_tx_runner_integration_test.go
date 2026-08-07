@@ -16,6 +16,8 @@ import (
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
+	"github.com/dajee/langhuan/internal/infrastructure/config"
+	authport "github.com/dajee/langhuan/internal/ports/auth"
 )
 
 func TestExternalIdentitiesMigrationIntegration(t *testing.T) {
@@ -372,5 +374,67 @@ func TestOIDCAuthTxFindPendingInvitationForUpdateIntegration(t *testing.T) {
 	})
 	if !errors.Is(err, domainerrors.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestOIDCLoginSingleTenantAutoJoinIntegration(t *testing.T) {
+	// 真实 DB 上验证单租户自动加入：新 OIDC 用户登录后自动成为唯一 workspace 的 member。
+	ctx, gormDB := openIntegrationTestDB(t)
+	authTx := NewOIDCAuthTxRunner(gormDB)
+	identityRepo := NewExternalIdentityRepository(gormDB)
+	svc := service.NewOIDCLoginService(nil, nil, authTx, identityRepo,
+		config.SessionConfig{LifetimeSeconds: 3600},
+		config.OIDCConfig{Issuer: "https://sso.example.com"},
+		true, // 单租户
+		nil,
+	)
+
+	// 首用户（platform_admin）创建唯一 workspace。
+	userRepo := NewUserRepository(gormDB)
+	wsRepo := NewWorkspaceRepository(gormDB)
+	owner, err := model.NewProvisionalUser("owner@example.com", "Owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner.IsPlatformAdmin = true
+	if err := userRepo.Create(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := model.NewWorkspace("Tenant", "tenant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wsRepo.CreateWithOwner(ctx, ws, owner.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 新 OIDC 用户登录 → JIT 建号 + 自动加入 member。
+	session, err := svc.LoginOrProvision(ctx, &authport.OIDCProfile{
+		Subject: "sub-new", Email: "new@example.com", EmailVerified: true, Name: "New", RawProfile: `{"sub":"sub-new"}`,
+	}, "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision: %v", err)
+	}
+
+	var mbRow MembershipRow
+	if err := gormDB.First(&mbRow, "workspace_id = ? AND user_id = ?", ws.ID, session.UserID).Error; err != nil {
+		t.Fatalf("自动加入的 membership 不存在: %v", err)
+	}
+	if mbRow.Role != "member" {
+		t.Fatalf("auto-join role = %q, want member", mbRow.Role)
+	}
+
+	// 再次登录（identity 命中）不应重复建 membership。
+	if _, err := svc.LoginOrProvision(ctx, &authport.OIDCProfile{
+		Subject: "sub-new", Email: "new@example.com", EmailVerified: true, Name: "New", RawProfile: `{"sub":"sub-new"}`,
+	}, "ua", "1.2.3.4"); err != nil {
+		t.Fatalf("第二次 LoginOrProvision: %v", err)
+	}
+	var mbCount int64
+	if err := gormDB.Model(&MembershipRow{}).Where("workspace_id = ? AND user_id = ?", ws.ID, session.UserID).Count(&mbCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mbCount != 1 {
+		t.Fatalf("memberships = %d, want 1（幂等）", mbCount)
 	}
 }

@@ -8,6 +8,7 @@ var (
 	ErrUnauthorized                   = stderrors.New("未认证")
 	ErrForbidden                      = stderrors.New("无权限")
 	ErrConflict                       = stderrors.New("资源冲突")
+	ErrWorkspaceLimitReached          = stderrors.New("单租户模式下仅允许一个 workspace")
 	ErrRateLimited                    = stderrors.New("请求过于频繁")
 	ErrPasswordLoginDisabled          = stderrors.New("密码登录已关闭")
 	ErrPasswordRegistrationDisabled   = stderrors.New("密码注册已关闭")

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dajee/langhuan/internal/application/service"
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
@@ -76,6 +77,7 @@ func TestOIDCLoginOrProvisionE2E(t *testing.T) {
 	svc := service.NewOIDCLoginService(provider, newStubStateStore(), authTx, identityRepo,
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: "https://sso.example.com", RequireEmailVerified: true},
+		false,
 		nil,
 	)
 
@@ -142,6 +144,7 @@ func TestOIDCEmailMergeE2E(t *testing.T) {
 	svc := service.NewOIDCLoginService(provider, newStubStateStore(), authTx, identityRepo,
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: "https://sso.example.com"},
+		false,
 		nil,
 	)
 
@@ -157,6 +160,60 @@ func TestOIDCEmailMergeE2E(t *testing.T) {
 	require.NoError(t, gormDB.Table("users").Count(&rowCount).Error)
 	require.Equal(t, int64(2), rowCount, "email 合并不应新建 user")
 	_ = count
+}
+
+// TestSingleTenantWorkspaceAndAutoJoinE2E 验证单租户模式（OIDC 开启）全链路：
+// 首用户 JIT 建号成为 platform_admin → 创建唯一 workspace（owner）→
+// 第二个 OIDC 用户登录自动加入 member → 再次创建 workspace 被拒（仅允许一个）。
+func TestSingleTenantWorkspaceAndAutoJoinE2E(t *testing.T) {
+	ctx := context.Background()
+	testDSN := testsupport.NewMigratedPostgres(t)
+	gormDB, err := db.Open(testDSN)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if sqlDB, e := gormDB.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	wsRepo := db.NewWorkspaceRepository(gormDB)
+	authTx := db.NewOIDCAuthTxRunner(gormDB)
+	identityRepo := db.NewExternalIdentityRepository(gormDB)
+	wsSvc := service.NewWorkspaceService(wsRepo, true) // 单租户
+	oidcSvc := service.NewOIDCLoginService(&stubOIDCProvider{}, newStubStateStore(), authTx, identityRepo,
+		config.SessionConfig{LifetimeSeconds: 3600},
+		config.OIDCConfig{Issuer: "https://sso.example.com"},
+		true, // 单租户
+		nil,
+	)
+
+	// 首用户登录（空库 JIT → platform_admin）。
+	s1, err := oidcSvc.LoginOrProvision(ctx, &authport.OIDCProfile{
+		Subject: "e2e-owner-sub", Email: "owner@example.com", EmailVerified: true, Name: "Owner", RawProfile: `{"sub":"e2e-owner-sub"}`,
+	}, "ua", "1.2.3.4")
+	require.NoError(t, err)
+
+	// 首用户创建唯一 workspace，自动成为 owner。
+	ws, err := wsSvc.CreateForPlatformAdmin(ctx, service.CreateWorkspaceInput{Name: "Tenant", Slug: "tenant"}, s1.UserID, true)
+	require.NoError(t, err)
+
+	// 第二个 OIDC 用户登录 → 自动加入 member。
+	s2, err := oidcSvc.LoginOrProvision(ctx, &authport.OIDCProfile{
+		Subject: "e2e-new-sub", Email: "new@example.com", EmailVerified: true, Name: "New", RawProfile: `{"sub":"e2e-new-sub"}`,
+	}, "ua", "1.2.3.4")
+	require.NoError(t, err)
+	var mbRow db.MembershipRow
+	require.NoError(t, gormDB.First(&mbRow, "workspace_id = ? AND user_id = ?", ws.ID, s2.UserID).Error)
+	require.Equal(t, "member", mbRow.Role)
+
+	// 再次创建 workspace → 单租户限制。
+	_, err = wsSvc.CreateForPlatformAdmin(ctx, service.CreateWorkspaceInput{Name: "Second", Slug: "second"}, s1.UserID, true)
+	require.ErrorIs(t, err, domainerrors.ErrWorkspaceLimitReached)
+
+	// 全库仍只有一个 workspace。
+	var wsCount int64
+	require.NoError(t, gormDB.Table("workspaces").Count(&wsCount).Error)
+	require.Equal(t, int64(1), wsCount)
 }
 
 // TestOIDCPasswordDisabledBlocksPasswordLoginE2E 验证 password.enabled=false 时 password 登录被拒。

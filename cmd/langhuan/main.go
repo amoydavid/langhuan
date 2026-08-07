@@ -461,7 +461,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 			stateStore := oidcadapter.NewRedisStateStore(redisClient, cfg.Auth.OIDC.StateTTLSeconds)
 			identityRepo := db.NewExternalIdentityRepository(gormDB)
 			authTxRunner := db.NewOIDCAuthTxRunner(gormDB)
-			oidcLogin = service.NewOIDCLoginService(oidcProvider, stateStore, authTxRunner, identityRepo, cfg.Auth.Session, cfg.Auth.OIDC, log)
+			oidcLogin = service.NewOIDCLoginService(oidcProvider, stateStore, authTxRunner, identityRepo, cfg.Auth.Session, cfg.Auth.OIDC, cfg.Auth.OIDC.Enabled, log)
 			// 邀请接受复用同一 runner。
 			invitations.WithOIDCAuthTx(authTxRunner)
 			oidcAcceptor = invitations
@@ -615,7 +615,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		indexGenerationStore:    indexGenerationStore,
 		faqRepo:                 faqRepo,
 		retrievalRepo:           retrievalRepo,
-		workspaces:              service.NewWorkspaceService(wsRepo),
+		workspaces:              service.NewWorkspaceService(wsRepo, cfg.Auth.OIDC.Enabled),
 		workspaceReadiness:      service.NewWorkspaceReadinessService(workspaceReadinessRepo),
 		workspaceSearchSettings: workspaceSearchSettings,
 		knowledgeBaseSummary:    service.NewKnowledgeBaseSummaryService(knowledgeBaseSummaryRepo),

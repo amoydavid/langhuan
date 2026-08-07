@@ -61,6 +61,7 @@ func (h authHandler) bootstrapStatus(c *gin.Context) {
 		"initialized":      initialized,
 		"oidc_enabled":     h.oidcEnabled,
 		"password_enabled": h.passwordEnabled,
+		"single_tenant":    h.oidcEnabled,
 	})
 }
 
@@ -175,8 +176,9 @@ func (h authHandler) logout(c *gin.Context) {
 
 // meResponse is the body returned by GET /api/v1/auth/me.
 type meResponse struct {
-	User       *dto.AuthenticatedUser `json:"user"`
-	Workspaces []workspaceSummary     `json:"workspaces"`
+	User         *dto.AuthenticatedUser `json:"user"`
+	Workspaces   []workspaceSummary     `json:"workspaces"`
+	SingleTenant bool                   `json:"single_tenant"`
 }
 
 type workspaceSummary struct {
@@ -225,6 +227,7 @@ func (h authHandler) me(c *gin.Context) {
 		}
 		resp.Workspaces = summaries
 	}
+	resp.SingleTenant = h.oidcEnabled
 	c.JSON(stdhttp.StatusOK, resp)
 }
 

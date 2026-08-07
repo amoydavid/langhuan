@@ -50,7 +50,7 @@ func TestV2DocumentRevisionChunkingIntegration(t *testing.T) {
 	faqRepo := db.NewFAQRepository(tx)
 	chunkRepo := db.NewChunkRepository(tx)
 
-	workspaceService := service.NewWorkspaceService(workspaceRepo)
+	workspaceService := service.NewWorkspaceService(workspaceRepo, false)
 	kbService := service.NewKnowledgeBaseService(kbRepo)
 	queue := &integrationJobQueue{}
 	rawStore := local.NewRawDocumentStore(t.TempDir())

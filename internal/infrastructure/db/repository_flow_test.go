@@ -52,7 +52,7 @@ func TestV021AuthFlow(t *testing.T) {
 	authSvc := service.NewAuthService(userRepo, sessRepo, hasher, fakeRateLimiter{}, authCfg)
 	invSvc := service.NewInvitationService(invRepo, wsRepo, userRepo, hasher, authCfg)
 	mbSvc := service.NewMembershipService(mbRepo, userRepo)
-	wsSvc := service.NewWorkspaceService(wsRepo)
+	wsSvc := service.NewWorkspaceService(wsRepo, false)
 	kbSvc := service.NewKnowledgeBaseService(kbRepo)
 
 	// Track created workspace + user ids for cleanup. ORDER MATTERS: delete the

@@ -192,3 +192,37 @@ func (t *oidcAuthTx) MarkInvitationAccepted(ctx context.Context, invitationID, u
 	}
 	return nil
 }
+
+func (t *oidcAuthTx) CountWorkspaces(ctx context.Context) (int64, error) {
+	var count int64
+	if err := t.tx.WithContext(ctx).Model(&WorkspaceRow{}).Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("统计工作区失败: %w", err)
+	}
+	return count, nil
+}
+
+func (t *oidcAuthTx) GetFirstWorkspace(ctx context.Context) (*model.Workspace, error) {
+	var row WorkspaceRow
+	err := t.tx.WithContext(ctx).Order("created_at ASC, id ASC").First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerrors.ErrNotFound
+		}
+		return nil, fmt.Errorf("读取工作区失败: %w", err)
+	}
+	return workspaceFromRow(&row), nil
+}
+
+func (t *oidcAuthTx) FindMembership(ctx context.Context, workspaceID, userID uuid.UUID) (*model.Membership, error) {
+	var row MembershipRow
+	err := t.tx.WithContext(ctx).
+		Where("workspace_id = ? AND user_id = ?", workspaceID, userID).
+		First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerrors.ErrNotFound
+		}
+		return nil, fmt.Errorf("查找成员关系失败: %w", err)
+	}
+	return membershipFromRow(&row), nil
+}

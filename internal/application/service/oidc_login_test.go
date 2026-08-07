@@ -64,15 +64,17 @@ func (s *fakeStateStore) Consume(ctx context.Context, state, browserNonce string
 
 // fakeAuthTx 实现 OIDCAuthTx 与 OIDCAuthTxRunner 用于测试。
 type fakeAuthTx struct {
-	users         map[uuid.UUID]*model.User
-	usersByEmail  map[string]*model.User
-	identities    []*model.ExternalIdentity
-	sessions      []*model.Session
-	memberships   []*model.Membership
-	invitations   map[string]*model.Invitation // tokenHash → invitation
-	bootstrapLock bool
-	bootstrapCnt  int // 记录 AcquireBootstrapLock 调用次数
-	failOn        string
+	users               map[uuid.UUID]*model.User
+	usersByEmail        map[string]*model.User
+	identities          []*model.ExternalIdentity
+	sessions            []*model.Session
+	memberships         []*model.Membership
+	invitations         map[string]*model.Invitation // tokenHash → invitation
+	workspaces          []*model.Workspace           // 单租户自动加入用；按创建顺序
+	bootstrapLock       bool
+	bootstrapCnt        int // 记录 AcquireBootstrapLock 调用次数
+	findMembershipCalls int // 记录 FindMembership 调用次数（幂等性断言用）
+	failOn              string
 }
 
 func newFakeAuthTx() *fakeAuthTx {
@@ -178,6 +180,27 @@ func (f *fakeAuthTx) MarkInvitationAccepted(ctx context.Context, invitationID, u
 	return domainerrors.ErrConflict
 }
 
+func (f *fakeAuthTx) CountWorkspaces(ctx context.Context) (int64, error) {
+	return int64(len(f.workspaces)), nil
+}
+
+func (f *fakeAuthTx) GetFirstWorkspace(ctx context.Context) (*model.Workspace, error) {
+	if len(f.workspaces) == 0 {
+		return nil, domainerrors.ErrNotFound
+	}
+	return f.workspaces[0], nil
+}
+
+func (f *fakeAuthTx) FindMembership(ctx context.Context, workspaceID, userID uuid.UUID) (*model.Membership, error) {
+	f.findMembershipCalls++
+	for _, m := range f.memberships {
+		if m.WorkspaceID == workspaceID && m.UserID == userID {
+			return m, nil
+		}
+	}
+	return nil, domainerrors.ErrNotFound
+}
+
 // fakeIdentityReader 实现 ExternalIdentityReader。
 type fakeIdentityReader struct {
 	list []*model.ExternalIdentity
@@ -207,6 +230,7 @@ func newTestOIDCLoginService(t *testing.T, issuer string, requireVerified bool) 
 	svc := NewOIDCLoginService(prov, store, tx, reader,
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: issuer, RequireEmailVerified: requireVerified},
+		false, // 多租户（OIDC 关闭）默认不自动加入
 		nil,
 	)
 	return svc, prov, store, tx, reader
@@ -484,6 +508,7 @@ func TestConsumeAndExchangeValidatesProfile(t *testing.T) {
 	svc := NewOIDCLoginService(prov, store, tx, &fakeIdentityReader{},
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: "https://sso.example.com"},
+		false,
 		nil,
 	)
 
@@ -720,3 +745,108 @@ func TestNeedsEmailCompletion(t *testing.T) {
 
 // 编译期引用 value 包避免未使用告警（invitation 测试复用）。
 var _ = value.RoleAdmin
+
+// ---------------------------------------------------------------------------
+// 单租户模式：OIDC 新用户自动加入唯一 workspace
+// ---------------------------------------------------------------------------
+
+func TestOIDCLoginSingleTenantAutoJoinsWorkspace(t *testing.T) {
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	svc.singleTenant = true
+	ctx := context.Background()
+	// 预置唯一 workspace（首个 platform_admin 已创建）。
+	ws, err := model.NewWorkspace("Tenant", "tenant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.workspaces = append(tx.workspaces, ws)
+
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-new", "new@example.com", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision error: %v", err)
+	}
+	// JIT 建号 + 自动加入：恰好一条 member membership 指向唯一 workspace。
+	if len(tx.memberships) != 1 {
+		t.Fatalf("memberships = %d, want 1", len(tx.memberships))
+	}
+	m := tx.memberships[0]
+	if m.WorkspaceID != ws.ID {
+		t.Fatalf("membership workspace = %s, want %s", m.WorkspaceID, ws.ID)
+	}
+	if m.UserID != session.UserID {
+		t.Fatalf("membership user = %s, want %s", m.UserID, session.UserID)
+	}
+	if m.Role != value.RoleMember {
+		t.Fatalf("auto-join role = %q, want member", m.Role)
+	}
+}
+
+func TestOIDCLoginSingleTenantFirstUserSkipsJoin(t *testing.T) {
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	svc.singleTenant = true
+	ctx := context.Background()
+	// 尚无 workspace：首个 OIDC 用户（platform_admin bootstrap）登录时不加入。
+
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-first", "first@example.com", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision error: %v", err)
+	}
+	if session == nil {
+		t.Fatal("expected session")
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("首用户无 workspace 不应自动加入, memberships = %d", len(tx.memberships))
+	}
+}
+
+func TestOIDCLoginSingleTenantExistingMembershipIdempotent(t *testing.T) {
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	svc.singleTenant = true
+	ctx := context.Background()
+	// 预置 workspace 与已有 user+identity+membership（如通过邀请加入过）。
+	ws, err := model.NewWorkspace("Tenant", "tenant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.workspaces = append(tx.workspaces, ws)
+	user, _ := model.NewUser("ada@example.com", "Ada", "$argon2id$h")
+	tx.users[user.ID] = user
+	tx.usersByEmail[user.Email] = user
+	identity, _ := model.NewExternalIdentity(user.ID, "https://sso.example.com", "sub-1", "ada@example.com", true, "{}")
+	tx.identities = append(tx.identities, identity)
+	membership, _ := model.NewMembership(ws.ID, user.ID, value.RoleMember)
+	tx.memberships = append(tx.memberships, membership)
+
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-1", "ada@example.com", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision error: %v", err)
+	}
+	if session.UserID != user.ID {
+		t.Fatalf("session user = %s, want %s", session.UserID, user.ID)
+	}
+	// 已有 membership 不得重复创建，且实现必须实际做过幂等检查。
+	if len(tx.memberships) != 1 {
+		t.Fatalf("memberships = %d, want 1（幂等）", len(tx.memberships))
+	}
+	if tx.findMembershipCalls == 0 {
+		t.Fatal("单租户自动加入必须调用 FindMembership 做幂等检查")
+	}
+}
+
+func TestOIDCLoginMultiTenantDoesNotAutoJoin(t *testing.T) {
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	ctx := context.Background()
+	// 多租户（OIDC 关闭）即使存在 workspace 也不自动加入。
+	ws, err := model.NewWorkspace("Tenant", "tenant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.workspaces = append(tx.workspaces, ws)
+
+	if _, err := svc.LoginOrProvision(ctx, validProfile("sub-new", "new@example.com", true), "ua", "1.2.3.4"); err != nil {
+		t.Fatalf("LoginOrProvision error: %v", err)
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("多租户不应自动加入, memberships = %d", len(tx.memberships))
+	}
+}

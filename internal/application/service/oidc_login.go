@@ -17,6 +17,7 @@ import (
 
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
+	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	authport "github.com/dajee/langhuan/internal/ports/auth"
 )
@@ -49,6 +50,12 @@ type OIDCAuthTx interface {
 	FindPendingInvitationForUpdate(ctx context.Context, tokenHash string) (*model.Invitation, error)
 	CreateMembership(ctx context.Context, membership *model.Membership) error
 	MarkInvitationAccepted(ctx context.Context, invitationID, userID uuid.UUID) error
+	// CountWorkspaces 统计平台 workspace 总数（单租户自动加入用）。
+	CountWorkspaces(ctx context.Context) (int64, error)
+	// GetFirstWorkspace 返回创建最早的 workspace（单租户自动加入的目标）。
+	GetFirstWorkspace(ctx context.Context) (*model.Workspace, error)
+	// FindMembership 按 workspace+user 查询成员关系；不存在返回 ErrNotFound。
+	FindMembership(ctx context.Context, workspaceID, userID uuid.UUID) (*model.Membership, error)
 }
 
 // ExternalIdentityReader 是事务外的只读身份查询，用于账号设置页展示。
@@ -66,6 +73,7 @@ type OIDCLoginService struct {
 	sessionLife          int // seconds
 	issuer               string
 	requireEmailVerified bool
+	singleTenant         bool         // OIDC 开启时平台为单租户：新用户登录后自动加入唯一 workspace
 	log                  *slog.Logger // 可 nil；仅记脱敏字段
 }
 
@@ -78,6 +86,7 @@ func NewOIDCLoginService(
 	identityReader ExternalIdentityReader,
 	sessionCfg config.SessionConfig,
 	oidcCfg config.OIDCConfig,
+	singleTenant bool,
 	log *slog.Logger,
 ) *OIDCLoginService {
 	return &OIDCLoginService{
@@ -88,6 +97,7 @@ func NewOIDCLoginService(
 		sessionLife:          sessionCfg.LifetimeSeconds,
 		issuer:               strings.TrimSpace(oidcCfg.Issuer),
 		requireEmailVerified: oidcCfg.RequireEmailVerified,
+		singleTenant:         singleTenant,
 		log:                  log,
 	}
 }
@@ -248,6 +258,34 @@ func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authpo
 			}
 			if err := tx.CreateIdentity(ctx, newIdentity); err != nil {
 				return err
+			}
+		}
+
+		// 单租户模式（OIDC 开启）：新用户登录后自动加入唯一 workspace。
+		// 平台尚无 workspace 时（bootstrap：首个用户稍后创建）跳过；
+		// 已有 workspace 时以 member 角色加入，已存在成员关系则幂等跳过。
+		if s.singleTenant {
+			count, err := tx.CountWorkspaces(ctx)
+			if err != nil {
+				return err
+			}
+			if count > 0 {
+				ws, err := tx.GetFirstWorkspace(ctx)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.FindMembership(ctx, ws.ID, user.ID); err != nil {
+					if !errors.Is(err, domainerrors.ErrNotFound) {
+						return err
+					}
+					membership, err := model.NewMembership(ws.ID, user.ID, value.RoleMember)
+					if err != nil {
+						return err
+					}
+					if err := tx.CreateMembership(ctx, membership); err != nil {
+						return err
+					}
+				}
 			}
 		}
 

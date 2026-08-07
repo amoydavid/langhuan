@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
@@ -59,6 +60,38 @@ func (r *WorkspaceRepository) GetBySlug(ctx context.Context, slug string) (*mode
 // 任一步失败则整体回滚。
 func (r *WorkspaceRepository) CreateWithOwner(ctx context.Context, ws *model.Workspace, ownerUserID uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(workspaceToRow(ws)).Error; err != nil {
+			return translateDBError(err, "创建工作区失败")
+		}
+		membership, err := model.NewMembership(ws.ID, ownerUserID, value.RoleOwner)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(membershipToRow(membership)).Error; err != nil {
+			return translateDBError(err, "创建工作区 owner 失败")
+		}
+		return nil
+	})
+}
+
+// workspaceLimitLockKey 是单租户 workspace 数量限制使用的 advisory lock key。
+const workspaceLimitLockKey = "langhuan:workspace-limit"
+
+// CreateWithOwnerIfEmpty 仅当平台尚无任何 workspace 时，在同一事务内创建
+// workspace 与 owner 成员关系；已存在时返回 domainerrors.ErrWorkspaceLimitReached。
+// advisory transaction lock 保证并发创建时只有一个成功，其余获得锁后重读计数被拒。
+func (r *WorkspaceRepository) CreateWithOwnerIfEmpty(ctx context.Context, ws *model.Workspace, ownerUserID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", workspaceLimitLockKey).Error; err != nil {
+			return fmt.Errorf("获取 workspace 数量限制锁失败: %w", err)
+		}
+		var count int64
+		if err := tx.Model(&WorkspaceRow{}).Count(&count).Error; err != nil {
+			return fmt.Errorf("统计工作区失败: %w", err)
+		}
+		if count > 0 {
+			return domainerrors.ErrWorkspaceLimitReached
+		}
 		if err := tx.Create(workspaceToRow(ws)).Error; err != nil {
 			return translateDBError(err, "创建工作区失败")
 		}
