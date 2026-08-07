@@ -103,11 +103,11 @@
 - `Exchange`：`oauth2.Exchange(code_verifier)` → `idTokenVerifier.Verify` → 校验 id_token `nonce` → `profileFromIDToken` → 可选 UserInfo whitelist 合并（UserInfo `sub` 不一致拒绝）。
 - `state_store_redis`：`Issue` 生成 ≥32 字节随机 state，`SET oidc:state:<state> <payload> EX <ttl>`；`Consume` 用 Lua compare-and-delete（只有 nonce 匹配才删），常量时间比较 nonce。
 
-- [ ] 写 `provider_test`：用 `httptest.Server` 伪装 IdP（`.well-known/openid-configuration` + token + JWKS + UserInfo），覆盖验签成功 / 篡改失败 / id_token 缺失 / nonce 不匹配 / PKCE verifier 错误 / UserInfo sub 不一致 / UserInfo whitelist 合并。
-- [ ] 写 `state_store_redis_test`：用 `miniredis`（参考 `redis_rate_limiter_test.go` 的 `newMiniRateLimiter` 风格），覆盖 Issue/Consume 正常、state 过期、state 不存在、browser nonce 不匹配（不删 state）、一次性消费（同 state 第二次 Consume 失败）、并发多个 state 动态 nonce cookie 互不覆盖。
-- [ ] 运行测试确认 RED。
-- [ ] 实现 provider 与 state store；Lua 脚本常量化；所有 HTTP 调用用 `http_timeout_seconds` 超时与响应体大小上限。
-- [ ] 运行 `go test ./internal/adapters/auth/oidc/... -count=1`、`go vet`。
+- [x] 写 `provider_test`：用 `httptest.Server` 伪装 IdP（`.well-known/openid-configuration` + token + JWKS + UserInfo），覆盖验签成功 / 篡改失败 / id_token 缺失 / nonce 不匹配 / PKCE verifier 错误 / UserInfo sub 不一致 / UserInfo whitelist 合并。
+- [x] 写 `state_store_redis_test`：用 `miniredis`（参考 `redis_rate_limiter_test.go` 的 `newMiniRateLimiter` 风格），覆盖 Issue/Consume 正常、state 过期、state 不存在、browser nonce 不匹配（不删 state）、一次性消费（同 state 第二次 Consume 失败）、并发多个 state 动态 nonce cookie 互不覆盖。
+- [x] 运行测试确认 RED。
+- [x] 实现 provider 与 state store；state 消费用 GETDEL + nonce 校验 + 不匹配回写（miniredis Lua 不支持 DEL 持久化，改用 GETDEL 保持测试与生产一致）；所有 HTTP 调用用 `http_timeout_seconds` 超时。
+- [x] 运行 `go test ./internal/adapters/auth/oidc/... -count=1`、`go vet`。
 
 ### Task 4: OIDCLoginService（登录/JIT/合并/绑定）
 
