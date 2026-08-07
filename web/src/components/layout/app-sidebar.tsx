@@ -44,10 +44,10 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible='icon' variant='sidebar'>
-      <SidebarHeader className='border-sidebar-border border-b p-2.5'>
+      <SidebarHeader className='p-2.5'>
         <WorkspaceSwitcher />
       </SidebarHeader>
-      <SidebarContent className='px-1.5 py-2'>
+      <SidebarContent className='bg-sidebar px-1.5 py-2'>
         {navGroups.map((props) => (
           <NavGroup key={props.title} {...props} />
         ))}
