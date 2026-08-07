@@ -154,12 +154,13 @@ func (c CredentialsConfig) DecodeEncryptionKey() ([]byte, error) {
 	return key, nil
 }
 
-// AuthConfig 汇总认证相关配置：会话、密码哈希、登录限流、邀请。
+// AuthConfig 汇总认证相关配置：会话、密码哈希、登录限流、邀请、OIDC。
 type AuthConfig struct {
 	Session    SessionConfig    `yaml:"session"`
 	Password   PasswordConfig   `yaml:"password"`
 	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
 	Invitation InvitationConfig `yaml:"invitation"`
+	OIDC       OIDCConfig       `yaml:"oidc"`
 }
 
 // SessionConfig 描述会话 cookie 相关参数。
@@ -170,11 +171,28 @@ type SessionConfig struct {
 	Domain          string `yaml:"domain"`
 }
 
-// PasswordConfig 描述 argon2id 哈希参数。
+// PasswordConfig 描述 argon2id 哈希参数与运行期 password 登录开关。
 type PasswordConfig struct {
 	Argon2MemoryKiB   uint32 `yaml:"argon2_memory_kib"`
 	Argon2Iterations  uint32 `yaml:"argon2_iterations"`
 	Argon2Parallelism uint8  `yaml:"argon2_parallelism"`
+	// Enabled 控制运行期 email+password 登录是否可用。
+	// false 时 /auth/login 返回 403 password_login_disabled。
+	// 默认 true（在 defaultAuthConfig 中设置，向后兼容旧配置）。
+	Enabled bool `yaml:"enabled"`
+}
+
+// OIDCConfig 描述内部 OIDC issuer 接入参数。
+type OIDCConfig struct {
+	Enabled              bool     `yaml:"enabled"`
+	Issuer               string   `yaml:"issuer"`
+	ClientID             string   `yaml:"client_id"`
+	ClientSecret         string   `yaml:"client_secret"`
+	RedirectURL          string   `yaml:"redirect_url"`
+	Scopes               []string `yaml:"scopes"` // 空则默认 [openid, profile, email]
+	RequireEmailVerified bool     `yaml:"require_email_verified"`
+	StateTTLSeconds      int      `yaml:"state_ttl_seconds"`
+	HTTPTimeoutSeconds   int      `yaml:"http_timeout_seconds"`
 }
 
 // RateLimitConfig 描述登录失败限流参数。
@@ -310,6 +328,8 @@ func defaultAuthConfig() AuthConfig {
 			Argon2MemoryKiB:   65536,
 			Argon2Iterations:  3,
 			Argon2Parallelism: 2,
+			// 默认 true：向后兼容既有部署，旧 config.yaml 未写字段时保留 password 登录。
+			Enabled: true,
 		},
 		RateLimit: RateLimitConfig{
 			LoginMaxAttempts:   5,
@@ -317,6 +337,14 @@ func defaultAuthConfig() AuthConfig {
 		},
 		Invitation: InvitationConfig{
 			LifetimeSeconds: 604800,
+		},
+		OIDC: OIDCConfig{
+			// 默认关闭；企业内部部署建议开启并配合 password.enabled=false。
+			Enabled: false,
+			// 默认要求 email_verified；仅受控 IdP 确实不提供该 claim 时显式关闭。
+			RequireEmailVerified: true,
+			StateTTLSeconds:      300,
+			HTTPTimeoutSeconds:   10,
 		},
 	}
 }
@@ -562,6 +590,52 @@ func (c *Config) validateAuth() error {
 	}
 	if c.Auth.Invitation.LifetimeSeconds <= 0 {
 		return errors.New("auth.invitation.lifetime_seconds 必须大于 0")
+	}
+
+	// password 与 oidc 是两个独立开关，但至少要开一个，否则无任何登录入口。
+	if !c.Auth.Password.Enabled && !c.Auth.OIDC.Enabled {
+		return errors.New("auth.password.enabled 与 auth.oidc.enabled 不能同时为 false")
+	}
+	if c.Auth.OIDC.Enabled {
+		if strings.TrimSpace(c.Auth.OIDC.Issuer) == "" {
+			return errors.New("auth.oidc.enabled=true 时 issuer 不能为空")
+		}
+		if strings.TrimSpace(c.Auth.OIDC.ClientID) == "" {
+			return errors.New("auth.oidc.enabled=true 时 client_id 不能为空")
+		}
+		if strings.TrimSpace(c.Auth.OIDC.ClientSecret) == "" {
+			return errors.New("auth.oidc.enabled=true 时 client_secret 不能为空")
+		}
+		if strings.TrimSpace(c.Auth.OIDC.RedirectURL) == "" {
+			return errors.New("auth.oidc.enabled=true 时 redirect_url 不能为空")
+		}
+		if err := validateOIDCAbsoluteURL(c.Auth.OIDC.Issuer, "issuer"); err != nil {
+			return err
+		}
+		if err := validateOIDCAbsoluteURL(c.Auth.OIDC.RedirectURL, "redirect_url"); err != nil {
+			return err
+		}
+		if redirectURL, _ := url.Parse(c.Auth.OIDC.RedirectURL); redirectURL == nil || redirectURL.Path != "/api/v1/auth/oidc/callback" {
+			return errors.New("auth.oidc.redirect_url 必须指向 /api/v1/auth/oidc/callback")
+		}
+		if c.Auth.OIDC.StateTTLSeconds <= 0 {
+			return errors.New("auth.oidc.state_ttl_seconds 必须大于 0")
+		}
+		if c.Auth.OIDC.HTTPTimeoutSeconds <= 0 {
+			return errors.New("auth.oidc.http_timeout_seconds 必须大于 0")
+		}
+	}
+	return nil
+}
+
+// validateOIDCAbsoluteURL 校验字段是无 userinfo 的绝对 URL。
+func validateOIDCAbsoluteURL(raw, field string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("auth.oidc.%s 必须是无用户信息的绝对 URL", field)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("auth.oidc.%s 不得包含用户信息", field)
 	}
 	return nil
 }

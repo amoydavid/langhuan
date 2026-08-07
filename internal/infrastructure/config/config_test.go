@@ -710,3 +710,99 @@ func TestValidateStorageS3RequiresCredentials(t *testing.T) {
 		t.Fatalf("valid s3 config rejected: %v", err)
 	}
 }
+
+func TestAuthOIDCDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	// password.enabled 默认 true（向后兼容）
+	if !cfg.Auth.Password.Enabled {
+		t.Fatal("auth.password.enabled should default to true for backward compatibility")
+	}
+	// OIDC 默认关闭
+	if cfg.Auth.OIDC.Enabled {
+		t.Fatal("auth.oidc.enabled should default to false")
+	}
+	// require_email_verified 默认 true
+	if !cfg.Auth.OIDC.RequireEmailVerified {
+		t.Fatal("auth.oidc.require_email_verified should default to true")
+	}
+	// state_ttl / http_timeout 有合理默认
+	if cfg.Auth.OIDC.StateTTLSeconds != 300 {
+		t.Fatalf("state_ttl_seconds = %d, want 300", cfg.Auth.OIDC.StateTTLSeconds)
+	}
+	if cfg.Auth.OIDC.HTTPTimeoutSeconds != 10 {
+		t.Fatalf("http_timeout_seconds = %d, want 10", cfg.Auth.OIDC.HTTPTimeoutSeconds)
+	}
+}
+
+// baseValidOIDCConfig 返回一个能通过 validate 的 OIDC 配置，便于逐项破坏。
+func baseValidOIDCConfig() Config {
+	cfg := defaultConfig()
+	cfg.Database.DSN = "postgres://localhost:5432/langhuan?sslmode=disable"
+	cfg.Credentials.EncryptionKey = testEncryptionKey
+	cfg.Auth.Password.Enabled = false
+	cfg.Auth.OIDC.Enabled = true
+	cfg.Auth.OIDC.Issuer = "https://sso.example.com/realms/corp"
+	cfg.Auth.OIDC.ClientID = "langhuan"
+	cfg.Auth.OIDC.ClientSecret = "secret"
+	cfg.Auth.OIDC.RedirectURL = "https://langhuan.example.com/api/v1/auth/oidc/callback"
+	return cfg
+}
+
+func TestAuthOIDCValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "both disabled", mutate: func(c *Config) {
+			c.Auth.Password.Enabled = false
+			c.Auth.OIDC.Enabled = false
+		}},
+		{name: "oidc enabled missing issuer", mutate: func(c *Config) { c.Auth.OIDC.Issuer = "" }},
+		{name: "oidc enabled missing client_id", mutate: func(c *Config) { c.Auth.OIDC.ClientID = "" }},
+		{name: "oidc enabled missing client_secret", mutate: func(c *Config) { c.Auth.OIDC.ClientSecret = "" }},
+		{name: "oidc enabled missing redirect_url", mutate: func(c *Config) { c.Auth.OIDC.RedirectURL = "" }},
+		{name: "oidc issuer with userinfo", mutate: func(c *Config) { c.Auth.OIDC.Issuer = "https://user:pass@sso.example.com" }},
+		{name: "oidc issuer not absolute", mutate: func(c *Config) { c.Auth.OIDC.Issuer = "sso.example.com" }},
+		{name: "oidc redirect_url wrong path", mutate: func(c *Config) {
+			c.Auth.OIDC.RedirectURL = "https://langhuan.example.com/api/v1/auth/oidc/wrong"
+		}},
+		{name: "oidc redirect_url with userinfo", mutate: func(c *Config) {
+			c.Auth.OIDC.RedirectURL = "https://u:p@langhuan.example.com/api/v1/auth/oidc/callback"
+		}},
+		{name: "state_ttl_seconds zero", mutate: func(c *Config) { c.Auth.OIDC.StateTTLSeconds = 0 }},
+		{name: "http_timeout_seconds zero", mutate: func(c *Config) { c.Auth.OIDC.HTTPTimeoutSeconds = 0 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseValidOIDCConfig()
+			// 先确认基线合法
+			if err := cfg.validate(); err != nil {
+				t.Fatalf("baseline config should be valid: %v", err)
+			}
+			tt.mutate(&cfg)
+			if err := cfg.validate(); err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+		})
+	}
+}
+
+func TestAuthPasswordEnabledBackwardCompatible(t *testing.T) {
+	// 旧 config.yaml 不写 password.enabled 字段时，加载后默认 true。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := appendTestCredentials([]byte(`
+database:
+  dsn: "postgres://localhost:5432/langhuan?sslmode=disable"
+`))
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error = %v", err)
+	}
+	if !cfg.Auth.Password.Enabled {
+		t.Fatal("legacy config without password.enabled should load as true")
+	}
+}

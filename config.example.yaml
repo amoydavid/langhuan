@@ -82,6 +82,7 @@ auth:
     secure_cookie: true               # 生产必须为 true
     domain: ""                        # 可选，留空表示同源
   password:
+    enabled: true                     # 运行期 email+password 登录开关；false 时 /auth/login 返回 403。默认 true（向后兼容）
     argon2_memory_kib: 65536          # 64 MiB
     argon2_iterations: 3
     argon2_parallelism: 2
@@ -90,6 +91,16 @@ auth:
     login_window_seconds: 900         # 15 分钟
   invitation:
     lifetime_seconds: 604800          # 7 天
+  oidc:
+    enabled: false                    # 默认关闭；企业内部部署建议开启并配合 password.enabled=false
+    issuer: ""                        # 如 https://sso.example.com/realms/corp
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""                  # 如 https://langhuan.example.com/api/v1/auth/oidc/callback
+    require_email_verified: true      # 推荐保持 true；仅受控 IdP 确实不提供该 claim 时显式关闭
+    state_ttl_seconds: 300
+    http_timeout_seconds: 10
+    scopes: []                        # 空则默认 [openid, profile, email]
 
 # Workspace API Key 程序化访问参数
 api_key:

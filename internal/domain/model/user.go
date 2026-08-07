@@ -53,6 +53,37 @@ func NewUser(email, nickname, passwordHash string) (*User, error) {
 	}, nil
 }
 
+// NewProvisionalUser 创建无密码账号（如 OIDC JIT 建号）。
+// password_hash 留空，表示该账号只能走外部 identity 登录。
+// email 与 nickname 的校验规则与 NewUser 一致。
+func NewProvisionalUser(email, nickname string) (*User, error) {
+	normalizedEmail, err := normalizeEmail(email)
+	if err != nil {
+		return nil, err
+	}
+
+	nickname = strings.TrimSpace(nickname)
+	if nickname == "" {
+		return nil, fmt.Errorf("%w: nickname 不能为空", domainerrors.ErrValidation)
+	}
+
+	now := time.Now().UTC()
+	return &User{
+		ID:           id.New(),
+		Email:        normalizedEmail,
+		Nickname:     nickname,
+		PasswordHash: "", // OIDC 建号的无密码账号
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}, nil
+}
+
+// HasPassword 报告该用户是否设有密码（能否走 password 登录）。
+// 无密码账号（OIDC JIT 建号）返回 false，密码登录路径应据此拒绝。
+func (u User) HasPassword() bool {
+	return strings.TrimSpace(u.PasswordHash) != ""
+}
+
 // normalizeEmail 将 email 去除首尾空白并小写规范化，同时要求它是一个纯净的邮箱地址
 // （拒绝带显示名形式，即 mail.ParseAddress 解析后的地址必须等于规范化后的输入）。
 func normalizeEmail(email string) (string, error) {

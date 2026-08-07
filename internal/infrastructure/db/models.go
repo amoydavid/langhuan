@@ -167,6 +167,25 @@ func (InvitationRow) TableName() string {
 	return "workspace_invitations"
 }
 
+// ExternalIdentityRow 对应 external_identities 表。
+// (Issuer, Subject) 全局唯一，指向唯一 user。
+type ExternalIdentityRow struct {
+	ID            uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID        uuid.UUID `gorm:"type:uuid;index"`
+	Issuer        string    `gorm:"uniqueIndex:uk_external_identities_issuer_subject"`
+	Subject       string    `gorm:"uniqueIndex:uk_external_identities_issuer_subject"`
+	Email         string
+	EmailVerified bool
+	RawProfile    string `gorm:"type:jsonb"`
+	LastAuthAt    time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func (ExternalIdentityRow) TableName() string {
+	return "external_identities"
+}
+
 func AutoMigratedModels() []any {
 	return []any{
 		&WorkspaceRow{},
@@ -176,6 +195,7 @@ func AutoMigratedModels() []any {
 		&SessionRow{},
 		&MembershipRow{},
 		&InvitationRow{},
+		&ExternalIdentityRow{},
 		&ModelProviderRow{},
 		&ModelRow{},
 		&SourceConnectionRow{},
