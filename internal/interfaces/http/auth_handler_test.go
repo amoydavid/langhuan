@@ -372,8 +372,15 @@ func TestBootstrapStatusIsPublicAndReturnsOnlyInitialized(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
 			}
-			if len(body) != 1 || body["initialized"] != tt.initialized {
-				t.Fatalf("body = %#v", body)
+			if body["initialized"] != tt.initialized {
+				t.Fatalf("initialized = %v, want %v", body["initialized"], tt.initialized)
+			}
+			// 新增的 auth mode 字段（OIDC 默认关闭、password 默认开启）。
+			if _, ok := body["oidc_enabled"]; !ok {
+				t.Fatalf("body should include oidc_enabled: %#v", body)
+			}
+			if _, ok := body["password_enabled"]; !ok {
+				t.Fatalf("body should include password_enabled: %#v", body)
 			}
 		})
 	}

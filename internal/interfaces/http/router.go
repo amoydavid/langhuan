@@ -16,14 +16,18 @@ import (
 // services drive the workspace-scoped handlers.
 type Dependencies struct {
 	// auth
-	Auth          AuthService               // register/login/logout/me/authenticate (SessionAuthenticator)
-	Users         UserService               // first-user register, password reset, get-by-id
-	Invitations   InvitationService         // create/get-public/accept/revoke
-	Memberships   MembershipService         // list/get/change-role/remove/list-for-user
-	SessionConfig config.SessionConfig      // cookie name, lifetime, secure, domain
-	PublicURLs    *service.PublicURLBuilder // 全局公开地址派生器
-	APIKeys       APIKeyServiceHTTP         // Session-only API Key 管理
-	APIKeyAuth    APIKeyAuthenticator       // Bearer API Key 鉴权器（SessionOrAPIKeyAuth / APIKeyOnlyAuth 共用）
+	Auth            AuthService               // register/login/logout/me/authenticate (SessionAuthenticator)
+	Users           UserService               // first-user register, password reset, get-by-id
+	Invitations     InvitationService         // create/get-public/accept/revoke
+	Memberships     MembershipService         // list/get/change-role/remove/list-for-user
+	SessionConfig   config.SessionConfig      // cookie name, lifetime, secure, domain
+	PublicURLs      *service.PublicURLBuilder // 全局公开地址派生器
+	APIKeys         APIKeyServiceHTTP         // Session-only API Key 管理
+	APIKeyAuth      APIKeyAuthenticator       // Bearer API Key 鉴权器（SessionOrAPIKeyAuth / APIKeyOnlyAuth 共用）
+	OIDC            OIDCLoginServiceHTTP      // OIDC 登录/绑定/查询；nil 时不挂 OIDC 路由
+	OIDCAcceptor    OIDCAcceptor              // AcceptOIDC 邀请接受；nil 时该分派路径不可用
+	OIDCEnabled     bool                      // bootstrap-status 返回，控制前端是否显示 OIDC 入口
+	PasswordEnabled bool                      // bootstrap-status 返回，控制前端密码表单显示
 
 	// resource (workspace-scoped)
 	Workspaces              WorkspaceService
@@ -98,12 +102,14 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	// --- public auth + invitation routes ---
 	if deps.Auth != nil || deps.Users != nil || deps.Invitations != nil {
 		authH := authHandler{
-			auth:        deps.Auth,
-			users:       deps.Users,
-			invitations: deps.Invitations,
-			memberships: deps.Memberships,
-			workspaces:  deps.Workspaces,
-			sessionCfg:  deps.SessionConfig,
+			auth:            deps.Auth,
+			users:           deps.Users,
+			invitations:     deps.Invitations,
+			memberships:     deps.Memberships,
+			workspaces:      deps.Workspaces,
+			sessionCfg:      deps.SessionConfig,
+			oidcEnabled:     deps.OIDCEnabled,
+			passwordEnabled: deps.PasswordEnabled,
 		}
 		api.POST("/auth/login", authH.login)
 		api.POST("/auth/register", authH.register)
@@ -115,23 +121,38 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			invH := invitationHandler{invitations: deps.Invitations, publicURLs: deps.PublicURLs}
 			api.GET("/invitations/:token", invH.getPublic)
 		}
+
+		// OIDC 登录/回调（条件挂载）。
+		if deps.OIDC != nil {
+			oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.Auth, deps.SessionConfig)
+			api.GET("/auth/oidc/login", oidcH.begin)
+			api.GET("/auth/oidc/callback", oidcH.callback)
+		}
 	}
 
 	// --- authenticated (logged-in) routes ---
 	if deps.Auth != nil {
 		authH := authHandler{
-			auth:        deps.Auth,
-			users:       deps.Users,
-			invitations: deps.Invitations,
-			memberships: deps.Memberships,
-			workspaces:  deps.Workspaces,
-			sessionCfg:  deps.SessionConfig,
+			auth:            deps.Auth,
+			users:           deps.Users,
+			invitations:     deps.Invitations,
+			memberships:     deps.Memberships,
+			workspaces:      deps.Workspaces,
+			sessionCfg:      deps.SessionConfig,
+			oidcEnabled:     deps.OIDCEnabled,
+			passwordEnabled: deps.PasswordEnabled,
 		}
 		authed := api.Group("")
 		authed.Use(SessionAuth(deps.Auth, cookieName))
 		{
 			authed.POST("/auth/logout", authH.logout)
 			authed.GET("/auth/me", authH.me)
+			// OIDC 绑定发起 + 外部身份查询（条件挂载）。
+			if deps.OIDC != nil {
+				oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.Auth, deps.SessionConfig)
+				authed.POST("/auth/oidc/bind/start", oidcH.beginBind)
+				authed.GET("/auth/external-identities", oidcH.listIdentities)
+			}
 		}
 	}
 

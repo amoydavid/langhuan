@@ -22,6 +22,7 @@ import (
 	"gorm.io/gorm"
 
 	authadapter "github.com/dajee/langhuan/internal/adapters/auth"
+	oidcadapter "github.com/dajee/langhuan/internal/adapters/auth/oidc"
 	embeddingadapter "github.com/dajee/langhuan/internal/adapters/embedding"
 	arkembedding "github.com/dajee/langhuan/internal/adapters/embedding/ark"
 	dashscopeembedding "github.com/dajee/langhuan/internal/adapters/embedding/dashscope"
@@ -101,6 +102,11 @@ type runtimeServices struct {
 	memberships    *service.MembershipService
 	sessionCfg     config.SessionConfig
 	publicURLs     *service.PublicURLBuilder
+	// OIDC（条件装配：cfg.Auth.OIDC.Enabled=true 时非 nil）
+	oidc            *service.OIDCLoginService
+	oidcAcceptor    langhttp.OIDCAcceptor
+	oidcEnabled     bool
+	passwordEnabled bool
 
 	// resource (workspace-scoped)
 	workspaceRepo        *db.WorkspaceRepository
@@ -435,6 +441,33 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	invitations := service.NewInvitationService(invitationRepo, wsRepo, userRepo, hasher, cfg.Auth)
 	memberships := service.NewMembershipService(membershipRepo, userRepo)
 
+	// OIDC 条件装配：cfg.Auth.OIDC.Enabled=true 时构造 provider/state store/service。
+	var oidcLogin *service.OIDCLoginService
+	var oidcAcceptor langhttp.OIDCAcceptor
+	if cfg.Auth.OIDC.Enabled {
+		oidcProvider, err := oidcadapter.NewProvider(oidcadapter.ProviderConfig{
+			Enabled:            cfg.Auth.OIDC.Enabled,
+			Issuer:             cfg.Auth.OIDC.Issuer,
+			ClientID:           cfg.Auth.OIDC.ClientID,
+			ClientSecret:       cfg.Auth.OIDC.ClientSecret,
+			RedirectURL:        cfg.Auth.OIDC.RedirectURL,
+			Scopes:             cfg.Auth.OIDC.Scopes,
+			HTTPTimeoutSeconds: cfg.Auth.OIDC.HTTPTimeoutSeconds,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("构造 OIDC provider 失败: %w", err)
+		}
+		if oidcProvider != nil {
+			stateStore := oidcadapter.NewRedisStateStore(redisClient, cfg.Auth.OIDC.StateTTLSeconds)
+			identityRepo := db.NewExternalIdentityRepository(gormDB)
+			authTxRunner := db.NewOIDCAuthTxRunner(gormDB)
+			oidcLogin = service.NewOIDCLoginService(oidcProvider, stateStore, authTxRunner, identityRepo, cfg.Auth.Session, cfg.Auth.OIDC)
+			// 邀请接受复用同一 runner。
+			invitations.WithOIDCAuthTx(authTxRunner)
+			oidcAcceptor = invitations
+		}
+	}
+
 	var rawStore storageport.RawDocumentStore = localstorage.NewRawDocumentStore(cfg.Storage.RawDocumentDir)
 
 	// 构建 parser registry（本地格式 + 可选 MinerU PDF）
@@ -557,16 +590,20 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	})
 
 	return &runtimeServices{
-		userRepo:       userRepo,
-		sessionRepo:    sessionRepo,
-		membershipRepo: membershipRepo,
-		invitationRepo: invitationRepo,
-		users:          users,
-		auth:           auth,
-		invitations:    invitations,
-		memberships:    memberships,
-		sessionCfg:     cfg.Auth.Session,
-		publicURLs:     publicURLs,
+		userRepo:        userRepo,
+		sessionRepo:     sessionRepo,
+		membershipRepo:  membershipRepo,
+		invitationRepo:  invitationRepo,
+		users:           users,
+		auth:            auth,
+		invitations:     invitations,
+		memberships:     memberships,
+		sessionCfg:      cfg.Auth.Session,
+		publicURLs:      publicURLs,
+		oidc:            oidcLogin,
+		oidcAcceptor:    oidcAcceptor,
+		oidcEnabled:     cfg.Auth.OIDC.Enabled,
+		passwordEnabled: cfg.Auth.Password.Enabled,
 
 		workspaceRepo:           wsRepo,
 		knowledgeBaseRepo:       kbRepo,
@@ -758,14 +795,18 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 	})
 	return langhttp.NewRouter(langhttp.Dependencies{
 		// auth (Task 8)
-		Auth:          services.auth,
-		Users:         services.users,
-		Invitations:   services.invitations,
-		Memberships:   services.memberships,
-		SessionConfig: services.sessionCfg,
-		PublicURLs:    services.publicURLs,
-		APIKeys:       services.apiKeys,
-		APIKeyAuth:    services.apiKeys,
+		Auth:            services.auth,
+		Users:           services.users,
+		Invitations:     services.invitations,
+		Memberships:     services.memberships,
+		SessionConfig:   services.sessionCfg,
+		PublicURLs:      services.publicURLs,
+		APIKeys:         services.apiKeys,
+		APIKeyAuth:      services.apiKeys,
+		OIDC:            services.oidc,
+		OIDCAcceptor:    services.oidcAcceptor,
+		OIDCEnabled:     services.oidcEnabled,
+		PasswordEnabled: services.passwordEnabled,
 
 		// resource (workspace-scoped)
 		Workspaces:              services.workspaces,

@@ -50,12 +50,12 @@ type Provider struct {
 // NewProvider 根据 config 构造 OIDCProvider。
 // cfg.Enabled=false 时返回 (nil, nil)，调用方据此跳过装配。
 //
-// 入参用本地 oidcProviderConfig 而非 config.OIDCConfig，避免 adapter 反向依赖
-// infrastructure/config；由 main.go/DI 层做 config.OIDCConfig → oidcProviderConfig 转换。
+// 入参用本地 ProviderConfig 而非 config.OIDCConfig，避免 adapter 反向依赖
+// infrastructure/config；由 main.go/DI 层做 config.OIDCConfig → ProviderConfig 转换。
 //
 // 返回 error 的唯一情形：配置非法（字段缺失等，validateAuth 已拦，这里防御性复核）。
 // 不发起 discovery（lazy）：IdP 宕机时返回 (provider, nil)，琅嬛照常启动。
-func NewProvider(cfg oidcProviderConfig) (*Provider, error) {
+func NewProvider(cfg ProviderConfig) (*Provider, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
@@ -78,8 +78,9 @@ func NewProvider(cfg oidcProviderConfig) (*Provider, error) {
 	}, nil
 }
 
-// oidcProviderConfig 是 NewProvider 的入参，避免 adapter 反向依赖 config 包。
-type oidcProviderConfig struct {
+// ProviderConfig 是 NewProvider 的入参，避免 adapter 反向依赖 config 包。
+// main.go/DI 层做 config.OIDCConfig → ProviderConfig 转换。
+type ProviderConfig struct {
 	Enabled            bool
 	Issuer             string
 	ClientID           string

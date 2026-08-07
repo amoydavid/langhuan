@@ -36,22 +36,29 @@ type UserService interface {
 // authHandler exposes the /auth register/login/logout/me endpoints.
 // It only depends on services + AuthContext; it never touches DB/Redis directly.
 type authHandler struct {
-	auth        AuthService
-	users       UserService
-	invitations InvitationService
-	memberships MembershipService
-	workspaces  WorkspaceService
-	sessionCfg  config.SessionConfig
+	auth            AuthService
+	users           UserService
+	invitations     InvitationService
+	memberships     MembershipService
+	workspaces      WorkspaceService
+	sessionCfg      config.SessionConfig
+	oidcEnabled     bool
+	passwordEnabled bool
 }
 
-// bootstrapStatus reports whether first-user setup has already completed.
+// bootstrapStatus reports whether first-user setup has already completed,
+// plus auth mode flags for the frontend to decide which login entries to show.
 func (h authHandler) bootstrapStatus(c *gin.Context) {
 	initialized, err := h.users.IsInitialized(c.Request.Context())
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(stdhttp.StatusOK, gin.H{"initialized": initialized})
+	c.JSON(stdhttp.StatusOK, gin.H{
+		"initialized":      initialized,
+		"oidc_enabled":     h.oidcEnabled,
+		"password_enabled": h.passwordEnabled,
+	})
 }
 
 type loginRequest struct {

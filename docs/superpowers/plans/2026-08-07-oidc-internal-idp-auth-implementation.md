@@ -197,11 +197,11 @@
 - 回调错误映射：IdP `error=access_denied` → `oidc_access_denied`；其余 → `oidc_provider_error`；统一 `302 /login?oidc_error=<code>`，不透传 `error_description`。
 - bind 回调重新认证 session 并比对 `BindActorID`/`BindSessionID`。
 
-- [ ] 写 handler 测试：begin 设动态 nonce cookie + 302；callback 成功建 session cookie + 302 next；callback `error=access_denied` → 302 带 `oidc_error=oidc_access_denied`；callback state 过期/nonce 不匹配 → 302 错误码；bind 未登录 → 401；`listIdentities` 不返回 subject/raw_profile；`bootstrap-status` 三字段正确。
-- [ ] 运行测试确认 RED。
-- [ ] 实现 handler；router 条件挂载（`if deps.OIDC != nil`）；`main.go` 装配（`NewProvider` → `NewRedisStateStore` → `NewOIDCLoginService`，nil 时不挂）；`AuthService`/`InvitationService`/`UserService` 注入 `passwordEnabled`。
-- [ ] 确认 `oidc.enabled=false` 时既有路由与行为零变化（回归）。
-- [ ] 运行 `go test ./internal/interfaces/http ./cmd/langhuan -count=1`、`go vet`。
+- [x] 写 handler 测试：begin 设动态 nonce cookie + 302；callback 成功建 session cookie + 302 next；callback `error=access_denied` → 302 带 `oidc_error=oidc_access_denied`；callback state 过期/nonce 不匹配 → 302 错误码；bind 未登录 → 401；`listIdentities` 不返回 subject/raw_profile；`bootstrap-status` 三字段正确。
+- [x] 运行测试确认 RED。
+- [x] 实现 handler；router 条件挂载（`if deps.OIDC != nil`）；`main.go` 装配（`NewProvider` → `NewRedisStateStore` → `NewOIDCLoginService`，nil 时不挂）；`AuthService`/`InvitationService`/`UserService` 注入 `passwordEnabled`。
+- [x] 确认 `oidc.enabled=false` 时既有路由与行为零变化（回归）。
+- [x] 运行 `go test ./internal/interfaces/http ./cmd/langhuan -count=1`、`go vet`。
 
 ### Task 8: e2e 全链路
 
