@@ -49,6 +49,7 @@ export const auth = {
     success: 'Account completed',
     emailTaken: 'This email is already used by another account',
     emailMismatch: 'Email does not match the invitation',
+    skip: 'Skip for now',
   },
   schemas: {
     invalidEmail: 'Please enter a valid email address',

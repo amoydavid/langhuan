@@ -20,6 +20,14 @@ export function safeRedirect(raw: string | undefined) {
   return raw
 }
 
+/**
+ * 整页跳转到站内路径（next 来自服务端校验过的路径，必须是站内绝对路径）。
+ * 独立成模块函数以便测试替换，避免直接依赖不可 mock 的 window.location。
+ */
+export function hardRedirect(path: string) {
+  window.location.assign(path)
+}
+
 export function workspaceEntry(slug: string) {
   return `/workspaces/${encodeURIComponent(slug)}/kb`
 }

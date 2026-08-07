@@ -27,6 +27,7 @@ import { resetUnauthorizedNavigation } from '@/lib/query-client'
 import { Route } from '@/routes/(auth)/complete-profile'
 import { updateProfile } from './api'
 import { AuthLayout } from './auth-layout'
+import { hardRedirect } from './navigation'
 
 const completeProfileSchema = z.object({
   email: z.string().min(1).email(),
@@ -60,7 +61,7 @@ export function CompleteProfile() {
       toast.success(t('auth.completeProfile.success'))
       const nextPath = search.next ?? '/workspaces'
       // 补齐资料后全页跳转（next 来自服务端校验过的站内路径）。
-      window.location.assign(nextPath)
+      hardRedirect(nextPath)
     },
   })
 
@@ -124,6 +125,17 @@ export function CompleteProfile() {
               </Button>
             </form>
           </Form>
+          {/* 常规 OIDC 登录缺 email 时允许跳过（软引导）；邀请接受必须补邮箱，不显示跳过。 */}
+          {!search.invitation_token_hash && (
+            <Button
+              type='button'
+              variant='ghost'
+              className='mt-2 w-full'
+              onClick={() => hardRedirect(search.next ?? '/workspaces')}
+            >
+              {t('auth.completeProfile.skip')}
+            </Button>
+          )}
         </CardContent>
       </Card>
     </AuthLayout>

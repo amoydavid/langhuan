@@ -41,6 +41,7 @@ export const auth = {
     success: '资料已完善',
     emailTaken: '该邮箱已被其他账号使用',
     emailMismatch: '邮箱与邀请锁定邮箱不一致',
+    skip: '跳过，稍后再说',
   },
   schemas: {
     invalidEmail: '请输入有效的邮箱地址',
