@@ -76,6 +76,7 @@ func TestOIDCLoginOrProvisionE2E(t *testing.T) {
 	svc := service.NewOIDCLoginService(provider, newStubStateStore(), authTx, identityRepo,
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: "https://sso.example.com", RequireEmailVerified: true},
+		nil,
 	)
 
 	// 空库首个 OIDC 用户 → JIT 建号 + platform_admin。
@@ -141,6 +142,7 @@ func TestOIDCEmailMergeE2E(t *testing.T) {
 	svc := service.NewOIDCLoginService(provider, newStubStateStore(), authTx, identityRepo,
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: "https://sso.example.com"},
+		nil,
 	)
 
 	session, err := svc.LoginOrProvision(ctx, provider.profile, "ua", "1.2.3.4")

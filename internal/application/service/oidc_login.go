@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -65,9 +66,11 @@ type OIDCLoginService struct {
 	sessionLife          int // seconds
 	issuer               string
 	requireEmailVerified bool
+	log                  *slog.Logger // 可 nil；仅记脱敏字段
 }
 
 // NewOIDCLoginService 构造 OIDCLoginService。
+// log 可传 nil；服务只记录脱敏字段（不记 sub/email/id_token/access_token）。
 func NewOIDCLoginService(
 	provider authport.OIDCProvider,
 	stateStore authport.OIDCStateStore,
@@ -75,6 +78,7 @@ func NewOIDCLoginService(
 	identityReader ExternalIdentityReader,
 	sessionCfg config.SessionConfig,
 	oidcCfg config.OIDCConfig,
+	log *slog.Logger,
 ) *OIDCLoginService {
 	return &OIDCLoginService{
 		provider:             provider,
@@ -84,6 +88,7 @@ func NewOIDCLoginService(
 		sessionLife:          sessionCfg.LifetimeSeconds,
 		issuer:               strings.TrimSpace(oidcCfg.Issuer),
 		requireEmailVerified: oidcCfg.RequireEmailVerified,
+		log:                  log,
 	}
 }
 
@@ -167,15 +172,28 @@ func (s *OIDCLoginService) ConsumeAndExchange(ctx context.Context, code, state, 
 		return nil, nil, err
 	}
 	if err := validateOIDCProfile(profile, s.requireEmailVerified); err != nil {
+		s.logOIDCProfileError(err)
 		return nil, nil, err
 	}
 	return payload, profile, nil
+}
+
+// logOIDCProfileError 记录脱敏的 profile 校验失败原因（不记 sub/email 明文）。
+func (s *OIDCLoginService) logOIDCProfileError(err error) {
+	if s.log == nil {
+		return
+	}
+	s.log.Warn("oidc profile 校验失败",
+		slog.String("reason", err.Error()),
+		slog.String("issuer", s.issuer),
+	)
 }
 
 // LoginOrProvision 处理常规登录/JIT 建号/email 合并（spec §6.3）。
 // 返回新建的 session。
 func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authport.OIDCProfile, userAgent, ipAddr string) (*model.Session, error) {
 	if err := validateOIDCProfile(profile, s.requireEmailVerified); err != nil {
+		s.logOIDCProfileError(err)
 		return nil, err
 	}
 	var session *model.Session
@@ -276,18 +294,21 @@ func (s *OIDCLoginService) ListIdentities(ctx context.Context, userID uuid.UUID)
 }
 
 // validateOIDCProfile 校验 profile 的 sub/email 合法性与 email_verified 策略。
+// 返回的错误都包装 domainerrors.ErrUnauthorized（HTTP 层映射不变），
+// 但携带脱敏原因（missing_sub / missing_email / invalid_email / email_not_verified），
+// 供日志定位，不泄露 sub/email 明文。
 func validateOIDCProfile(profile *authport.OIDCProfile, requireEmailVerified bool) error {
 	if profile == nil || strings.TrimSpace(profile.Subject) == "" {
-		return domainerrors.ErrUnauthorized
+		return fmt.Errorf("%w: oidc profile 缺 sub", domainerrors.ErrUnauthorized)
 	}
 	if strings.TrimSpace(profile.Email) == "" {
-		return domainerrors.ErrUnauthorized
+		return fmt.Errorf("%w: oidc profile 缺 email（IdP 是否配置了 email scope？）", domainerrors.ErrUnauthorized)
 	}
 	if _, err := normalizeEmailService(profile.Email); err != nil {
-		return domainerrors.ErrUnauthorized
+		return fmt.Errorf("%w: oidc profile email 格式非法", domainerrors.ErrUnauthorized)
 	}
 	if requireEmailVerified && !profile.EmailVerified {
-		return domainerrors.ErrUnauthorized
+		return fmt.Errorf("%w: oidc profile email 未验证", domainerrors.ErrUnauthorized)
 	}
 	return nil
 }

@@ -207,6 +207,7 @@ func newTestOIDCLoginService(t *testing.T, issuer string, requireVerified bool) 
 	svc := NewOIDCLoginService(prov, store, tx, reader,
 		config.SessionConfig{LifetimeSeconds: 3600},
 		config.OIDCConfig{Issuer: issuer, RequireEmailVerified: requireVerified},
+		nil,
 	)
 	return svc, prov, store, tx, reader
 }
@@ -446,7 +447,9 @@ func TestConsumeAndExchangeValidatesProfile(t *testing.T) {
 	tx := newFakeAuthTx()
 	svc := NewOIDCLoginService(prov, store, tx, &fakeIdentityReader{},
 		config.SessionConfig{LifetimeSeconds: 3600},
-		config.OIDCConfig{Issuer: "https://sso.example.com"})
+		config.OIDCConfig{Issuer: "https://sso.example.com"},
+		nil,
+	)
 
 	// 手动 Issue 一个 payload 拿到 state。
 	state, _ := store.Issue(context.Background(), authport.OIDCStatePayload{BrowserNonce: "bn", OIDCNonce: "on", PKCEVerifier: "pv"})
