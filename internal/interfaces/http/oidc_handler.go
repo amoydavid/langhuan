@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -23,11 +24,17 @@ type OIDCLoginServiceHTTP interface {
 	LoginOrProvision(ctx context.Context, profile *authport.OIDCProfile, userAgent, ipAddr string) (*model.Session, error)
 	BindIdentity(ctx context.Context, actorUserID uuid.UUID, profile *authport.OIDCProfile) error
 	ListIdentities(ctx context.Context, userID uuid.UUID) ([]*model.ExternalIdentity, error)
+	NeedsEmailCompletion(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 // OIDCAcceptor 是 AcceptOIDC 接口（InvitationService 满足）。
 type OIDCAcceptor interface {
 	AcceptOIDC(ctx context.Context, invitationTokenHash string, profile *authport.OIDCProfile, userAgent, ipAddr string) (*model.Session, error)
+}
+
+// OIDCInvitationCompleter 是补齐 email 后完成邀请接受的接口（InvitationService 满足）。
+type OIDCInvitationCompleter interface {
+	CompleteInvitationAccept(ctx context.Context, invitationTokenHash string, userID uuid.UUID) error
 }
 
 // oidcNonceCookiePrefix 是浏览器 nonce cookie 的前缀（动态后缀 = state）。
@@ -50,8 +57,9 @@ type externalIdentityDTO struct {
 // oidcHandler 暴露 OIDC 登录/回调/绑定/外部身份查询端点。
 type oidcHandler struct {
 	svc        OIDCLoginServiceHTTP
-	acceptor   OIDCAcceptor    // AcceptOIDC 路径；nil 时该路径不可用
-	auth       OIDCSessionAuth // bind 回调重新认证 session
+	acceptor   OIDCAcceptor            // AcceptOIDC 路径；nil 时该路径不可用
+	completer  OIDCInvitationCompleter // 补齐 email 后完成邀请接受
+	auth       OIDCSessionAuth         // bind 回调重新认证 session
 	sessionCfg config.SessionConfig
 }
 
@@ -61,9 +69,12 @@ type OIDCSessionAuth interface {
 }
 
 // newOIDCHandler 构造 oidcHandler。
-func newOIDCHandler(svc OIDCLoginServiceHTTP, acceptor OIDCAcceptor, auth OIDCSessionAuth, sessionCfg config.SessionConfig) oidcHandler {
-	return oidcHandler{svc: svc, acceptor: acceptor, auth: auth, sessionCfg: sessionCfg}
+func newOIDCHandler(svc OIDCLoginServiceHTTP, acceptor OIDCAcceptor, completer OIDCInvitationCompleter, auth OIDCSessionAuth, sessionCfg config.SessionConfig) oidcHandler {
+	return oidcHandler{svc: svc, acceptor: acceptor, completer: completer, auth: auth, sessionCfg: sessionCfg}
 }
+
+// completeProfileRoute 是前端补齐资料页的路由。
+const completeProfileRoute = "/complete-profile"
 
 // begin 处理 GET /auth/oidc/login?next=&invitation_token=。
 // 普通登录与邀请接受发起；生成 state、设动态 nonce cookie、302 到 IdP。
@@ -157,6 +168,11 @@ func (h oidcHandler) callback(c *gin.Context) {
 			return
 		}
 		h.setSessionCookie(c, session.ID.String())
+		// 无 email（IdP 未返回）时引导先补齐资料，补齐后带 invitation_token_hash 完成接受。
+		if h.needsEmailCompletion(c, session.UserID) {
+			c.Redirect(http.StatusFound, completeProfileRoute+"?next="+url.QueryEscape(next)+"&invitation_token_hash="+payload.InvitationTokenHash)
+			return
+		}
 		c.Redirect(http.StatusFound, next)
 		return
 	}
@@ -192,7 +208,22 @@ func (h oidcHandler) callback(c *gin.Context) {
 		return
 	}
 	h.setSessionCookie(c, session.ID.String())
+	// 无 email（IdP 未返回）时引导先补齐资料，补齐后再进入系统。
+	if h.needsEmailCompletion(c, session.UserID) {
+		c.Redirect(http.StatusFound, completeProfileRoute+"?next="+url.QueryEscape(next))
+		return
+	}
 	c.Redirect(http.StatusFound, next)
+}
+
+// needsEmailCompletion 查询用户是否缺 email（best-effort：查询失败视为无需补齐，
+// 避免回调因辅助查询失败而失败）。
+func (h oidcHandler) needsEmailCompletion(c *gin.Context, userID uuid.UUID) bool {
+	needs, err := h.svc.NeedsEmailCompletion(c.Request.Context(), userID)
+	if err != nil {
+		return false
+	}
+	return needs
 }
 
 // listIdentities 处理 GET /auth/external-identities（SessionAuth）。

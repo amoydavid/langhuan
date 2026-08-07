@@ -101,6 +101,11 @@ type fakeUserService struct {
 	changeNewPassword    string
 	changePasswordErr    error
 
+	updateEmailCalled bool
+	updateEmailUserID uuid.UUID
+	updateEmailValue  string
+	updateEmailErr    error
+
 	byIDUser *dto.AuthenticatedUser
 	byIDErr  error
 }
@@ -139,6 +144,13 @@ func (s *fakeUserService) ChangePassword(_ context.Context, userID uuid.UUID, ol
 	s.changeOldPassword = oldPassword
 	s.changeNewPassword = newPassword
 	return s.changePasswordErr
+}
+
+func (s *fakeUserService) UpdateProfileEmail(_ context.Context, userID uuid.UUID, email string) error {
+	s.updateEmailCalled = true
+	s.updateEmailUserID = userID
+	s.updateEmailValue = email
+	return s.updateEmailErr
 }
 
 func (s *fakeUserService) GetByID(_ context.Context, userID uuid.UUID) (*dto.AuthenticatedUser, error) {

@@ -96,6 +96,23 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, passw
 	return nil
 }
 
+// UpdateEmail 更新用户 email。唯一约束冲突由 translateDBError 映射为 ErrConflict。
+func (r *UserRepository) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	result := r.db.WithContext(ctx).Model(&UserRow{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"email":      nullableString(email),
+			"updated_at": time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return translateDBError(result.Error, "更新 email 失败")
+	}
+	if result.RowsAffected == 0 {
+		return ErrRepositoryNotFound
+	}
+	return nil
+}
+
 func (r *UserRepository) TouchLastLogin(ctx context.Context, id uuid.UUID) error {
 	now := time.Now().UTC()
 	result := r.db.WithContext(ctx).Model(&UserRow{}).

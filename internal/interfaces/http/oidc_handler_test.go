@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -37,6 +38,7 @@ type fakeOIDCService struct {
 	listErr           error
 	beginCalledNext   string
 	beginCalledInvite string
+	needsEmail        bool
 }
 
 func (f *fakeOIDCService) BeginLogin(ctx context.Context, next string, invitationToken string, actorUserID, sessionID uuid.UUID) (string, string, string, error) {
@@ -67,14 +69,23 @@ func (f *fakeOIDCService) ListIdentities(ctx context.Context, userID uuid.UUID) 
 	return f.identities, f.listErr
 }
 
-// fakeOIDCAcceptor 实现 OIDCAcceptor。
+func (f *fakeOIDCService) NeedsEmailCompletion(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return f.needsEmail, nil
+}
+
+// fakeOIDCAcceptor 实现 OIDCAcceptor 与 OIDCInvitationCompleter。
 type fakeOIDCAcceptor struct {
-	session *model.Session
-	err     error
+	session     *model.Session
+	err         error
+	completeErr error
 }
 
 func (a *fakeOIDCAcceptor) AcceptOIDC(ctx context.Context, tokenHash string, profile *authport.OIDCProfile, userAgent, ipAddr string) (*model.Session, error) {
 	return a.session, a.err
+}
+
+func (a *fakeOIDCAcceptor) CompleteInvitationAccept(ctx context.Context, tokenHash string, userID uuid.UUID) error {
+	return a.completeErr
 }
 
 // fakeOIDCSessionAuth 实现 OIDCSessionAuth。
@@ -88,7 +99,11 @@ func (a *fakeOIDCSessionAuth) Authenticate(ctx context.Context, sessionID uuid.U
 }
 
 func newTestOIDCHandler(svc OIDCLoginServiceHTTP, acceptor OIDCAcceptor, auth OIDCSessionAuth) oidcHandler {
-	return newOIDCHandler(svc, acceptor, auth, config.SessionConfig{
+	var completer OIDCInvitationCompleter
+	if c, ok := acceptor.(OIDCInvitationCompleter); ok {
+		completer = c
+	}
+	return newOIDCHandler(svc, acceptor, completer, auth, config.SessionConfig{
 		CookieName:      "langhuan_session",
 		LifetimeSeconds: 3600,
 		SecureCookie:    false,
@@ -296,5 +311,63 @@ func TestErrorCodeMapping(t *testing.T) {
 		if got := errorCode(tt.err); got != tt.want {
 			t.Errorf("errorCode(%v) = %q, want %q", tt.err, got, tt.want)
 		}
+	}
+}
+
+func TestOIDCCallbackLoginRedirectsToCompleteProfileWhenNoEmail(t *testing.T) {
+	session := &model.Session{ID: uuid.New(), UserID: uuid.New()}
+	svc := &fakeOIDCService{
+		payload:      &authport.OIDCStatePayload{Next: "/"},
+		profile:      &authport.OIDCProfile{Subject: "sub-1", Email: ""},
+		loginSession: session,
+		needsEmail:   true,
+	}
+	h := newTestOIDCHandler(svc, nil, nil)
+	c, w := newTestGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=x&state=state-123", nil)
+	c.Request.AddCookie(&http.Cookie{Name: "oidc_nonce_state-123", Value: "browser-nonce"})
+
+	h.callback(c)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/complete-profile?next=") {
+		t.Fatalf("location = %s, want /complete-profile prefix", loc)
+	}
+	// session cookie 应已设置。
+	found := false
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == "langhuan_session" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("session cookie should be set before redirect to complete-profile")
+	}
+}
+
+func TestOIDCCallbackInvitationRedirectsToCompleteProfileWithTokenHash(t *testing.T) {
+	session := &model.Session{ID: uuid.New(), UserID: uuid.New()}
+	acceptor := &fakeOIDCAcceptor{session: session}
+	svc := &fakeOIDCService{
+		payload:    &authport.OIDCStatePayload{Next: "/", InvitationTokenHash: "abc123hash"},
+		profile:    &authport.OIDCProfile{Subject: "sub-1", Email: ""},
+		needsEmail: true,
+	}
+	h := newTestOIDCHandler(svc, acceptor, nil)
+	c, w := newTestGin()
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=x&state=state-123", nil)
+	c.Request.AddCookie(&http.Cookie{Name: "oidc_nonce_state-123", Value: "browser-nonce"})
+
+	h.callback(c)
+
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "invitation_token_hash=abc123hash") {
+		t.Fatalf("location = %s, want invitation_token_hash param", loc)
+	}
+	if !strings.HasPrefix(loc, "/complete-profile?") {
+		t.Fatalf("location = %s, want /complete-profile prefix", loc)
 	}
 }

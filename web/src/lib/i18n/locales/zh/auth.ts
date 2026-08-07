@@ -32,6 +32,16 @@ export const auth = {
     submitButton: '接受邀请',
     successToast: '邀请已接受',
   },
+
+  completeProfile: {
+    title: '完善账号资料',
+    description: '企业身份提供者未提供邮箱，请补充一个邮箱作为你的账号标识。',
+    emailLabel: '邮箱',
+    submit: '保存并继续',
+    success: '资料已完善',
+    emailTaken: '该邮箱已被其他账号使用',
+    emailMismatch: '邮箱与邀请锁定邮箱不一致',
+  },
   schemas: {
     invalidEmail: '请输入有效的邮箱地址',
     passwordRequired: '请输入密码',

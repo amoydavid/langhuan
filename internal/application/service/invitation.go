@@ -293,7 +293,7 @@ func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash 
 	if err := validateInvitationTokenHash(invitationTokenHash); err != nil {
 		return nil, err
 	}
-	if err := validateOIDCProfile(profile, true); err != nil {
+	if err := validateOIDCProfile(profile, false); err != nil {
 		return nil, err
 	}
 
@@ -305,10 +305,11 @@ func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash 
 		if err != nil {
 			return err
 		}
-		// 邀请接受以 email 匹配为凭据：profile 无 email（IdP 未返回）时
-		// normalizedEmail 为空，与 invited_email（非空）必然不匹配 → ErrForbidden。
-		// 无 email 用户无法通过邀请验证身份，属安全设计。
-		if normalizedEmail != invitation.InvitedEmail {
+		// 邀请接受以 email 匹配为凭据。profile 无 email（IdP 未返回）时：
+		//   - 只建 user + identity + session（不建 membership、不标记 accepted），
+		//     由 handler 引导先去补齐 email，补齐后 CompleteInvitationAccept 完成接受。
+		// profile 有 email 但与该邀请锁定 email 不匹配 → 拒绝。
+		if normalizedEmail != "" && normalizedEmail != invitation.InvitedEmail {
 			return domainerrors.ErrForbidden
 		}
 
@@ -324,11 +325,13 @@ func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash 
 				return err
 			}
 		} else {
-			emailUser, feErr := tx.FindUserByEmail(ctx, normalizedEmail)
-			if feErr != nil && !errors.Is(feErr, domainerrors.ErrNotFound) {
-				return feErr
+			if normalizedEmail != "" {
+				emailUser, feErr := tx.FindUserByEmail(ctx, normalizedEmail)
+				if feErr != nil && !errors.Is(feErr, domainerrors.ErrNotFound) {
+					return feErr
+				}
+				user = emailUser
 			}
-			user = emailUser
 			if user == nil {
 				// JIT 建号：持 bootstrap lock，count==0 授 platform_admin。
 				if err := tx.AcquireBootstrapLock(ctx); err != nil {
@@ -356,18 +359,20 @@ func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash 
 			}
 		}
 
-		// 建 membership（role 取自 invitation）。
-		membership, err := model.NewMembership(invitation.WorkspaceID, user.ID, invitation.Role)
-		if err != nil {
-			return err
-		}
-		if err := tx.CreateMembership(ctx, membership); err != nil {
-			return err
-		}
-
-		// 标记 invitation accepted（WHERE accepted_at IS NULL 防并发重放）。
-		if err := tx.MarkInvitationAccepted(ctx, invitation.ID, user.ID); err != nil {
-			return err
+		// 有 email（已与邀请 email 匹配）时才建 membership 并标记 accepted。
+		if normalizedEmail != "" {
+			// 建 membership（role 取自 invitation）。
+			membership, err := model.NewMembership(invitation.WorkspaceID, user.ID, invitation.Role)
+			if err != nil {
+				return err
+			}
+			if err := tx.CreateMembership(ctx, membership); err != nil {
+				return err
+			}
+			// 标记 invitation accepted（WHERE accepted_at IS NULL 防并发重放）。
+			if err := tx.MarkInvitationAccepted(ctx, invitation.ID, user.ID); err != nil {
+				return err
+			}
 		}
 
 		sess, err := model.NewSession(user.ID, s.sessionLife, userAgent, ipAddr)
@@ -385,6 +390,45 @@ func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash 
 		return nil, err
 	}
 	return session, nil
+}
+
+// CompleteInvitationAccept 在用户补齐 email 后完成此前"待接受"的邀请。
+// 前置：用户已通过 AcceptOIDC 建号（无 email 路径），现在 email 已补齐。
+// 事务内重新校验用户 email 与邀请锁定 email 一致，再建 membership 并标记 accepted。
+func (s *InvitationService) CompleteInvitationAccept(ctx context.Context, invitationTokenHash string, userID uuid.UUID) error {
+	if s.authTx == nil {
+		return fmt.Errorf("%w: OIDC 邀请接受未配置事务 runner", domainerrors.ErrValidation)
+	}
+	if err := validateInvitationTokenHash(invitationTokenHash); err != nil {
+		return err
+	}
+	return s.authTx.WithinOIDCAuth(ctx, func(tx OIDCAuthTx) error {
+		invitation, err := tx.FindPendingInvitationForUpdate(ctx, invitationTokenHash)
+		if err != nil {
+			return err
+		}
+		user, err := tx.FindUserByID(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(user.Email) == "" {
+			return fmt.Errorf("%w: 请先补充 email", domainerrors.ErrValidation)
+		}
+		if user.Email != invitation.InvitedEmail {
+			return domainerrors.ErrForbidden
+		}
+		membership, err := model.NewMembership(invitation.WorkspaceID, user.ID, invitation.Role)
+		if err != nil {
+			return err
+		}
+		if err := tx.CreateMembership(ctx, membership); err != nil {
+			return err
+		}
+		if err := tx.MarkInvitationAccepted(ctx, invitation.ID, user.ID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // validateInvitationTokenHash 校验 token hash 为 64 位小写 SHA-256 hex。

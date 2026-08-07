@@ -113,6 +113,12 @@ COMMIT;
 
 **email 是可选字段**：IdP 出于隐私（email 视为敏感字段）可能不返回 email claim。此时允许创建无 email 的 OIDC 用户（JIT 建号 email 为空）。email 存在时必须格式合法；`require_email_verified=true` 时 email 必须已验证。无 email 用户无法通过邀请接受验证身份（邀请以 email 匹配为凭据），也无法 password 登录。
 
+**无 email 用户先进系统、后补齐资料（complete-profile）**：OIDC 回调拿到无 email 的 profile 时，仍按正常流程建 user + identity + session（保证登录不被 IdP 字段裁剪阻断），随后 handler 检测 `user.email == ""`，302 到前端 `/complete-profile?next=<原目标>` 引导补齐 email。补齐是「先创建用户、后完善资料」，与「必须在进入 workspace 前拥有 email」的目标一致：
+
+- email 补齐走 `PUT /auth/profile`（SessionAuth）：用户提交 email → `UpdateProfileEmail`（格式校验 + 唯一约束，重复返回 409）。
+- 若登录时携带 `invitation_token_hash`（即原邀请接受流程），补齐 email 后在同一请求内调用 `CompleteInvitationAccept`：校验补齐后的 email 与邀请锁定 email 一致，一致才建 membership 并标记邀请 accepted；不一致返回 403，邀请保持 pending。
+- 因此无 email 用户首次进入系统时一定被引导补齐 email；补齐后即拥有与其他用户一致的、可用于邀请匹配与展示的唯一 email。
+
 ### 4.5 state 用服务端 Redis 存储，不用 HMAC 自签
 
 琅嬛已依赖 Redis（asynq 队列）。state 存 Redis、与浏览器一次性 nonce cookie 双绑，比纯 HMAC 自签 state 更稳：
@@ -354,7 +360,13 @@ sequenceDiagram
     end
     Svc->>DB: tx.TouchLastLogin（best-effort）
     Svc-->>H: *model.Session
-    H-->>U: Set-Cookie: langhuan_session<br/>302 → next（默认 /）
+    H->>Svc: NeedsEmailCompletion(user.ID)（email 为空?）
+    alt 无 email（IdP 未返回）
+        H-->>U: Set-Cookie: langhuan_session<br/>302 → /complete-profile?next=<next>
+        Note over U: 补齐 email 后进入系统<br/>（见 16.4；携带 invitation_token_hash 时<br/>补齐后完成邀请接受）
+    else 有 email
+        H-->>U: Set-Cookie: langhuan_session<br/>302 → next（默认 /）
+    end
 ```
 
 #### 6.2.2 邀请接受（6.4）
@@ -389,14 +401,19 @@ sequenceDiagram
     Inv->>DB: WithinOIDCAuth(tx): lock/read/create/accept
     alt 不存在/过期/已撤销
         Inv-->>H: ErrNotFound
-    else email != invited_email
+    else profile 有 email 且 != invited_email
         Inv-->>H: ErrForbidden
-    else 匹配
+    else profile 有 email 且匹配
         Inv->>DB: 事务：FOR UPDATE + 建/复用 user + membership<br/>+ identity + 标记 accepted_at + 建 session
         Note over DB: WHERE accepted_at IS NULL AND revoked_at IS NULL<br/>RowsAffected==0 → ErrConflict
         Inv-->>H: *model.Session
+        H-->>U: Set-Cookie: langhuan_session<br/>302 → next
+    else profile 无 email（IdP 未返回）
+        Inv->>DB: 事务：建/复用 user + identity + session<br/>（不建 membership、不标记 accepted）
+        Inv-->>H: *model.Session
+        H-->>U: Set-Cookie: langhuan_session<br/>302 → /complete-profile?next=...&invitation_token_hash=<hash>
+        Note over U: 补齐 email 后 PUT /auth/profile<br/>（同请求内 CompleteInvitationAccept<br/>校验 email 匹配 → 建 membership + 标记 accepted）
     end
-    H-->>U: Set-Cookie: langhuan_session<br/>302 → next
 ```
 
 #### 6.2.3 已登录绑定（6.5）
@@ -445,21 +462,22 @@ sequenceDiagram
 
 `OIDCLoginService.LoginOrProvision(ctx, profile, userAgent, ipAddr)`：
 
-1. 校验 profile：`Subject` 非空、`Email` 非空且能通过领域 email 规范化；当 `oidc.require_email_verified=true` 时必须 `EmailVerified=true`。
+1. 校验 profile：`Subject` 非空；`Email` 存在时必须能通过领域 email 规范化；当 `oidc.require_email_verified=true` 且 email 存在时必须 `EmailVerified=true`。**email 允许为空**（IdP 可能不返回；见 §4.4）。
 2. repository 在同一事务内按 `issuer + profile.Subject` 查找 identity：
    - 命中 → 复用 `identity.UserID`，刷新 `last_auth_at` / `raw_profile`。
-3. identity 未命中时，按规范化 email 查找现有 user：
+3. identity 未命中时，若 profile 有 email，按规范化 email 查找现有 user：
    - repository `FindByEmail(profile.Email)`：
      - 命中 → **合并**：给该 user 建 `external_identity`（信任内部 IdP 邮箱）。
      - 未命中 → 走 JIT 建号。
+   - profile 无 email → 跳过 email 合并，直接 JIT 建号（无 email 用户）。
 4. JIT 建号：
-   - `model.NewProvisionalUser(email, nickname)`：`password_hash=""`。
+   - `model.NewProvisionalUser(email, nickname)`：`password_hash=""`；email 可空。
    - `nickname` 从 `profile.Name` / `profile.PreferredUsername` / `profile.Subject` 派生。
    - 建 `external_identity` 指向新 user。
    - 不建 membership；只有邀请接受才加入 workspace。
    - 如果这是空库中的第一个用户，事务内将 `is_platform_admin=true`；否则为 false。
 5. 建 session（`model.NewSession` + `sessionRepo.Create`），`TouchLastLogin`（best-effort）。
-6. 返回 `(*model.Session, nil)`。
+6. 返回 `(*model.Session, nil)`。handler 随后调 `NeedsEmailCompletion(user.ID)`：email 为空时 302 到 `/complete-profile?next=<next>`（并透传 `invitation_token_hash`），用户补齐 email 后才进入系统。
 
 合并/JIT 建号的事务边界：`OIDCLoginService` 通过 `OIDCAuthTxRunner.WithinOIDCAuth` 获得 tx-bound 薄持久化接口，service 在事务回调内完成 identity/email 分支、bootstrap lock、用户创建/合并、identity 更新和 session 创建；service 不持有 `*gorm.DB`。session 与 user/identity 同一事务提交，避免认证成功但持久化不完整。
 
@@ -467,18 +485,20 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Start(["profile 从 IdP 回调<br/>sub / email / verified"])
-    CheckProfile{"sub/email/verified 合法?"}
+    Start(["profile 从 IdP 回调<br/>sub / email?(可选) / verified"])
+    CheckProfile{"sub 非空且合法?<br/>email 存在则格式合法<br/>require_email_verified 时<br/>email 必须已验证"}
     Reject(["ErrUnauthorized"])
     FindId["tx.FindIdentityByIssuerSubject<br/>(issuer, sub)"]
     HitId{"命中 identity?"}
     Reuse["复用 user<br/>UpdateLastAuth + raw_profile"]
-    FindUser["userRepo.FindByEmail(normalized email)"]
+    FindUser["userRepo.FindByEmail(normalized email)<br/>仅当 profile 有 email"]
     HitUser{"命中 user?<br/>(信任内部 IdP 邮箱)"}
     Merge["合并：AttachIdentity<br/>给现有 user 绑 identity"]
-    Create["JIT 建号 + identity<br/>空库首个用户授予 platform_admin"]
+    Create["JIT 建号 + identity<br/>email 可空（IdP 未返回）<br/>空库首个用户授予 platform_admin"]
     Session["建 session + TouchLastLogin"]
-    Done(["返回 *model.Session"])
+    CheckEmail{"user.email 为空?"}
+    RedirectComplete(["302 → /complete-profile?next=...<br/>补齐 email 后才进入系统"])
+    Done(["返回 *model.Session<br/>302 → next"])
 
     Start --> CheckProfile
     CheckProfile -- 否 --> Reject
@@ -489,27 +509,39 @@ flowchart TD
     HitUser -- 是 --> Merge --> Session
     HitUser -- 否 --> Create
     Create --> Session
-    Session --> Done
+    Session --> CheckEmail
+    CheckEmail -- 是（无 email 用户） --> RedirectComplete
+    CheckEmail -- 否 --> Done
 ```
 
 ### 6.4 OIDC 接受邀请（state 带 invitation_token_hash）
 
 `InvitationService.AcceptOIDC(ctx, invitationTokenHash, profile, userAgent, ipAddr)`：
 
-1. 校验 profile 的 `sub`、email 和 `email_verified` 策略。
+1. 校验 profile 的 `sub`；email 存在时校验格式与 `email_verified` 策略（email 可空，见 §4.4）。
    `invitationTokenHash` 只接受 64 位小写 SHA-256 hex；格式不合法直接 `ErrUnauthorized`。
 2. `invRepo.FindPendingByTokenHash(tokenHash)`：不存在/已过期/已接受/已撤销 → `ErrNotFound`（仅用于快速失败，不作为并发安全依据）。
-3. `normalizeEmail(profile.Email) == normalizeEmail(invitation.InvitedEmail)`？
-   - 不匹配 → `ErrForbidden`（不泄漏 invitation 存在性，统一对外行为）。
+3. profile 有 email 时，`normalizeEmail(profile.Email) == normalizeEmail(invitation.InvitedEmail)`？不匹配 → `ErrForbidden`（不泄漏 invitation 存在性，统一对外行为）。
+   profile **无 email** 时跳过匹配（无法以 email 为凭据），见第 4 步的「补齐后完成接受」。
 4. 事务内（`OIDCAuthTxRunner.WithinOIDCAuth`；第一步按 token_hash `FOR UPDATE` 重读 invitation）：
    - service 使用同一个 tx-bound store 按 `(issuer, subject)` 和规范化 email 查询。
    - identity 命中 → 复用其 user；identity 未命中但 email 命中现有 user → 给该 user 绑定 identity。
    - identity 与 email 分别命中两个不同 user → `ErrConflict`，不自动跨账号合并，交由管理员处理。
    - **均未命中 → 需新建 user：先 `AcquireBootstrapLock` 再 `CountUsers`（必须在锁内重读），`count==0` 时授予 platform_admin，否则普通用户；然后 `CreateUser` + `CreateIdentity`。** 这条路径与 §6.3 JIT、password 首注册共用同一把 advisory lock（见 §4.2 清单），保证 bootstrap 唯一性在「普通登录 + 邀请接受并发」下不被打破。
-   - 建 `membership`（`workspace_id` / `role` 取自 invitation），并按需要创建/刷新 `external_identity`。
-   - 标记 invitation `accepted_at` / `accepted_user_id`（`WHERE accepted_at IS NULL AND revoked_at IS NULL`，`RowsAffected==0` 视为冲突）。
+   - **profile 有 email（已与邀请 email 匹配）**：建 `membership`（`workspace_id` / `role` 取自 invitation），并按需要创建/刷新 `external_identity`；标记 invitation `accepted_at` / `accepted_user_id`（`WHERE accepted_at IS NULL AND revoked_at IS NULL`，`RowsAffected==0` 视为冲突）。
+   - **profile 无 email**：只建 user + identity + session，**不建 membership、不标记 accepted**——邀请保持 pending，由 handler 引导用户先去 `/complete-profile` 补齐 email，补齐后 `CompleteInvitationAccept` 在同一请求内完成 membership 创建与 accepted 标记。
    - 建 session。
 5. 返回 `(*model.Session, nil)`。
+
+**CompleteInvitationAccept**（补齐 email 后的续接，由 `PUT /auth/profile` 在更新 email 成功后调用）：
+
+`InvitationService.CompleteInvitationAccept(ctx, invitationTokenHash, userID)`：
+
+1. 事务内 `FOR UPDATE` 重读 pending invitation；不存在/已接受/已撤销 → `ErrNotFound` / `ErrConflict`。
+2. 读取当前 user：`user.Email` 为空 → `ErrValidation`（必须先有 email）。
+3. `user.Email != invitation.InvitedEmail` → `ErrForbidden`（补齐的 email 必须与邀请锁定 email 一致）。
+4. 建 `membership` + 标记 invitation `accepted_at` / `accepted_user_id`（同一事务）。
+5. 不新建 session（沿用回调已建的 session）。
 
 > OIDC-only 模式下（`password.enabled=false`），邀请接受只能走此路径；但内部 IdP 用户也可以先通过普通 OIDC JIT 注册，再通过邀请把已有账号加入 workspace。邀请链接 `/invitations/:token` 页面展示「用企业 SSO 接受邀请」按钮，点击跳 `/auth/oidc/login?invitation_token=<token>&next=/`。
 
@@ -518,7 +550,7 @@ flowchart TD
 ```mermaid
 stateDiagram-v2
     [*] --> pending : owner/admin 创建邀请
-    pending --> accepted : AcceptOIDC<br/>email 匹配 + 事务标记
+    pending --> accepted : AcceptOIDC（profile 有 email 且匹配）<br/>或 CompleteInvitationAccept（补齐 email 后匹配）
     pending --> expired : 超过 expires_at
     pending --> revoked : 创建者/platform_admin 撤销
     accepted --> [*]
@@ -526,9 +558,11 @@ stateDiagram-v2
     revoked --> [*]
 
     note right of pending
-        进入路径两种：
+        进入路径三种：
         1) password.enabled=true: email+password+token (既有)
-        2) 任意: OIDC + email 匹配 (本版本新增)
+        2) OIDC + profile 有 email 且与锁定 email 匹配 (本版本)
+        3) OIDC + profile 无 email → 先建号 + 补齐 email
+           后 CompleteInvitationAccept 完成接受 (本版本)
         并发保护: WHERE accepted_at IS NULL
         RowsAffected==0 → ErrConflict
     end note
@@ -557,8 +591,10 @@ stateDiagram-v2
 | `POST /auth/password-reset` | 仅 platform_admin | 仅 platform_admin（break-glass 设密码） |
 | `GET /auth/oidc/login` | 可用 | 可用（主入口） |
 | OIDC 未知身份 JIT 注册 | 正常；空库首个用户为 platform_admin | 正常；空库首个用户为 platform_admin |
+| OIDC 回调无 email | 先建号登录，302 `/complete-profile` 补齐 email | 同左（补齐后进系统） |
 | 前端 `/login` | 密码框 + OIDC 按钮 | 只显示 OIDC 按钮 |
 | 前端 `/invite/:token` | 密码注册表单 | 「用企业 SSO 接受邀请」按钮 |
+| 前端 `/complete-profile` | 需要邮箱（补齐资料） | 需要邮箱（补齐资料） |
 
 `password.enabled=false` 的约束必须由 application service 执行：除 `AuthService.Login` 外，既有 `InvitationService.Accept` 也必须返回稳定的 `password_registration_disabled`。不能只隐藏前端表单或只在 handler 判断。
 
@@ -817,6 +853,10 @@ func (s *OIDCLoginService) BindIdentity(ctx context.Context, actorUserID uuid.UU
 
 // ListIdentities 返回当前用户的非敏感外部身份摘要。
 func (s *OIDCLoginService) ListIdentities(ctx context.Context, userID uuid.UUID) ([]*model.ExternalIdentity, error)
+
+// NeedsEmailCompletion 判断用户是否缺少 email（OIDC 回调后 handler 据此
+// 决定 302 到 /complete-profile 引导补齐）。
+func (s *OIDCLoginService) NeedsEmailCompletion(ctx context.Context, userID uuid.UUID) (bool, error)
 ```
 
 `LoginOrProvision` 的事务伪代码：
@@ -890,7 +930,19 @@ func (s *InvitationService) AcceptOIDC(
 ) (*model.Session, error)
 ```
 
-`InvitationService` 从同一份 `AuthConfig.OIDC` 读取 issuer、`require_email_verified` 和 session lifetime，并调用 `OIDCAuthTxRunner.WithinOIDCAuth`。service 在事务回调内依次：按 token hash `FOR UPDATE` 重读 pending invitation；再次确认 profile email 与邀请 email 匹配；按 issuer+subject/email 决定复用、合并或 JIT 建号；处理 identity/email 冲突；创建 membership 和 session；最后标记 invitation accepted。任何一步失败整体回滚。`InvitationRepository.AcceptRegistration` 继续只负责既有 password 邀请路径。
+`InvitationService` 从同一份 `AuthConfig.OIDC` 读取 issuer、`require_email_verified` 和 session lifetime，并调用 `OIDCAuthTxRunner.WithinOIDCAuth`。service 在事务回调内依次：按 token hash `FOR UPDATE` 重读 pending invitation；再次确认 profile email 与邀请 email 匹配（profile 无 email 时跳过匹配，只建 user/identity/session）；按 issuer+subject/email 决定复用、合并或 JIT 建号；处理 identity/email 冲突；有 email 时创建 membership 和 session，最后标记 invitation accepted。任何一步失败整体回滚。`InvitationRepository.AcceptRegistration` 继续只负责既有 password 邀请路径。
+
+profile 无 email 时 `AcceptOIDC` 不建 membership、不标记 accepted，改由 `CompleteInvitationAccept` 在用户补齐 email 后（`PUT /auth/profile` 同一请求内）完成接受：
+
+```go
+// CompleteInvitationAccept 在用户补齐 email 后完成此前未完成的邀请接受（6.4）。
+// 前提：当前 user 已有 email，且与邀请锁定 email 一致；否则 403。
+func (s *InvitationService) CompleteInvitationAccept(
+    ctx context.Context,
+    invitationTokenHash string,
+    userID uuid.UUID,
+) error
+```
 
 因此 `InvitationService` 构造函数新增同一个 `OIDCAuthTxRunner` 依赖；`InvitationRepository` 仍保留既有 CRUD 和 password `AcceptRegistration`，不在 repository 内复制 OIDC 账号决策。
 
@@ -968,6 +1020,12 @@ if deps.OIDC != nil {
 
 `Dependencies` 新增 `OIDC OIDCLoginService`（接口，nil 时不挂路由）。
 
+补齐邮箱接口挂在既有 auth 路由组（不随 OIDC 开关条件挂载，password 注册用户也可改邮箱）：
+
+```go
+authed.PUT("/auth/profile", authH.updateProfile) // SessionAuth：{email, invitation_token_hash?}
+```
+
 ### 11.2 handler 行为
 
 - `begin`：`GET /auth/oidc/login?next=&invitation_token=`，只用于普通登录和邀请接受；邀请 token 进入 state 前先计算 sha256，明文不写 Redis。
@@ -977,9 +1035,15 @@ if deps.OIDC != nil {
   - 读 nonce cookie。
   - `ConsumeAndExchange` → `(payload, profile)`。
   - 按 payload 分派；若为绑定 payload，使用注入的 `AuthService.Authenticate` 重新认证当前 session，并比对 `BindActorID`/`BindSessionID`。
-  - 成功：`setSessionCookie` + `302 payload.Next`；清 nonce cookie。
+  - 登录/邀请接受成功建 session 后，调 `NeedsEmailCompletion(user.ID)`：
+    - email 为空 → `setSessionCookie` + `302 /complete-profile?next=<next>`（邀请接受时额外带 `invitation_token_hash`）。
+    - 有 email → `setSessionCookie` + `302 payload.Next`。
   - 失败：`302 /login?oidc_error=<code>`。
 - 绑定回调自动分派到 `BindIdentity`；成功后只回 `/settings/account`，不替换已有 session。
+- `PUT /auth/profile`（SessionAuth，auth_handler）：补齐邮箱。
+  - body：`{"email": "...", "invitation_token_hash": "可选"}`。
+  - `UpdateProfileEmail`（规范化 + 格式校验；`users.email UNIQUE` 冲突返回 409）。
+  - body 带 `invitation_token_hash` 时继续调 `CompleteInvitationAccept`（补齐的 email 须与邀请锁定 email 一致，否则 403）。
 
 ### 11.3 外部身份查询
 
@@ -993,9 +1057,9 @@ if deps.OIDC != nil {
 | 401 | `unauthorized` | state 不存在/过期/nonce 不匹配、id_token 验签失败、sub 为空 |
 | 403 | `password_login_disabled` | `password.enabled=false` 时调 `/auth/login` |
 | 403 | `password_registration_disabled` | `password.enabled=false` 时调 password 首注册或 password 邀请接受 |
-| 403 | `forbidden` | invitation email 不匹配 |
+| 403 | `forbidden` | invitation email 不匹配、补齐 email 与邀请锁定 email 不一致 |
 | 403 | `oidc_access_denied` | IdP 回调带 `error=access_denied`（用户拒绝授权或 IdP 主动拒绝）；不透传 `error_description` |
-| 409 | `conflict` | 绑定时 SSO 已绑别人、invitation 已接受 |
+| 409 | `conflict` | 绑定时 SSO 已绑别人、invitation 已接受、补齐 email 已占用 |
 | 502 | `oidc_provider_unavailable` | discovery/IdP 暂时不可达 |
 | 502 | `oidc_provider_error` | token endpoint/UserInfo 失败（不泄漏 IdP 细节） |
 
@@ -1164,8 +1228,11 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 - **AcceptOIDC**：
   - email 匹配 → 建 user + membership + identity + 标记 invitation，事务一致。
   - email 不匹配 → `ErrForbidden`。
+  - **profile 无 email → 只建 user + identity + session，不建 membership、不标记 invitation**；随后 `CompleteInvitationAccept`（补齐 email 后）校验 email 一致才完成接受；不一致 → `ErrForbidden`、邀请保持 pending。
   - invitation 已接受 → `ErrConflict`。
   - invitation 不存在/过期 → `ErrNotFound`。
+- **UpdateProfileEmail / CompleteInvitationAccept**：补齐 email 格式非法 → `ErrValidation`；邮箱已占用 → 409（DB 唯一约束）；补齐 email 与邀请锁定 email 不一致 → `ErrForbidden`。
+- **NeedsEmailCompletion**：无 email 用户返回 true，有 email 返回 false。
 - **BindIdentity**：
   - `(issuer, sub)` 未绑且当前 session 与 state 一致 → 成功。
   - 已绑别人 → `ErrConflict`。
@@ -1328,7 +1395,11 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 └──────────────────────────────────────────┘
 ```
 
-按钮跳 `/api/v1/auth/oidc/login?invitation_token=<token>&next=/`。若回调时 `profile.Email != invited_email`，后端返回 `forbidden`，前端提示「IdP 邮箱与邀请邮箱不一致」。
+按钮跳 `/api/v1/auth/oidc/login?invitation_token=<token>&next=/`。回调分派：
+
+- profile 有 email 且与锁定 email 一致 → 直接接受邀请，302 到 next。
+- profile 有 email 但不一致 → 后端返回 `forbidden`，前端提示「IdP 邮箱与邀请邮箱不一致」，邀请保持 pending。
+- profile 无 email（IdP 未返回）→ 先建号登录，302 到 `/complete-profile?next=...&invitation_token_hash=<hash>`；用户补齐 email 且与锁定 email 一致后完成接受；不一致则 403（邀请保持 pending，可换邮箱重试）。
 
 ### 16.3 账号设置（`web/src/routes/settings/account`）
 
@@ -1364,20 +1435,49 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 - 绑定流程：已登录用户点按钮 → 跳 IdP → 回调重新认证原 session → 分派到 `BindIdentity` → 成功回到此页刷新列表。若该 SSO 已绑别人，提示冲突。
 - 解绑首版不做。
 
+### 16.4 补齐资料页（`web/src/routes/complete-profile`，auth 保护）
+
+OIDC 回调成功但 IdP 未返回 email 时，后端 302 到本页引导补齐 email（见 §6.2.1 / §6.2.2 无 email 分支）。该页面要求已登录（session cookie 已下发），未登录访问跳回 `/sign-in`。
+
+```
+┌──────────────────────────────────────────┐
+│                  琅嬛                       │
+│                                            │
+│            补齐邮箱以继续                     │
+│  企业 SSO 未提供邮箱，请补充资料。            │
+│                                            │
+│         邮箱  [____________________]       │
+│                                            │
+│  ┌────────────────────────┐                │
+│  │        保存并继续         │                │
+│  └────────────────────────┘                │
+│                                            │
+│  邮箱仅用于展示与邀请匹配，可稍后在账号设置修改  │
+└──────────────────────────────────────────┘
+```
+
+- 表单：React Hook Form + Zod（email 必填、格式校验），提交 `PUT /auth/profile`。
+- URL 参数：`next`（原登录目标，默认 `/workspaces`）、`invitation_token_hash`（登录携带邀请时透传；补齐 email 后同一请求完成邀请接受）。
+- 成功后 `resetUnauthorizedNavigation()` + 刷新 `/auth/me` 缓存，跳 `next`。
+- 错误：409 →「邮箱已被占用」；403 →「邮箱与邀请不一致」；其余展示后端消息。
+
 ## 17. 对现有代码的影响
 
 ### 17.1 需修改
 
-- `internal/domain/model/user.go`：新增 `NewProvisionalUser` / `HasPassword`。
+- `internal/domain/model/user.go`：新增 `NewProvisionalUser` / `HasPassword`；email 可空。
 - `internal/application/service/auth.go`：`Login` 检查 `passwordEnabled`；构造函数增参数。
-- `internal/application/service/user.go`：`RegisterFirstUser` 增加 password-enabled 判断；首用户创建改为与 OIDC JIT 共用 bootstrap advisory lock 的原子 repository 合同。
-- `internal/application/service/invitation.go`：新增 `AcceptOIDC` 方法。
+- `internal/application/service/user.go`：`RegisterFirstUser` 增加 password-enabled 判断；首用户创建改为与 OIDC JIT 共用 bootstrap advisory lock 的原子 repository 合同；新增 `UpdateProfileEmail`（补齐邮箱）。
+- `internal/application/service/invitation.go`：新增 `AcceptOIDC` / `CompleteInvitationAccept` 方法。
+- `internal/application/service/oidc_login.go`：新增 `NeedsEmailCompletion`。
 - `internal/infrastructure/config/config.go` / `config_test.go`：`AuthConfig` 增 `OIDC`，`PasswordConfig` 增 `Enabled`；在 `defaultConfig()` 中设置兼容默认值，`validateAuth` 增量。
 - `internal/infrastructure/db/external_identity_rows.go`：新增 `ExternalIdentityRow` + domain codec。
 - `internal/infrastructure/db/oidc_auth_store.go`：实现 `OIDCAuthTxRunner` 与 tx-bound auth 持久化操作；既有 `invitation_repository.go` 不承担 OIDC 业务决策。
+- `internal/infrastructure/db/user_repository.go`：`UserRow.Email` 改 `*string`，新增 `UpdateEmail`。
 - `internal/infrastructure/migrate/migrations/`：新增当前序列后的 `000019`（external_identities）与 `000020`（email 可空）。
-- `internal/interfaces/http/router.go`：`Dependencies` 增 `OIDC`；条件挂载 OIDC 路由。
-- `internal/interfaces/http/auth_handler.go`：`login` 在 `password.enabled=false` 时由 service 返回 `ErrForbidden`，handler 映射 403。
+- `internal/interfaces/http/router.go`：`Dependencies` 增 `OIDC`；条件挂载 OIDC 路由；`authed.PUT("/auth/profile", ...)`。
+- `internal/interfaces/http/auth_handler.go`：`login` 在 `password.enabled=false` 时由 service 返回 `ErrForbidden`，handler 映射 403；新增 `updateProfile` handler。
+- `internal/interfaces/http/oidc_handler.go`：回调成功分派；无 email 时 302 `/complete-profile`。
 - `internal/interfaces/http/auth_handler.go`：`bootstrap-status` 增加 `password_enabled` / `oidc_enabled`；OIDC callback 的绑定分支重新认证发起时 session。
 - `internal/interfaces/http/oidc_handler.go`：增加 `GET /auth/external-identities` 非敏感摘要接口。
 - `cmd/langhuan/main.go`：装配 OIDC provider / state store / service；`AuthService` 注入 `passwordEnabled`。

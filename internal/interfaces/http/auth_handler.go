@@ -31,6 +31,7 @@ type UserService interface {
 	RegisterFirstUser(ctx context.Context, email, nickname, password string) (*dto.AuthenticatedUser, error)
 	ResetPassword(ctx context.Context, actorUserID uuid.UUID, actorIsPlatformAdmin bool, targetUserID uuid.UUID, newPassword string) error
 	ChangePassword(ctx context.Context, userID uuid.UUID, oldPassword, newPassword string) error
+	UpdateProfileEmail(ctx context.Context, userID uuid.UUID, email string) error
 	GetByID(ctx context.Context, userID uuid.UUID) (*dto.AuthenticatedUser, error)
 }
 
@@ -45,6 +46,7 @@ type authHandler struct {
 	sessionCfg      config.SessionConfig
 	oidcEnabled     bool
 	passwordEnabled bool
+	inviteCompleter OIDCInvitationCompleter // 补齐 email 后完成邀请接受；nil 时该路径不可用
 }
 
 // bootstrapStatus reports whether first-user setup has already completed,
@@ -247,6 +249,42 @@ func (h authHandler) changePassword(c *gin.Context) {
 	if err := h.users.ChangePassword(c.Request.Context(), authCtx.UserID, req.OldPassword, req.NewPassword); err != nil {
 		writeServiceError(c, err)
 		return
+	}
+	c.Status(stdhttp.StatusNoContent)
+}
+
+type updateProfileRequest struct {
+	Email               string `json:"email"`
+	InvitationTokenHash string `json:"invitation_token_hash"`
+}
+
+// updateProfile 由已登录用户补充/更新 email（OIDC 未返回 email 时的补齐资料）。
+// 可选携带 invitation_token_hash：补齐 email 后完成此前"待接受"的邀请。
+func (h authHandler) updateProfile(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusUnauthorized, "unauthorized", "unauthorized")
+		return
+	}
+	var req updateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "请求 JSON 无效")
+		return
+	}
+	if err := h.users.UpdateProfileEmail(c.Request.Context(), authCtx.UserID, req.Email); err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	// 若携带邀请 token hash，补齐 email 后完成邀请接受（email 已与邀请锁定 email 匹配则成功）。
+	if strings.TrimSpace(req.InvitationTokenHash) != "" {
+		if h.inviteCompleter == nil {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "invitation_token_hash 无法处理")
+			return
+		}
+		if err := h.inviteCompleter.CompleteInvitationAccept(c.Request.Context(), req.InvitationTokenHash, authCtx.UserID); err != nil {
+			writeServiceError(c, err)
+			return
+		}
 	}
 	c.Status(stdhttp.StatusNoContent)
 }

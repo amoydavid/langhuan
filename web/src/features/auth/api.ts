@@ -95,3 +95,14 @@ export async function changePassword(input: {
 }) {
   await apiClient.post('/auth/change-password', input)
 }
+
+/**
+ * 补齐/更新当前用户的 email（OIDC 未返回 email 时的资料补齐）。
+ * 可选携带 invitation_token_hash：补齐 email 后完成此前待接受的邀请。
+ */
+export async function updateProfile(input: {
+  email: string
+  invitation_token_hash?: string
+}) {
+  await apiClient.put('/auth/profile', input)
+}

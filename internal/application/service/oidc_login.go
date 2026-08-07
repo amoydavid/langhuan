@@ -297,6 +297,24 @@ func (s *OIDCLoginService) ListIdentities(ctx context.Context, userID uuid.UUID)
 	return s.identityReader.ListByUserID(ctx, userID)
 }
 
+// NeedsEmailCompletion 报告用户是否缺 email（OIDC IdP 未返回），需要补齐资料。
+// 事务内只读查询用户；用户不存在返回 false（调用方按无需补齐处理）。
+func (s *OIDCLoginService) NeedsEmailCompletion(ctx context.Context, userID uuid.UUID) (bool, error) {
+	var needs bool
+	err := s.authTx.WithinOIDCAuth(ctx, func(tx OIDCAuthTx) error {
+		user, err := tx.FindUserByID(ctx, userID)
+		if err != nil {
+			return err
+		}
+		needs = strings.TrimSpace(user.Email) == ""
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return needs, nil
+}
+
 // validateOIDCProfile 校验 profile 的 sub 与 email 策略。
 //
 // email 是可选字段：IdP 出于隐私（email 视为敏感字段）可能不返回 email，

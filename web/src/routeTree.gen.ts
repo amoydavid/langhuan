@@ -18,6 +18,7 @@ import { Route as errors403RouteImport } from './routes/(errors)/403'
 import { Route as errors401RouteImport } from './routes/(errors)/401'
 import { Route as authSignInRouteImport } from './routes/(auth)/sign-in'
 import { Route as authSetupRouteImport } from './routes/(auth)/setup'
+import { Route as authCompleteProfileRouteImport } from './routes/(auth)/complete-profile'
 import { Route as AuthenticatedSettingsRouteRouteImport } from './routes/_authenticated/settings/route'
 import { Route as AuthenticatedAdminRouteRouteImport } from './routes/_authenticated/admin/route'
 import { Route as AuthenticatedWorkspacesIndexRouteImport } from './routes/_authenticated/workspaces/index'
@@ -108,6 +109,11 @@ const authSignInRoute = authSignInRouteImport.update({
 const authSetupRoute = authSetupRouteImport.update({
   id: '/(auth)/setup',
   path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const authCompleteProfileRoute = authCompleteProfileRouteImport.update({
+  id: '/(auth)/complete-profile',
+  path: '/complete-profile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedSettingsRouteRoute =
@@ -421,6 +427,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AuthenticatedAdminRouteRouteWithChildren
   '/settings': typeof AuthenticatedSettingsRouteRouteWithChildren
+  '/complete-profile': typeof authCompleteProfileRoute
   '/setup': typeof authSetupRoute
   '/sign-in': typeof authSignInRoute
   '/401': typeof errors401Route
@@ -477,6 +484,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AuthenticatedAdminRouteRouteWithChildren
+  '/complete-profile': typeof authCompleteProfileRoute
   '/setup': typeof authSetupRoute
   '/sign-in': typeof authSignInRoute
   '/401': typeof errors401Route
@@ -531,6 +539,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/_authenticated/admin': typeof AuthenticatedAdminRouteRouteWithChildren
   '/_authenticated/settings': typeof AuthenticatedSettingsRouteRouteWithChildren
+  '/(auth)/complete-profile': typeof authCompleteProfileRoute
   '/(auth)/setup': typeof authSetupRoute
   '/(auth)/sign-in': typeof authSignInRoute
   '/(errors)/401': typeof errors401Route
@@ -590,6 +599,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/settings'
+    | '/complete-profile'
     | '/setup'
     | '/sign-in'
     | '/401'
@@ -646,6 +656,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/admin'
+    | '/complete-profile'
     | '/setup'
     | '/sign-in'
     | '/401'
@@ -699,6 +710,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/_authenticated/admin'
     | '/_authenticated/settings'
+    | '/(auth)/complete-profile'
     | '/(auth)/setup'
     | '/(auth)/sign-in'
     | '/(errors)/401'
@@ -756,6 +768,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
+  authCompleteProfileRoute: typeof authCompleteProfileRoute
   authSetupRoute: typeof authSetupRoute
   authSignInRoute: typeof authSignInRoute
   errors401Route: typeof errors401Route
@@ -829,6 +842,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof authSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/(auth)/complete-profile': {
+      id: '/(auth)/complete-profile'
+      path: '/complete-profile'
+      fullPath: '/complete-profile'
+      preLoaderRoute: typeof authCompleteProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/settings': {
@@ -1388,6 +1408,7 @@ const AuthenticatedRouteRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
+  authCompleteProfileRoute: authCompleteProfileRoute,
   authSetupRoute: authSetupRoute,
   authSignInRoute: authSignInRoute,
   errors401Route: errors401Route,

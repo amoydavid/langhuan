@@ -620,5 +620,103 @@ func TestAcceptPasswordDisabledRejects(t *testing.T) {
 	}
 }
 
+func TestAcceptOIDCWithoutEmailDoesNotCreateMembership(t *testing.T) {
+	// IdP 不返回 email 时，接受邀请只建 user+identity+session，
+	// 不建 membership、不标记 accepted（待补齐 email 后 CompleteInvitationAccept）。
+	svc, tx := newTestInvitationServiceForOIDC(t, false)
+	tokenHash := seedPendingInvitationInTx(tx, "invited@example.com", value.RoleMember)
+	ctx := context.Background()
+
+	session, err := svc.AcceptOIDC(ctx, tokenHash, validProfile("sub-1", "", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("AcceptOIDC error: %v", err)
+	}
+	if session == nil {
+		t.Fatal("session should be created")
+	}
+	if len(tx.users) != 1 {
+		t.Fatalf("should create 1 user, got %d", len(tx.users))
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("no membership should be created without email, got %d", len(tx.memberships))
+	}
+	for _, inv := range tx.invitations {
+		if inv.AcceptedAt != nil {
+			t.Fatal("invitation should NOT be marked accepted without email")
+		}
+	}
+}
+
+func TestCompleteInvitationAcceptSuccess(t *testing.T) {
+	// 用户先无 email 接受邀请（不建 membership），补齐 email 匹配邀请后完成接受。
+	svc, tx := newTestInvitationServiceForOIDC(t, false)
+	tokenHash := seedPendingInvitationInTx(tx, "invited@example.com", value.RoleMember)
+	ctx := context.Background()
+
+	session, err := svc.AcceptOIDC(ctx, tokenHash, validProfile("sub-1", "", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("AcceptOIDC error: %v", err)
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("precondition: no membership yet, got %d", len(tx.memberships))
+	}
+
+	// 补齐 email。
+	user := tx.users[session.UserID]
+	user.Email = "invited@example.com"
+
+	if err := svc.CompleteInvitationAccept(ctx, tokenHash, session.UserID); err != nil {
+		t.Fatalf("CompleteInvitationAccept error: %v", err)
+	}
+	if len(tx.memberships) != 1 {
+		t.Fatalf("should create 1 membership after email completion, got %d", len(tx.memberships))
+	}
+	for _, inv := range tx.invitations {
+		if inv.AcceptedAt == nil {
+			t.Fatal("invitation should be marked accepted")
+		}
+	}
+}
+
+func TestCompleteInvitationAcceptEmailMismatch(t *testing.T) {
+	svc, tx := newTestInvitationServiceForOIDC(t, false)
+	tokenHash := seedPendingInvitationInTx(tx, "invited@example.com", value.RoleMember)
+	ctx := context.Background()
+
+	session, err := svc.AcceptOIDC(ctx, tokenHash, validProfile("sub-1", "", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 补齐一个与邀请不匹配的 email。
+	tx.users[session.UserID].Email = "someone-else@example.com"
+
+	err = svc.CompleteInvitationAccept(ctx, tokenHash, session.UserID)
+	if !errors.Is(err, domainerrors.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden for email mismatch, got %v", err)
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("no membership on email mismatch, got %d", len(tx.memberships))
+	}
+}
+
+func TestNeedsEmailCompletion(t *testing.T) {
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	ctx := context.Background()
+
+	withEmail, _ := model.NewProvisionalUser("a@b.com", "A")
+	tx.users[withEmail.ID] = withEmail
+	withoutEmail, _ := model.NewProvisionalUser("", "B")
+	tx.users[withoutEmail.ID] = withoutEmail
+
+	needs, err := svc.NeedsEmailCompletion(ctx, withEmail.ID)
+	if err != nil || needs {
+		t.Fatalf("user with email: needs=%v err=%v, want needs=false", needs, err)
+	}
+	needs, err = svc.NeedsEmailCompletion(ctx, withoutEmail.ID)
+	if err != nil || !needs {
+		t.Fatalf("user without email: needs=%v err=%v, want needs=true", needs, err)
+	}
+}
+
 // 编译期引用 value 包避免未使用告警（invitation 测试复用）。
 var _ = value.RoleAdmin

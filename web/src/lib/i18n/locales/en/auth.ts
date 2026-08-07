@@ -39,6 +39,17 @@ export const auth = {
     submitButton: 'Accept invitation',
     successToast: 'Invitation accepted',
   },
+
+  completeProfile: {
+    title: 'Complete your account',
+    description:
+      'Your identity provider did not provide an email. Add one as your account identifier.',
+    emailLabel: 'Email',
+    submit: 'Save and continue',
+    success: 'Account completed',
+    emailTaken: 'This email is already used by another account',
+    emailMismatch: 'Email does not match the invitation',
+  },
   schemas: {
     invalidEmail: 'Please enter a valid email address',
     passwordRequired: 'Please enter a password',

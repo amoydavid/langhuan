@@ -26,6 +26,7 @@ type Dependencies struct {
 	APIKeyAuth      APIKeyAuthenticator       // Bearer API Key 鉴权器（SessionOrAPIKeyAuth / APIKeyOnlyAuth 共用）
 	OIDC            OIDCLoginServiceHTTP      // OIDC 登录/绑定/查询；nil 时不挂 OIDC 路由
 	OIDCAcceptor    OIDCAcceptor              // AcceptOIDC 邀请接受；nil 时该分派路径不可用
+	OIDCCompleter   OIDCInvitationCompleter   // 补齐 email 后完成邀请接受；nil 时该路径不可用
 	OIDCEnabled     bool                      // bootstrap-status 返回，控制前端是否显示 OIDC 入口
 	PasswordEnabled bool                      // bootstrap-status 返回，控制前端密码表单显示
 
@@ -124,7 +125,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 		// OIDC 登录/回调（条件挂载）。
 		if deps.OIDC != nil {
-			oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.Auth, deps.SessionConfig)
+			oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.OIDCCompleter, deps.Auth, deps.SessionConfig)
 			api.GET("/auth/oidc/login", oidcH.begin)
 			api.GET("/auth/oidc/callback", oidcH.callback)
 		}
@@ -149,10 +150,11 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			authed.GET("/auth/me", authH.me)
 			if deps.Users != nil {
 				authed.POST("/auth/change-password", authH.changePassword)
+				authed.PUT("/auth/profile", authH.updateProfile)
 			}
 			// OIDC 绑定发起 + 外部身份查询（条件挂载）。
 			if deps.OIDC != nil {
-				oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.Auth, deps.SessionConfig)
+				oidcH := newOIDCHandler(deps.OIDC, deps.OIDCAcceptor, deps.OIDCCompleter, deps.Auth, deps.SessionConfig)
 				authed.POST("/auth/oidc/bind/start", oidcH.beginBind)
 				authed.GET("/auth/external-identities", oidcH.listIdentities)
 			}

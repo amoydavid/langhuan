@@ -112,6 +112,17 @@ func (r *fakeUserRepository) UpdatePassword(_ context.Context, id uuid.UUID, pas
 	return nil
 }
 
+func (r *fakeUserRepository) UpdateEmail(_ context.Context, id uuid.UUID, email string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u, ok := r.users[id]
+	if !ok {
+		return domainerrors.ErrNotFound
+	}
+	u.Email = email
+	return nil
+}
+
 // ResetPassword 记录调用并更新密码哈希。会话撤销的事务语义由 db 层集成测试
 // （TestAuthUserRepositoryResetPasswordIntegration）覆盖；本 fake 仅服务于
 // ResetPassword 的平台管理员鉴权与正常路径测试。
@@ -443,6 +454,48 @@ func TestChangePasswordRejectsPasswordlessAccount(t *testing.T) {
 	err := svc.ChangePassword(context.Background(), user.ID, "anything", "new-pw")
 	if !errors.Is(err, domainerrors.ErrForbidden) {
 		t.Fatalf("expected ErrForbidden for passwordless account, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UserService.UpdateProfileEmail
+// ---------------------------------------------------------------------------
+
+func TestUpdateProfileEmailSuccess(t *testing.T) {
+	repo := newFakeUserRepository()
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
+	user := seedUser(repo, "ada@example.com", "Ada", "pw", false)
+	// 模拟 OIDC 无 email 用户：清空 email。
+	repo.users[user.ID].Email = ""
+
+	err := svc.UpdateProfileEmail(context.Background(), user.ID, "New@Example.COM")
+	if err != nil {
+		t.Fatalf("UpdateProfileEmail error: %v", err)
+	}
+	if repo.users[user.ID].Email != "new@example.com" {
+		t.Fatalf("email = %q, want normalized new@example.com", repo.users[user.ID].Email)
+	}
+}
+
+func TestUpdateProfileEmailRejectsInvalid(t *testing.T) {
+	repo := newFakeUserRepository()
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
+	user := seedUser(repo, "ada@example.com", "Ada", "pw", false)
+
+	tests := []struct {
+		name  string
+		email string
+	}{
+		{name: "empty", email: ""},
+		{name: "invalid", email: "not-an-email"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := svc.UpdateProfileEmail(context.Background(), user.ID, tt.email)
+			if !errors.Is(err, domainerrors.ErrValidation) {
+				t.Fatalf("expected ErrValidation, got %v", err)
+			}
+		})
 	}
 }
 

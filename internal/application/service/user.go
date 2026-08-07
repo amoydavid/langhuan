@@ -25,6 +25,8 @@ type UserRepository interface {
 	// ResetPassword 原子地更新密码并撤销该用户的全部会话（事务内完成）。
 	ResetPassword(ctx context.Context, id uuid.UUID, passwordHash string) error
 	TouchLastLogin(ctx context.Context, id uuid.UUID) error
+	// UpdateEmail 更新用户 email（users.email UNIQUE 约束兜底唯一性；冲突返回 ErrConflict）。
+	UpdateEmail(ctx context.Context, id uuid.UUID, email string) error
 }
 
 // SessionRepository 描述 session 聚合的仓储抽象（服务层本地接口）。
@@ -165,6 +167,25 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uuid.UUID, oldP
 		return fmt.Errorf("密码哈希失败: %w", err)
 	}
 	if err := s.repo.UpdatePassword(ctx, userID, hash); err != nil {
+		return err
+	}
+	return nil
+}
+
+// UpdateProfileEmail 由已认证用户补充/更新自己的 email（OIDC 未返回 email 时补齐资料）。
+// email 是"用户名"性质的资料字段，仅校验格式与全局唯一（不验证所有权）。
+// 已绑定 email 的用户再次修改直接覆盖（唯一冲突返回 ErrConflict）。
+func (s *UserService) UpdateProfileEmail(ctx context.Context, userID uuid.UUID, email string) error {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return fmt.Errorf("%w: email 不能为空", domainerrors.ErrValidation)
+	}
+	// 校验 email 格式（复用领域规范化，空串已在上方拦截）。
+	normalizedEmail, err := normalizeEmailService(email)
+	if err != nil {
+		return fmt.Errorf("%w: email 格式无效", domainerrors.ErrValidation)
+	}
+	if err := s.repo.UpdateEmail(ctx, userID, normalizedEmail); err != nil {
 		return err
 	}
 	return nil

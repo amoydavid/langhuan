@@ -104,7 +104,7 @@ type runtimeServices struct {
 	publicURLs     *service.PublicURLBuilder
 	// OIDC（条件装配：cfg.Auth.OIDC.Enabled=true 时非 nil）
 	oidc            *service.OIDCLoginService
-	oidcAcceptor    langhttp.OIDCAcceptor
+	oidcAcceptor    *service.InvitationService
 	oidcEnabled     bool
 	passwordEnabled bool
 
@@ -443,7 +443,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 
 	// OIDC 条件装配：cfg.Auth.OIDC.Enabled=true 时构造 provider/state store/service。
 	var oidcLogin *service.OIDCLoginService
-	var oidcAcceptor langhttp.OIDCAcceptor
+	var oidcAcceptor *service.InvitationService
 	if cfg.Auth.OIDC.Enabled {
 		oidcProvider, err := oidcadapter.NewProvider(oidcadapter.ProviderConfig{
 			Enabled:            cfg.Auth.OIDC.Enabled,
@@ -805,6 +805,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		APIKeyAuth:      services.apiKeys,
 		OIDC:            services.oidc,
 		OIDCAcceptor:    services.oidcAcceptor,
+		OIDCCompleter:   services.oidcAcceptor,
 		OIDCEnabled:     services.oidcEnabled,
 		PasswordEnabled: services.passwordEnabled,
 
