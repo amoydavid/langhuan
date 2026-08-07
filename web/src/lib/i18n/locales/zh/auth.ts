@@ -12,6 +12,9 @@ export const auth = {
     submitButton: '登录',
     successToast: '登录成功',
     rateLimited: '登录尝试过于频繁，请稍后重试',
+    ssoButton: '用企业 SSO 登录',
+    or: '或',
+    ssoRedirectHint: '登录将跳转至企业身份提供者',
   },
   setup: {
     emailLabel: '邮箱',

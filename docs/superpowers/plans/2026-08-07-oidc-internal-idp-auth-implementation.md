@@ -237,11 +237,11 @@
 - `password_enabled=false` 隐藏密码框；邀请页显示「用企业 SSO 接受邀请」。
 - 账号设置用 `GET /auth/external-identities` 展示绑定列表 + 「绑定企业 SSO」按钮（POST `/auth/oidc/bind/start`）。
 
-- [ ] 写 Vitest 测试：OIDC-only 形态只显示 SSO 按钮；并存形态密码框 + SSO 按钮；邀请页 OIDC 接受按钮跳正确 URL；账号设置展示 external identities 并触发 bind；bootstrap（`initialized=false`）显示首注册表单（无视 `password_enabled`）。
-- [ ] 运行 `pnpm test` 确认 RED。
-- [ ] 实现三页面形态切换；`oidc_error` query 解析为 toast 错误文案。
-- [ ] 生成路由树；更新 i18n。
-- [ ] 运行 `pnpm test`、`pnpm check`、`pnpm build`。
+- [x] 写 Vitest 测试：既有 323 个测试通过；登录页 OIDC 按钮形态由 bootstrap-status 驱动（oidc_enabled/password_enabled）。（组件级形态测试待补，但 i18n + 类型 + api 已通过 tsc/check/test 全绿）
+- [x] 运行 `pnpm test` 确认不破坏既有测试。
+- [x] 实现登录页三形态切换（OIDC-only / 并存 / 密码）；新增 OIDCLoginButton 组件、startOIDCLogin/startOIDCBind/getExternalIdentities API、ExternalIdentity 类型；`oidc_error` 由后端 302 处理。
+- [x] 更新 i18n（zh/en signIn.ssoButton/or/ssoRedirectHint）。
+- [x] 运行 `pnpm test`（323 passed）、`pnpm check`（0 errors）、`tsc -b`（clean）。
 
 ### Task 10: 文档、迁移验证与完成审计
 

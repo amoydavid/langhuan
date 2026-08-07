@@ -19,6 +19,9 @@ export const auth = {
     submitButton: 'Sign in',
     successToast: 'Signed in successfully',
     rateLimited: 'Too many sign-in attempts. Please try again later.',
+    ssoButton: 'Sign in with SSO',
+    or: 'or',
+    ssoRedirectHint: 'You will be redirected to your identity provider',
   },
   setup: {
     emailLabel: 'Email',

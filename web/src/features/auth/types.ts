@@ -21,6 +21,14 @@ export type MeResponse = {
 
 export type BootstrapStatus = {
   initialized: boolean
+  oidc_enabled: boolean
+  password_enabled: boolean
+}
+
+export type ExternalIdentity = {
+  issuer: string
+  email: string
+  last_auth_at: string
 }
 
 export type PublicInvitation = {
