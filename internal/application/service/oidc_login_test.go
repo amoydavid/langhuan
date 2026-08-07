@@ -892,3 +892,50 @@ func TestOIDCLoginMultiTenantDoesNotAutoJoin(t *testing.T) {
 		t.Fatalf("多租户不应自动加入, memberships = %d", len(tx.memberships))
 	}
 }
+
+func TestHasIdentityForIssuer(t *testing.T) {
+	svc, _, _, _, reader := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	ctx := context.Background()
+	userID := uuid.New()
+
+	// 无任何 identity → 未绑定。
+	bound, err := svc.HasIdentityForIssuer(ctx, userID)
+	if err != nil || bound {
+		t.Fatalf("无 identity: bound=%v err=%v, want false/nil", bound, err)
+	}
+
+	// 绑定当前 issuer → 已绑定。
+	reader.list = append(reader.list, mustExternalIdentity(t, userID, "https://sso.example.com", "sub-a"))
+	bound, err = svc.HasIdentityForIssuer(ctx, userID)
+	if err != nil || !bound {
+		t.Fatalf("绑定当前 issuer: bound=%v err=%v, want true/nil", bound, err)
+	}
+
+	// 仅绑定其它 issuer → 未绑定当前 issuer。
+	reader.list = []*model.ExternalIdentity{
+		mustExternalIdentity(t, userID, "https://other.example.com", "sub-b"),
+	}
+	bound, err = svc.HasIdentityForIssuer(ctx, userID)
+	if err != nil || bound {
+		t.Fatalf("仅绑定其它 issuer: bound=%v err=%v, want false/nil", bound, err)
+	}
+
+	// 别人的 identity 不算。
+	otherUser := uuid.New()
+	reader.list = []*model.ExternalIdentity{
+		mustExternalIdentity(t, otherUser, "https://sso.example.com", "sub-c"),
+	}
+	bound, err = svc.HasIdentityForIssuer(ctx, userID)
+	if err != nil || bound {
+		t.Fatalf("他人 identity: bound=%v err=%v, want false/nil", bound, err)
+	}
+}
+
+func mustExternalIdentity(t *testing.T, userID uuid.UUID, issuer, subject string) *model.ExternalIdentity {
+	t.Helper()
+	id, err := model.NewExternalIdentity(userID, issuer, subject, "a@b.com", true, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}

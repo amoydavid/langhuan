@@ -23,6 +23,7 @@ type OIDCLoginServiceHTTP interface {
 	ConsumeAndExchange(ctx context.Context, code, state, browserNonce string) (*authport.OIDCStatePayload, *authport.OIDCProfile, error)
 	LoginOrProvision(ctx context.Context, profile *authport.OIDCProfile, userAgent, ipAddr string) (*model.Session, error)
 	BindIdentity(ctx context.Context, actorUserID uuid.UUID, profile *authport.OIDCProfile) error
+	HasIdentityForIssuer(ctx context.Context, userID uuid.UUID) (bool, error)
 	ListIdentities(ctx context.Context, userID uuid.UUID) ([]*model.ExternalIdentity, error)
 	NeedsEmailCompletion(ctx context.Context, userID uuid.UUID) (bool, error)
 }
@@ -105,6 +106,16 @@ func (h oidcHandler) beginBind(c *gin.Context) {
 	sessionID, err := sessionIDFromCookie(c, h.sessionCfg.CookieName)
 	if err != nil {
 		writeError(c, http.StatusUnauthorized, "unauthorized", "unauthorized")
+		return
+	}
+	// 已绑定当前 IdP 的用户不应再进入绑定流程（重复绑定无意义且混淆语义）。
+	bound, err := h.svc.HasIdentityForIssuer(c.Request.Context(), authCtx.UserID)
+	if err != nil {
+		writeError(c, http.StatusInternalServerError, "internal_error", internalErrorMessage)
+		return
+	}
+	if bound {
+		writeError(c, http.StatusConflict, "conflict", "已绑定该 SSO 身份")
 		return
 	}
 	next := strings.TrimSpace(c.Query("next"))

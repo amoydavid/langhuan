@@ -39,6 +39,11 @@ type fakeOIDCService struct {
 	beginCalledNext   string
 	beginCalledInvite string
 	needsEmail        bool
+	hasBoundIdentity  bool
+}
+
+func (f *fakeOIDCService) HasIdentityForIssuer(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return f.hasBoundIdentity, nil
 }
 
 func (f *fakeOIDCService) BeginLogin(ctx context.Context, next string, invitationToken string, actorUserID, sessionID uuid.UUID) (string, string, string, error) {
@@ -369,5 +374,50 @@ func TestOIDCCallbackInvitationRedirectsToCompleteProfileWithTokenHash(t *testin
 	}
 	if !strings.HasPrefix(loc, "/complete-profile?") {
 		t.Fatalf("location = %s, want /complete-profile prefix", loc)
+	}
+}
+
+func TestBeginBindRejectsAlreadyBound(t *testing.T) {
+	svc := &fakeOIDCService{beginURL: "https://idp.example.com/auth", hasBoundIdentity: true}
+	h := newTestOIDCHandler(svc, nil, nil)
+	userID := uuid.New()
+	c, w := newTestGin()
+	c.Set(authContextKey, valueAuthContextWithUser(userID))
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/oidc/bind/start", nil)
+	c.Request.AddCookie(&http.Cookie{Name: "langhuan_session", Value: uuid.New().String()})
+
+	h.beginBind(c)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	if svc.beginCalledNext != "" {
+		t.Fatalf("已绑定用户不应发起 IdP 跳转, beginCalledNext = %q", svc.beginCalledNext)
+	}
+}
+
+func TestBeginBindAllowsUnbound(t *testing.T) {
+	svc := &fakeOIDCService{beginURL: "https://idp.example.com/auth", hasBoundIdentity: false}
+	h := newTestOIDCHandler(svc, nil, nil)
+	userID := uuid.New()
+	c, w := newTestGin()
+	c.Set(authContextKey, valueAuthContextWithUser(userID))
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/oidc/bind/start", nil)
+	c.Request.AddCookie(&http.Cookie{Name: "langhuan_session", Value: uuid.New().String()})
+
+	h.beginBind(c)
+	// CreateTestContext 绕过 engine 收尾的 WriteHeaderNow（gin 延迟写），
+	// 手动 flush 模拟生产链路，使 POST 302 状态码可见。
+	c.Writer.WriteHeaderNow()
+
+	rec := w.Result()
+	if rec.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.StatusCode)
+	}
+	if rec.Header.Get("Location") != "https://idp.example.com/auth" {
+		t.Fatalf("location = %s, want IdP auth URL", rec.Header.Get("Location"))
+	}
+	if svc.beginCalledNext != "/settings/account" {
+		t.Fatalf("beginCalledNext = %q, want /settings/account", svc.beginCalledNext)
 	}
 }

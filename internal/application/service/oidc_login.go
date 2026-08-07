@@ -326,6 +326,22 @@ func (s *OIDCLoginService) BindIdentity(ctx context.Context, actorUserID uuid.UU
 	})
 }
 
+// HasIdentityForIssuer 报告用户是否已绑定当前 IdP issuer 的任意外部身份。
+// 已绑定当前 IdP 的用户不应再进入绑定流程（beginBind 前置防御），
+// 避免已绑定用户再次走「绑定」口子；绑定其它 issuer 仍被允许（多 IdP）。
+func (s *OIDCLoginService) HasIdentityForIssuer(ctx context.Context, userID uuid.UUID) (bool, error) {
+	identities, err := s.identityReader.ListByUserID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range identities {
+		if id.Issuer == s.issuer {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListIdentities 返回当前 user 的外部身份非敏感摘要。
 func (s *OIDCLoginService) ListIdentities(ctx context.Context, userID uuid.UUID) ([]*model.ExternalIdentity, error) {
 	return s.identityReader.ListByUserID(ctx, userID)

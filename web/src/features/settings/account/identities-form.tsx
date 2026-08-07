@@ -48,17 +48,19 @@ export function IdentitiesForm({ oidcEnabled }: { oidcEnabled: boolean }) {
           {t('settings.account.noIdentities')}
         </p>
       )}
-      <Button
-        type='button'
-        variant='outline'
-        onClick={() => {
-          toast.info(t('settings.account.bindRedirecting'))
-          startOIDCBind()
-        }}
-      >
-        <Link2 />
-        {t('settings.account.bindSSO')}
-      </Button>
+      {(!identities || identities.length === 0) && (
+        <Button
+          type='button'
+          variant='outline'
+          onClick={() => {
+            toast.info(t('settings.account.bindRedirecting'))
+            startOIDCBind()
+          }}
+        >
+          <Link2 />
+          {t('settings.account.bindSSO')}
+        </Button>
+      )}
     </div>
   )
 }
