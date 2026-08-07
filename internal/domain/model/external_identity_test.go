@@ -52,7 +52,6 @@ func TestNewExternalIdentityRejectsInvalidInput(t *testing.T) {
 		{name: "nil user id", userID: uuid.Nil, issuer: "https://sso.example.com", subject: "sub-1", email: "a@b.com", emailVerified: true, rawProfile: "{}"},
 		{name: "empty issuer", userID: userID, issuer: "  ", subject: "sub-1", email: "a@b.com", emailVerified: true, rawProfile: "{}"},
 		{name: "empty subject", userID: userID, issuer: "https://sso.example.com", subject: "", email: "a@b.com", emailVerified: true, rawProfile: "{}"},
-		{name: "empty email", userID: userID, issuer: "https://sso.example.com", subject: "sub-1", email: "  ", emailVerified: true, rawProfile: "{}"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -61,5 +60,16 @@ func TestNewExternalIdentityRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("expected validation error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestNewExternalIdentityAllowsEmptyEmail(t *testing.T) {
+	// IdP 可能不返回 email（视为敏感字段）；空 email 应被允许。
+	got, err := NewExternalIdentity(uuid.New(), "https://sso.example.com", "sub-1", "  ", false, "{}")
+	if err != nil {
+		t.Fatalf("unexpected error for empty email: %v", err)
+	}
+	if got.Email != "" {
+		t.Fatalf("email = %q, want empty", got.Email)
 	}
 }

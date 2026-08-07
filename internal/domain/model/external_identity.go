@@ -19,7 +19,7 @@ type ExternalIdentity struct {
 	UserID        uuid.UUID
 	Issuer        string // 运维配置的 OIDC issuer
 	Subject       string // IdP 的 sub claim
-	Email         string // 登录时刻快照，不允许为空
+	Email         string // 登录时刻快照，可为空（IdP 可能不返回 email）
 	EmailVerified bool
 	RawProfile    string // 经过 whitelist 的 claims JSON
 	LastAuthAt    time.Time
@@ -27,7 +27,8 @@ type ExternalIdentity struct {
 	UpdatedAt     time.Time
 }
 
-// NewExternalIdentity 构造并校验：issuer/subject/email 非空，UserID 非 Nil。
+// NewExternalIdentity 构造并校验：issuer/subject 非空，UserID 非 Nil。
+// email 允许为空（IdP 可能不返回 email）；非空时 trim 存储。
 // rawProfile 允许为空（调用方应传入经 whitelist 过滤的 JSON）。
 func NewExternalIdentity(userID uuid.UUID, issuer, subject, email string, emailVerified bool, rawProfile string) (*ExternalIdentity, error) {
 	if userID == uuid.Nil {
@@ -42,9 +43,6 @@ func NewExternalIdentity(userID uuid.UUID, issuer, subject, email string, emailV
 		return nil, fmt.Errorf("%w: subject 不能为空", domainerrors.ErrValidation)
 	}
 	email = strings.TrimSpace(email)
-	if email == "" {
-		return nil, fmt.Errorf("%w: email 不能为空", domainerrors.ErrValidation)
-	}
 
 	now := time.Now().UTC()
 	return &ExternalIdentity{

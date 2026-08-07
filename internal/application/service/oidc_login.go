@@ -213,10 +213,14 @@ func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authpo
 				return err
 			}
 		} else {
-			// identity 未命中：按 email 查现有 user 决定合并或 JIT。
-			user, err = tx.FindUserByEmail(ctx, normalizeEmailLocal(profile.Email))
-			if err != nil && !errors.Is(err, domainerrors.ErrNotFound) {
-				return err
+			// identity 未命中：email 存在时按 email 查现有 user 决定合并或 JIT；
+			// email 缺失（IdP 未返回）时无法合并，直接 JIT 建无 email 用户。
+			normalizedEmail := normalizeEmailLocal(profile.Email)
+			if normalizedEmail != "" {
+				user, err = tx.FindUserByEmail(ctx, normalizedEmail)
+				if err != nil && !errors.Is(err, domainerrors.ErrNotFound) {
+					return err
+				}
 			}
 			if user == nil {
 				// JIT 建号：持 bootstrap lock，count==0 授 platform_admin。
@@ -228,7 +232,7 @@ func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authpo
 					return err
 				}
 				nickname := deriveNickname(profile)
-				user, err = model.NewProvisionalUser(normalizeEmailLocal(profile.Email), nickname)
+				user, err = model.NewProvisionalUser(normalizedEmail, nickname)
 				if err != nil {
 					return err
 				}
@@ -238,7 +242,7 @@ func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authpo
 				}
 			}
 			// 给 user 绑定 identity（合并与 JIT 都需要）。
-			newIdentity, err := model.NewExternalIdentity(user.ID, s.issuer, profile.Subject, normalizeEmailLocal(profile.Email), profile.EmailVerified, profile.RawProfile)
+			newIdentity, err := model.NewExternalIdentity(user.ID, s.issuer, profile.Subject, normalizedEmail, profile.EmailVerified, profile.RawProfile)
 			if err != nil {
 				return err
 			}
@@ -293,22 +297,26 @@ func (s *OIDCLoginService) ListIdentities(ctx context.Context, userID uuid.UUID)
 	return s.identityReader.ListByUserID(ctx, userID)
 }
 
-// validateOIDCProfile 校验 profile 的 sub/email 合法性与 email_verified 策略。
+// validateOIDCProfile 校验 profile 的 sub 与 email 策略。
+//
+// email 是可选字段：IdP 出于隐私（email 视为敏感字段）可能不返回 email，
+// 此时允许无 email 的 OIDC 用户（JIT 建号 email 为空）。email 存在时必须格式
+// 合法；requireEmailVerified=true 时 email 必须已验证。
+//
 // 返回的错误都包装 domainerrors.ErrUnauthorized（HTTP 层映射不变），
-// 但携带脱敏原因（missing_sub / missing_email / invalid_email / email_not_verified），
+// 但携带脱敏原因（missing_sub / invalid_email / email_not_verified），
 // 供日志定位，不泄露 sub/email 明文。
 func validateOIDCProfile(profile *authport.OIDCProfile, requireEmailVerified bool) error {
 	if profile == nil || strings.TrimSpace(profile.Subject) == "" {
 		return fmt.Errorf("%w: oidc profile 缺 sub", domainerrors.ErrUnauthorized)
 	}
-	if strings.TrimSpace(profile.Email) == "" {
-		return fmt.Errorf("%w: oidc profile 缺 email（IdP 是否配置了 email scope？）", domainerrors.ErrUnauthorized)
-	}
-	if _, err := normalizeEmailService(profile.Email); err != nil {
-		return fmt.Errorf("%w: oidc profile email 格式非法", domainerrors.ErrUnauthorized)
-	}
-	if requireEmailVerified && !profile.EmailVerified {
-		return fmt.Errorf("%w: oidc profile email 未验证", domainerrors.ErrUnauthorized)
+	if strings.TrimSpace(profile.Email) != "" {
+		if _, err := normalizeEmailService(profile.Email); err != nil {
+			return fmt.Errorf("%w: oidc profile email 格式非法", domainerrors.ErrUnauthorized)
+		}
+		if requireEmailVerified && !profile.EmailVerified {
+			return fmt.Errorf("%w: oidc profile email 未验证", domainerrors.ErrUnauthorized)
+		}
 	}
 	return nil
 }

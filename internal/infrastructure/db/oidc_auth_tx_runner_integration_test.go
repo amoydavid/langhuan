@@ -71,6 +71,57 @@ func TestOIDCAuthTxJITFirstUserIsPlatformAdminIntegration(t *testing.T) {
 	}
 }
 
+func TestOIDCAuthTxJITUserWithoutEmailIntegration(t *testing.T) {
+	// IdP 不返回 email 时，JIT 建号应允许无 email 用户，users.email 落库为 NULL。
+	ctx, tx := newAuthTestDB(t)
+	runner := NewOIDCAuthTxRunner(tx)
+
+	var createdUserID uuid.UUID
+	err := runner.WithinOIDCAuth(ctx, func(txx service.OIDCAuthTx) error {
+		if err := txx.AcquireBootstrapLock(ctx); err != nil {
+			return err
+		}
+		user, err := model.NewProvisionalUser("", "NoEmail")
+		if err != nil {
+			return err
+		}
+		user.IsPlatformAdmin = true
+		if err := txx.CreateUser(ctx, user); err != nil {
+			return err
+		}
+		identity, err := model.NewExternalIdentity(user.ID, "https://sso.example.com", "sub-noemail", "", false, `{"sub":"sub-noemail"}`)
+		if err != nil {
+			return err
+		}
+		if err := txx.CreateIdentity(ctx, identity); err != nil {
+			return err
+		}
+		createdUserID = user.ID
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithinOIDCAuth error: %v", err)
+	}
+
+	// users.email 应为 NULL（不是空串）。
+	var email *string
+	if err := tx.Raw("SELECT email FROM users WHERE id = ?", createdUserID).Scan(&email).Error; err != nil {
+		t.Fatal(err)
+	}
+	if email != nil {
+		t.Fatalf("users.email = %q, want NULL for no-email OIDC user", *email)
+	}
+
+	// external_identities.email 也应 NULL。
+	var idEmail *string
+	if err := tx.Raw("SELECT email FROM external_identities WHERE user_id = ?", createdUserID).Scan(&idEmail).Error; err != nil {
+		t.Fatal(err)
+	}
+	if idEmail != nil {
+		t.Fatalf("external_identities.email = %q, want NULL", *idEmail)
+	}
+}
+
 func TestOIDCAuthTxUniqueIssuerSubjectIntegration(t *testing.T) {
 	ctx, tx := newAuthTestDB(t)
 	runner := NewOIDCAuthTxRunner(tx)
@@ -157,7 +208,7 @@ func TestBootstrapConcurrentJITAndInvitation(t *testing.T) {
 	now := time.Now().UTC()
 	invID := uuid.New()
 	creatorID := uuid.New()
-	if err := gormDB.Create(&UserRow{ID: creatorID, Email: "conc-creator@example.com", Nickname: "Creator", PasswordHash: "h", IsPlatformAdmin: true}).Error; err != nil {
+	if err := gormDB.Create(&UserRow{ID: creatorID, Email: nullableString("conc-creator@example.com"), Nickname: "Creator", PasswordHash: "h", IsPlatformAdmin: true}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := gormDB.Exec(`INSERT INTO workspace_invitations (id, workspace_id, invited_email, role, token_hash, token_prefix, expires_at, created_by)
@@ -254,7 +305,7 @@ func TestOIDCAuthTxMarkInvitationAcceptedConflictIntegration(t *testing.T) {
 	now := time.Now().UTC()
 	invID := uuid.New()
 	creatorID := uuid.New()
-	if err := tx.Create(&UserRow{ID: creatorID, Email: "creator@example.com", Nickname: "Creator", PasswordHash: "h"}).Error; err != nil {
+	if err := tx.Create(&UserRow{ID: creatorID, Email: nullableString("creator@example.com"), Nickname: "Creator", PasswordHash: "h"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Exec(`INSERT INTO workspace_invitations (id, workspace_id, invited_email, role, token_hash, token_prefix, expires_at, created_by)
@@ -264,7 +315,7 @@ func TestOIDCAuthTxMarkInvitationAcceptedConflictIntegration(t *testing.T) {
 	}
 
 	userID := uuid.New()
-	if err := tx.Create(&UserRow{ID: userID, Email: "accepter@example.com", Nickname: "Accepter", PasswordHash: "h"}).Error; err != nil {
+	if err := tx.Create(&UserRow{ID: userID, Email: nullableString("accepter@example.com"), Nickname: "Accepter", PasswordHash: "h"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	err := runner.WithinOIDCAuth(ctx, func(txx service.OIDCAuthTx) error {
@@ -290,7 +341,7 @@ func TestOIDCAuthTxFindPendingInvitationForUpdateIntegration(t *testing.T) {
 	now := time.Now().UTC()
 	invID := uuid.New()
 	creatorID := uuid.New()
-	if err := tx.Create(&UserRow{ID: creatorID, Email: "creator2@example.com", Nickname: "Creator2", PasswordHash: "h"}).Error; err != nil {
+	if err := tx.Create(&UserRow{ID: creatorID, Email: nullableString("creator2@example.com"), Nickname: "Creator2", PasswordHash: "h"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Exec(`INSERT INTO workspace_invitations (id, workspace_id, invited_email, role, token_hash, token_prefix, expires_at, created_by)

@@ -305,6 +305,9 @@ func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash 
 		if err != nil {
 			return err
 		}
+		// 邀请接受以 email 匹配为凭据：profile 无 email（IdP 未返回）时
+		// normalizedEmail 为空，与 invited_email（非空）必然不匹配 → ErrForbidden。
+		// 无 email 用户无法通过邀请验证身份，属安全设计。
 		if normalizedEmail != invitation.InvitedEmail {
 			return domainerrors.ErrForbidden
 		}

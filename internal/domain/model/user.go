@@ -55,9 +55,10 @@ func NewUser(email, nickname, passwordHash string) (*User, error) {
 
 // NewProvisionalUser 创建无密码账号（如 OIDC JIT 建号）。
 // password_hash 留空，表示该账号只能走外部 identity 登录。
-// email 与 nickname 的校验规则与 NewUser 一致。
+// email 允许为空（IdP 可能不返回 email，如视为敏感字段）；非空时按
+// 与 NewUser 相同的规则校验并规范化。nickname 不能为空。
 func NewProvisionalUser(email, nickname string) (*User, error) {
-	normalizedEmail, err := normalizeEmail(email)
+	normalizedEmail, err := optionalEmail(email)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +77,14 @@ func NewProvisionalUser(email, nickname string) (*User, error) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil
+}
+
+// optionalEmail 规范化 email；空串视为"无 email"并原样返回（允许 OIDC 无 email 建号）。
+func optionalEmail(email string) (string, error) {
+	if strings.TrimSpace(email) == "" {
+		return "", nil
+	}
+	return normalizeEmail(email)
 }
 
 // HasPassword 报告该用户是否设有密码（能否走 password 登录）。

@@ -145,7 +145,7 @@ func (r *UserRepository) ResetPassword(ctx context.Context, id uuid.UUID, passwo
 func userToRow(user *model.User) *UserRow {
 	return &UserRow{
 		ID:              user.ID,
-		Email:           user.Email,
+		Email:           nullableString(user.Email),
 		Nickname:        user.Nickname,
 		PasswordHash:    user.PasswordHash,
 		IsPlatformAdmin: user.IsPlatformAdmin,
@@ -158,7 +158,7 @@ func userToRow(user *model.User) *UserRow {
 func userFromRow(row *UserRow) *model.User {
 	return &model.User{
 		ID:              row.ID,
-		Email:           row.Email,
+		Email:           dereferenceString(row.Email),
 		Nickname:        row.Nickname,
 		PasswordHash:    row.PasswordHash,
 		IsPlatformAdmin: row.IsPlatformAdmin,

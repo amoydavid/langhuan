@@ -89,9 +89,9 @@ func TestNewProvisionalUserRejectsInvalidInput(t *testing.T) {
 		email    string
 		nickname string
 	}{
-		{name: "empty email", email: "", nickname: "Ada"},
 		{name: "invalid email", email: "not-an-email", nickname: "Ada"},
 		{name: "empty nickname", email: "ada@example.com", nickname: "  "},
+		{name: "empty nickname no email", email: "", nickname: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,6 +100,20 @@ func TestNewProvisionalUserRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("expected validation error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestNewProvisionalUserAllowsEmptyEmail(t *testing.T) {
+	// OIDC IdP 可能不返回 email（视为敏感字段）；provisional 用户允许无 email。
+	user, err := NewProvisionalUser("", "Ada")
+	if err != nil {
+		t.Fatalf("unexpected error for empty email: %v", err)
+	}
+	if user.Email != "" {
+		t.Fatalf("email = %q, want empty", user.Email)
+	}
+	if user.HasPassword() {
+		t.Fatal("provisional user should be passwordless")
 	}
 }
 

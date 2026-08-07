@@ -109,7 +109,9 @@ COMMIT;
 
 这是与公共 IdP 假想的关键差异。内部 IdP 邮箱可信，`profile.Email` 命中现有 user 时**合并**（给该 user 建 `external_identity`），避免用户出现「本地账号」与「OIDC 账号」两套身份。合并后该 user 同时具备 password 登录（若 `password.enabled=true` 且有密码）与 OIDC 登录两条入口。
 
-安全前提：issuer 由运维明确配置且不接受用户选择。`oidc.require_email_verified` 默认 `true`；只有确认内部 IdP 不提供 `email_verified`、但其邮箱目录仍由企业或个人完全控制时，运维才可显式设为 `false`。无论该开关如何，email 缺失或格式非法都拒绝登录，不创建无 email 用户。
+安全前提：issuer 由运维明确配置且不接受用户选择。`oidc.require_email_verified` 默认 `true`；只有确认内部 IdP 不提供 `email_verified`、但其邮箱目录仍由企业或个人完全控制时，运维才可显式设为 `false`。
+
+**email 是可选字段**：IdP 出于隐私（email 视为敏感字段）可能不返回 email claim。此时允许创建无 email 的 OIDC 用户（JIT 建号 email 为空）。email 存在时必须格式合法；`require_email_verified=true` 时 email 必须已验证。无 email 用户无法通过邀请接受验证身份（邀请以 email 匹配为凭据），也无法 password 登录。
 
 ### 4.5 state 用服务端 Redis 存储，不用 HMAC 自签
 
@@ -300,7 +302,7 @@ Query 参数：成功时为 `code`、`state`；用户取消或 IdP 拒绝时为 
    - 显式校验 id_token `nonce == payload.OIDCNonce`；issuer/audience/expiry 由 verifier 校验。
    - `profileFromIDToken` 解析 `sub` / `email` / `email_verified` / `preferred_username` / `name` / `picture`。
    - 可选调用 UserInfo；UserInfo 的 `sub` 必须与 id_token `sub` 完全一致，且不得覆盖已经验证的 subject。只合并 whitelist 字段。
-   - `sub` 或 email 为空、email 格式非法、`require_email_verified=true` 但未验证 → `ErrUnauthorized`。
+   - `sub` 为空 → `ErrUnauthorized`；email 存在但格式非法 → `ErrUnauthorized`；`require_email_verified=true` 且 email 存在但未验证 → `ErrUnauthorized`。email 缺失（IdP 不返回）**允许**，不拒绝。
 5. 按 `payload` 分派（见 6.3 / 6.4 / 6.5）。
 6. 所有成功和终态失败都清理本次 `oidc_nonce_<state>` cookie；成功登录才调用 `setSessionCookie`，绑定成功不替换现有 session。
 7. 失败：`302` 到 `/login?oidc_error=<有限本地 code>`，不区分具体身份原因（防枚举）。
@@ -580,7 +582,7 @@ CREATE TABLE external_identities (
     user_id      uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     issuer       text NOT NULL,                 -- 首版只有一个运维配置的内部 issuer
     subject      text NOT NULL,                 -- IdP 的 sub claim
-    email        text NOT NULL,                 -- 登录时刻快照；OIDC profile 不允许无 email
+    email        text,                          -- 登录时刻快照；可为 NULL（IdP 不返回 email）
     email_verified boolean NOT NULL DEFAULT false,
     raw_profile  jsonb NOT NULL DEFAULT '{}'::jsonb, -- whitelist claims 快照，不保存完整 token claims
     last_auth_at timestamptz NOT NULL DEFAULT now(),
@@ -588,16 +590,22 @@ CREATE TABLE external_identities (
     updated_at   timestamptz NOT NULL DEFAULT now(),
     UNIQUE (issuer, subject),
     CONSTRAINT external_identities_issuer_nonempty CHECK (btrim(issuer) <> ''),
-    CONSTRAINT external_identities_subject_nonempty CHECK (btrim(subject) <> ''),
-    CONSTRAINT external_identities_email_nonempty CHECK (btrim(email) <> '')
+    CONSTRAINT external_identities_subject_nonempty CHECK (btrim(subject) <> '')
 );
 CREATE INDEX idx_external_identities_user_id ON external_identities(user_id);
+
+-- 000020_optional_oidc_email.up.sql：放宽 email 为可空
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE external_identities ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE external_identities DROP CONSTRAINT IF EXISTS external_identities_email_nonempty;
 
 -- 000019_external_identities.down.sql
 DROP TABLE external_identities;
 ```
 
 `(issuer, subject)` 全局唯一，指向唯一 user。首版只配置一个 issuer，但把 issuer 纳入唯一键，避免未来更换内部 IdP 时把不同 issuer 的同名 subject 错绑。
+
+`users.email` 与 `external_identities.email` 均可为 NULL（迁移 000020 放宽）：OIDC IdP 出于隐私可能不返回 email。PostgreSQL 的 `users.email UNIQUE` 约束对 NULL 不生效，多个无 email 用户不冲突；非空 email 仍全局唯一。
 
 本版本新增的表与既有认证表的关系：
 
@@ -643,7 +651,7 @@ erDiagram
     }
 ```
 
-`external_identities` 是本版本唯一新增表；`users` / `sessions` / `workspace_memberships` / `workspace_invitations` 均为既有（v0.2.1），schema 不变。`users.password_hash` 空串语义（OIDC JIT 建号无密码账号）由领域层 `User.HasPassword()` 表达，不新增列。由于现有 users.email 为 NOT NULL，OIDC profile 缺 email 时拒绝，不创建空 email 用户。
+`external_identities` 是本版本唯一新增表；`users` / `sessions` / `workspace_memberships` / `workspace_invitations` 均为既有（v0.2.1）。`users.password_hash` 空串语义（OIDC JIT 建号无密码账号）由领域层 `User.HasPassword()` 表达，不新增列。迁移 000020 放宽 `users.email` 为可空：OIDC profile 缺 email 时允许创建无 email 用户（领域层 `User.Email` 空串 = 无 email，落库为 NULL）。
 
 `raw_profile` 只允许保存 `email`、`email_verified`、`preferred_username`、`name`、`picture` 五类归一化 claims；禁止保存完整 id_token、access_token、refresh_token、groups 或未审查的自定义 claims，并限制总大小（建议 16 KiB）。
 
@@ -661,7 +669,7 @@ type ExternalIdentity struct {
     UserID     uuid.UUID
     Issuer     string // 运维配置的 OIDC issuer
     Subject    string // IdP 的 sub claim
-    Email      string // 登录时刻快照，不允许为空
+    Email      string // 登录时刻快照；可为空（IdP 不返回 email）
     EmailVerified bool
     RawProfile string // 经过 whitelist 的 claims JSON
     LastAuthAt time.Time
@@ -669,7 +677,8 @@ type ExternalIdentity struct {
     UpdatedAt  time.Time
 }
 
-// NewExternalIdentity 构造并校验：issuer/subject/email 非空，UserID 非 Nil。
+// NewExternalIdentity 构造并校验：issuer/subject 非空，UserID 非 Nil。
+// email 允许为空（IdP 可能不返回）；非空时 trim 存储。
 func NewExternalIdentity(userID uuid.UUID, issuer, subject, email string, emailVerified bool, rawProfile string) (*ExternalIdentity, error)
 ```
 
@@ -1127,7 +1136,7 @@ routerDeps.OIDC = oidcLoginSvc // nil 时 router 不挂 oidc 路由
 | state CSRF | 服务端 Redis 存储 + 浏览器 nonce cookie 双绑，Lua compare-and-delete 一次性消费 |
 | open redirect | `next` 只允许无 scheme/host 的站内绝对路径；拒绝 `//`、反斜杠、控制字符和编码变体 |
 | id_token 篡改 | `coreos/go-oidc` 内置验签（基于 issuer JWKS） |
-| 账号劫持 | 只接受运维配置的内部/个人 issuer；email 必须存在，默认要求 `email_verified=true`；identity 以 issuer+sub 为准，已绑定 identity 不因 email 变化自动换绑 |
+| 账号劫持 | 只接受运维配置的内部/个人 issuer；email 可选（IdP 可能不返回），存在时默认要求 `email_verified=true`；identity 以 issuer+sub 为准，已绑定 identity 不因 email 变化自动换绑 |
 | bootstrap 首管理员安全性 | 空库首个 OIDC JIT 用户直接成为 platform_admin，**该安全性继承自 IdP 准入策略**：部署者须确保 IdP realm/客户端不允许公开自助注册、client_secret 不外泄、可登录账号仅限受信任成员。该门槛取代了 password 首注册「知道部署地址即可」的弱门槛；若 IdP realm 误开自助注册，第一个登录者即拿走 platform_admin，无审批环节 |
 | 枚举 | OIDC 失败统一 `302 /login?oidc_error`，不区分「用户不存在」「sub 未绑」「验签失败」 |
 | rate limit | callback 路径复用 `RateLimiter`，key 用 `oidc:rl:<ip>`，限制每 IP 每分钟 N 次（防 IdP 探测） |
@@ -1148,8 +1157,9 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
   - `(issuer, sub)` 已绑 → 复用，刷新 `last_auth_at`。
   - sub 未绑，email 命中现有 user → 合并，建 identity，不建新 user。
   - sub 未绑，email 未占用 → JIT 建 provisional user + identity。
+  - sub 未绑且 email 缺失（IdP 不返回）→ JIT 建无 email 用户，不与现有用户合并。
   - 空库首个 OIDC 用户 → 唯一 platform_admin；两个并发首登录只能有一个获得该角色。
-  - sub/email 缺失、格式非法或未满足 email_verified 策略 → `ErrUnauthorized`。
+  - sub 缺失、email 存在但格式非法、或满足 email 存在但未达 email_verified 策略 → `ErrUnauthorized`。
 - **stateStore**：state 过期、不存在、browser nonce 不匹配 → `ErrUnauthorized`；一次性消费；并发多个 state 的动态 nonce cookie 互不覆盖。
 - **AcceptOIDC**：
   - email 匹配 → 建 user + membership + identity + 标记 invitation，事务一致。
@@ -1176,7 +1186,7 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 
 ### 15.3 集成测试（repository）
 
-- `000019_external_identities` 迁移：从空库执行成功，schema / 约束 / 索引正确。
+- `000019_external_identities` + `000020_optional_oidc_email` 迁移：从空库执行成功，schema / 约束 / 索引正确；无 email 用户落库为 NULL。
 - `OIDCAuthTxRunner.WithinOIDCAuth`：覆盖 LoginOrProvision、AcceptOIDC、BindIdentity 的 identity/email 唯一键竞态。
 - `(issuer, subject)` 唯一约束：重复插入失败。
 - OIDC invitation transaction：成功提交 / 中途失败回滚 / 并发接受 `RowsAffected==0`。
@@ -1365,7 +1375,7 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 - `internal/infrastructure/config/config.go` / `config_test.go`：`AuthConfig` 增 `OIDC`，`PasswordConfig` 增 `Enabled`；在 `defaultConfig()` 中设置兼容默认值，`validateAuth` 增量。
 - `internal/infrastructure/db/external_identity_rows.go`：新增 `ExternalIdentityRow` + domain codec。
 - `internal/infrastructure/db/oidc_auth_store.go`：实现 `OIDCAuthTxRunner` 与 tx-bound auth 持久化操作；既有 `invitation_repository.go` 不承担 OIDC 业务决策。
-- `internal/infrastructure/migrate/migrations/`：新增当前序列后的 `000019`。
+- `internal/infrastructure/migrate/migrations/`：新增当前序列后的 `000019`（external_identities）与 `000020`（email 可空）。
 - `internal/interfaces/http/router.go`：`Dependencies` 增 `OIDC`；条件挂载 OIDC 路由。
 - `internal/interfaces/http/auth_handler.go`：`login` 在 `password.enabled=false` 时由 service 返回 `ErrForbidden`，handler 映射 403。
 - `internal/interfaces/http/auth_handler.go`：`bootstrap-status` 增加 `password_enabled` / `oidc_enabled`；OIDC callback 的绑定分支重新认证发起时 session。
@@ -1386,7 +1396,7 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 | 模块 | 估算 |
 |---|---|
 | config（OIDC claims/timeout + 旧配置默认值）+ validate | 0.5 天 |
-| 迁移 `000019` + `ExternalIdentity` 领域模型 + `User` 扩展 | 0.5 天 |
+| 迁移 `000019` + `000020` + `ExternalIdentity` 领域模型 + `User` 扩展 | 0.5 天 |
 | port（`OIDCProvider` / `OIDCStateStore`）+ adapter（provider + redis state store，含 httptest IdP） | 1.5 天 |
 | `OIDCLoginService` + 单测 | 1 天 |
 | `InvitationService.AcceptOIDC` + OIDC auth transaction + 单测 | 1.5 天 |
@@ -1411,7 +1421,7 @@ mock `OIDCProvider` / `OIDCStateStore` / repos，表驱动覆盖：
 - state 一次性消费、nonce 不匹配拒绝、过期拒绝。
 - `next` 拒绝开放重定向（`//` 开头）。
 - 日志不含 `sub` / `email` / `id_token` / `access_token` / `raw_profile` 明文。
-- 迁移 `000019` 从空库执行成功，`(issuer, subject)` 唯一约束生效。
+- 迁移 `000019` + `000020` 从空库执行成功，`(issuer, subject)` 唯一约束生效；无 email 用户可正常创建且 `users.email` 为 NULL。
 - `!password.enabled && !oidc.enabled` 启动失败。
 - 旧 `config.yaml`（无 `password.enabled`）升级后默认 true，不锁死。
 - worker、API Key、MCP 路径回归通过。

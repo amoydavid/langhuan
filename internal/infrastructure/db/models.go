@@ -103,7 +103,7 @@ func (ModelRow) TableName() string {
 // PasswordHash 仅存 argon2id 编码串（自带 salt），明文密码绝不入库。
 type UserRow struct {
 	ID              uuid.UUID `gorm:"type:uuid;primaryKey"`
-	Email           string    `gorm:"uniqueIndex"`
+	Email           *string   `gorm:"uniqueIndex"` // NULL = 无 email（OIDC 建号时 IdP 未返回 email）
 	Nickname        string
 	PasswordHash    string
 	IsPlatformAdmin bool
@@ -174,7 +174,7 @@ type ExternalIdentityRow struct {
 	UserID        uuid.UUID `gorm:"type:uuid;index"`
 	Issuer        string    `gorm:"uniqueIndex:uk_external_identities_issuer_subject"`
 	Subject       string    `gorm:"uniqueIndex:uk_external_identities_issuer_subject"`
-	Email         string
+	Email         *string   // NULL = 无 email（IdP 未返回）
 	EmailVerified bool
 	RawProfile    string `gorm:"type:jsonb"`
 	LastAuthAt    time.Time

@@ -340,12 +340,48 @@ func TestLoginOrProvisionRejectsUnverifiedEmailWhenRequired(t *testing.T) {
 	}
 }
 
-func TestLoginOrProvisionRejectsMissingEmail(t *testing.T) {
-	svc, _, _, _, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+func TestLoginOrProvisionAllowsMissingEmail(t *testing.T) {
+	// IdP 出于隐私可能不返回 email；应允许 JIT 建无 email 用户。
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
 	ctx := context.Background()
-	_, err := svc.LoginOrProvision(ctx, validProfile("sub-1", "", true), "ua", "1.2.3.4")
-	if err == nil {
-		t.Fatal("should reject missing email")
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-1", "", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision should allow missing email: %v", err)
+	}
+	if session == nil {
+		t.Fatal("session should be created")
+	}
+	if len(tx.users) != 1 {
+		t.Fatalf("should create 1 user, got %d", len(tx.users))
+	}
+	for _, u := range tx.users {
+		if u.Email != "" {
+			t.Fatalf("user email = %q, want empty (no email from IdP)", u.Email)
+		}
+		if u.IsPlatformAdmin != true {
+			t.Fatal("first user should be platform_admin")
+		}
+	}
+}
+
+func TestLoginOrProvisionMissingEmailDoesNotMerge(t *testing.T) {
+	// 无 email 的 OIDC 用户不应与任何现有用户"合并"（无 email 无法匹配），
+	// 必须 JIT 新建独立用户。
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	ctx := context.Background()
+	existing, _ := model.NewUser("ada@example.com", "Ada", "$argon2id$h")
+	tx.users[existing.ID] = existing
+	tx.usersByEmail[existing.Email] = existing
+
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-1", "", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if session.UserID == existing.ID {
+		t.Fatal("missing-email OIDC user must not merge into existing user")
+	}
+	if len(tx.users) != 2 {
+		t.Fatalf("should create new user (not merge), got %d users", len(tx.users))
 	}
 }
 
