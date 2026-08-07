@@ -37,6 +37,7 @@ const (
 	secSessionAdminRole              // Session + workspace admin+
 	secSessionOwner                  // Session + workspace owner
 	secBearerOrSession               // Bearer API Key 或 Session（程序化入口）
+	secBearerOnly                    // 仅 Bearer API Key（无 scope 要求；用于自省类接口）
 )
 
 // specBuilder 聚集 spec 组装过程中的共享状态。

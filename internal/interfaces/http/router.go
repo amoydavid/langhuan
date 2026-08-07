@@ -384,8 +384,19 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		}
 		if deps.Jobs != nil {
 			job := jobHandler{service: deps.Jobs}
-			jobGroup := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireSessionOnly())
+			// Job status is open to both Session and Bearer callers with
+			// documents:read. The service enforces the API-Key KB binding: an
+			// unbound job maps to 404 (never leaks cross-tenant existence).
+			// Session callers still pass (Unrestricted access).
+			jobGroup := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
 			jobGroup.GET("/jobs/:id", job.get)
+		}
+		// API Key self-introspection: Bearer-only. Returns the authenticated
+		// key's scope strings (no key value, no user data). Used by downstream
+		// consumers (e.g. jinshu connection testing) to verify scope subsets.
+		{
+			self := progGroup.Group("/api-key", RequireAPIKeyOnly())
+			self.GET("/self", apiKeySelfHandler{}.get)
 		}
 
 		if deps.ModelProviders != nil || deps.Models != nil || deps.ModelConnectionTests != nil || deps.WorkspaceSearchSettings != nil ||

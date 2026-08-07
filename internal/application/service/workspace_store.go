@@ -51,6 +51,58 @@ type DocumentIngestTx interface {
 		*model.DocumentRevision,
 		*model.Job,
 	) error
+	// GetIdempotencyRecord reads an existing idempotency row by its natural key
+	// (workspace, api key, knowledge base, idempotency key). Returns the stored
+	// request hash, document id and job id. ErrNotFound means no row exists.
+	GetIdempotencyRecord(
+		context.Context,
+		uuid.UUID,
+		uuid.UUID,
+		uuid.UUID,
+		string,
+	) (DocumentIngestIdempotency, error)
+	// CreateIdempotencyRecord persists a new idempotency row. On a unique-key
+	// race it must return ErrConflict so the caller can reload and compare the
+	// request hash.
+	CreateIdempotencyRecord(context.Context, DocumentIngestIdempotency) error
+}
+
+// IdempotentIngestReplay is the aggregate returned when an idempotent ingest is
+// replayed: the stored idempotency record plus the full document/revision/job
+// lineage it points to. The revision is optional (file lineage always has one).
+type IdempotentIngestReplay struct {
+	Record   DocumentIngestIdempotency
+	Document *model.Document
+	Revision *model.DocumentRevision
+	Job      *model.Job
+}
+
+// IdempotencyReplayStore reloads an existing idempotent ingest's full lineage.
+// It is a separate interface from DocumentIngestTx because the replay read may
+// happen outside the original ingest transaction (after a unique-key race).
+type IdempotencyReplayStore interface {
+	// ReplayIdempotentIngest loads the idempotency record and its associated
+	// document, active revision and job. Returns ErrNotFound if the record or
+	// any lineage row is missing.
+	ReplayIdempotentIngest(
+		ctx context.Context,
+		workspaceID, apiKeyID, knowledgeBaseID uuid.UUID,
+		key string,
+	) (IdempotentIngestReplay, error)
+}
+
+// DocumentIngestIdempotency is the per-call idempotency record exchanged with
+// the persistence layer. It is intentionally a service-layer struct (not a
+// domain model): it tracks request replay semantics for the programmatic
+// document-ingest contract, not document identity.
+type DocumentIngestIdempotency struct {
+	WorkspaceID     uuid.UUID
+	APIKeyID        uuid.UUID
+	KnowledgeBaseID uuid.UUID
+	Key             string
+	RequestSHA256   string
+	DocumentID      uuid.UUID
+	JobID           uuid.UUID
 }
 
 // DocumentIngestStore enters a tenant-local File-ingest transaction.

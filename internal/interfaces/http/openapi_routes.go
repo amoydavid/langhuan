@@ -73,6 +73,7 @@ func (b *specBuilder) allOps() []op {
 	ops = append(ops, b.modelProviderOps()...)
 	ops = append(ops, b.modelOps()...)
 	ops = append(ops, b.apiKeyOps()...)
+	ops = append(ops, b.apiKeySelfOps()...)
 	ops = append(ops, b.membershipOps()...)
 	ops = append(ops, b.readinessAndSettingsOps()...)
 	return ops
@@ -82,10 +83,17 @@ func (b *specBuilder) allOps() []op {
 //
 // requiredScopes 是 API Key 授权合同的必要标记；仅有 Session 鉴权的管理接口、
 // 认证接口以及其它内部路由不得出现在对外 OpenAPI 文档中。
+//
+// secBearerOnly 路由（自省类，无 scope 要求）也属于对外 Bearer 合同：任意有效
+// Bearer 凭证即可调用，因此没有 requiredScopes 仍应进入对外文档。
 func (b *specBuilder) externalOps() []op {
 	all := b.allOps()
 	result := make([]op, 0, len(all))
 	for _, o := range all {
+		if o.sec == secBearerOnly {
+			result = append(result, o)
+			continue
+		}
 		if o.sec == secBearerOrSession && len(o.requiredScopes) > 0 {
 			result = append(result, o)
 		}
@@ -255,6 +263,9 @@ func (b *specBuilder) securityFor(sec opSec) *openapi3.SecurityRequirements {
 		reqs.With(openapi3.SecurityRequirement{secBearer: []string{}})
 		reqs.With(openapi3.SecurityRequirement{secSessionCookie: []string{}})
 		return reqs
+	case secBearerOnly:
+		// 仅 Bearer API Key（不接受 Session），且不要求任何 scope。
+		return openapi3.NewSecurityRequirements().With(openapi3.SecurityRequirement{secBearer: []string{}})
 	}
 	return nil
 }
@@ -418,7 +429,15 @@ func (b *specBuilder) searchOps() []op {
 func (b *specBuilder) jobOps() []op {
 	return []op{
 		{method: http.MethodGet, path: wsBase + "/jobs/:id", tag: "任务", summary: "查询任务状态",
-			respBody: dto.Job{}, status: http.StatusOK, sec: secSessionMember},
+			respBody: dto.Job{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead}, description: "Session 或 Bearer API Key 均可调用；Bearer 只能查询其绑定知识库内文档关联的任务，越界统一返回 404。"},
+	}
+}
+
+func (b *specBuilder) apiKeySelfOps() []op {
+	return []op{
+		{method: http.MethodGet, path: wsBase + "/api-key/self", tag: "API Key", summary: "查询当前 API Key 的 scope",
+			respBody: apiKeySelfResponse{}, status: http.StatusOK, sec: secBearerOnly,
+			description: "仅 Bearer API Key 可调用（Session 返回 403），且不要求任何 scope：任意有效 key 均可自省自身 scope，用于下游连接性测试（如 jinshu 判定 key scope 是否充分）。绝不返回 key 明文、hash 或用户数据。"},
 	}
 }
 

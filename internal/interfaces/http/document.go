@@ -89,17 +89,42 @@ func (h documentHandler) ingestText(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "content 超过大小限制")
 		return
 	}
-	result, err := h.ingestService.Ingest(c.Request.Context(), service.IngestDocumentInput{
+	// Idempotency-Key (optional, Bearer-only contract). Empty key keeps the
+	// legacy non-idempotent path. Validation: 1..128 ASCII bytes, no CR/LF.
+	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if len(key) > 128 || (key != "" && strings.ContainsAny(key, "\r\n")) || (key != "" && !isASCII(key)) {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "Idempotency-Key 无效")
+		return
+	}
+	input := service.IngestDocumentInput{
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: kbID,
 		Title: strings.TrimSpace(req.Title), FileName: strings.TrimSpace(req.Title) + ".md",
 		ContentType: "text/markdown", SourceType: "api", Reader: strings.NewReader(req.Content),
 		SizeBytes: int64(len(content)), ParentNodeID: req.ParentNodeID, NodeName: strings.TrimSpace(req.Title),
-	})
+		IdempotencyKey: key,
+	}
+	// Only Bearer callers anchor an idempotency row; Session callers ignore the
+	// key (they are not part of the programmatic replay contract).
+	if authCtx.IsAPIKey() {
+		input.CallerAPIKeyID = &authCtx.PrincipalID
+	}
+	result, err := h.ingestService.Ingest(c.Request.Context(), input)
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
 	c.JSON(stdhttp.StatusCreated, result)
+}
+
+// isASCII reports whether s contains only ASCII bytes (0x00-0x7F). Used for
+// Idempotency-Key validation per the programmatic-access contract.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 0x7F {
+			return false
+		}
+	}
+	return true
 }
 
 func (h documentHandler) list(c *gin.Context) {

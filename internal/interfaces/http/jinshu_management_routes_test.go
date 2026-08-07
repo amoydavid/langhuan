@@ -30,6 +30,10 @@ func TestJinshuManagementRouteMatrix(t *testing.T) {
 		http.MethodDelete + " /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/file-tree/nodes/:node_id",
 		http.MethodGet + " /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/:document_id/chunks",
 		http.MethodGet + " /api/v1/workspaces/:workspace_slug/models",
+		// Bearer-qualified job status (documents:read; unbound -> 404).
+		http.MethodGet + " /api/v1/workspaces/:workspace_slug/jobs/:id",
+		// Bearer-only API Key self-introspection (scopes; no key value).
+		http.MethodGet + " /api/v1/workspaces/:workspace_slug/api-key/self",
 	}
 	for _, route := range expected {
 		if !routes[route] {

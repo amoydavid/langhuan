@@ -292,18 +292,32 @@ func TestOpenAPIPublishesOnlyAPIKeyOperations(t *testing.T) {
 				continue
 			}
 			operationCount++
-			if operation.Security == nil || len(*operation.Security) != 2 {
+			if operation.Security == nil {
 				t.Errorf("%s %s 必须声明 Bearer 或 Session security", method, pathName)
 				continue
 			}
-			if _, ok := (*operation.Security)[0][secBearer]; !ok {
-				t.Errorf("%s %s 第一 security requirement 应为 BearerAuth", method, pathName)
+			reqs := *operation.Security
+			if _, ok := reqs[0][secBearer]; !ok {
+				t.Errorf("%s %s 第一 security 要求应为 BearerAuth", method, pathName)
+				continue
 			}
-			if _, ok := (*operation.Security)[1][secSessionCookie]; !ok {
-				t.Errorf("%s %s 第二 security requirement 应为 SessionCookie", method, pathName)
-			}
-			if operation.Extensions["x-langhuan-required-scopes"] == nil {
-				t.Errorf("%s %s 缺少 required scopes extension", method, pathName)
+			switch len(reqs) {
+			case 1:
+				// secBearerOnly: 仅 Bearer，无 scope 要求（自省类接口）。
+				// 这类 operation 不应携带 required-scopes 扩展。
+				if operation.Extensions["x-langhuan-required-scopes"] != nil {
+					t.Errorf("%s %s Bearer-only operation 不应声明 required scopes", method, pathName)
+				}
+			case 2:
+				// secBearerOrSession: Bearer 或 Session，必须声明 required scopes。
+				if _, ok := reqs[1][secSessionCookie]; !ok {
+					t.Errorf("%s %s 第二 security 要求应为 SessionCookie", method, pathName)
+				}
+				if operation.Extensions["x-langhuan-required-scopes"] == nil {
+					t.Errorf("%s %s 缺少 required scopes extension", method, pathName)
+				}
+			default:
+				t.Errorf("%s %s security 要求数量异常: %d", method, pathName, len(reqs))
 			}
 		}
 	}

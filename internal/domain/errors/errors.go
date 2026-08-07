@@ -59,4 +59,7 @@ var (
 	ErrRerankConfigurationConflict = stderrors.New("所选知识库的重排配置不一致")
 	ErrRerankSnapshotMismatch      = stderrors.New("重排模型配置与索引快照不一致")
 	ErrEmbeddingSnapshotMismatch   = stderrors.New("Embedding 模型配置与索引快照不一致")
+
+	// ErrIdempotencyConflict 表示同一 Idempotency-Key 携带了不同的请求体，统一映射为 409。
+	ErrIdempotencyConflict = stderrors.New("幂等键与已有请求冲突")
 )

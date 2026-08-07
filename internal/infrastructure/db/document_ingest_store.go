@@ -37,6 +37,61 @@ func (s *DocumentIngestDBStore) WithinWorkspace(
 	})
 }
 
+// ReplayIdempotentIngest loads an existing idempotent ingest's full lineage:
+// the idempotency record plus its document, active revision and job. Used after
+// a unique-key race (or on a sequential retry) to return the stored result.
+func (s *DocumentIngestDBStore) ReplayIdempotentIngest(
+	ctx context.Context,
+	workspaceID, apiKeyID, knowledgeBaseID uuid.UUID,
+	key string,
+) (service.IdempotentIngestReplay, error) {
+	var replay service.IdempotentIngestReplay
+	err := NewWorkspaceTxRunner(s.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+		var row DocumentIngestIdempotencyRow
+		if err := tx.WithContext(ctx).
+			Where("workspace_id = ? AND api_key_id = ? AND knowledge_base_id = ? AND key = ?",
+				workspaceID, apiKeyID, knowledgeBaseID, key).
+			First(&row).Error; err != nil {
+			return translateDBError(err, "读取文档导入幂等记录失败")
+		}
+		replay.Record = documentIngestIdempotencyFromRow(row)
+
+		var documentRow DocumentRow
+		if err := tx.WithContext(ctx).
+			Where("workspace_id = ? AND knowledge_base_id = ? AND id = ?",
+				workspaceID, knowledgeBaseID, row.DocumentID).
+			First(&documentRow).Error; err != nil {
+			return translateDBError(err, "读取幂等文档失败")
+		}
+		replay.Document = documentV2FromRow(&documentRow)
+
+		if documentRow.ActiveRevisionID != nil {
+			var revisionRow DocumentRevisionRow
+			if err := tx.WithContext(ctx).
+				Where("workspace_id = ? AND knowledge_base_id = ? AND document_id = ? AND id = ?",
+					workspaceID, knowledgeBaseID, row.DocumentID, *documentRow.ActiveRevisionID).
+				First(&revisionRow).Error; err == nil {
+				if revision, convErr := documentRevisionFromRow(&revisionRow); convErr == nil {
+					replay.Revision = revision
+				}
+			}
+		}
+
+		var jobRow JobRow
+		if err := tx.WithContext(ctx).
+			Where("workspace_id = ? AND id = ?", workspaceID, row.JobID).
+			First(&jobRow).Error; err != nil {
+			return translateDBError(err, "读取幂等任务失败")
+		}
+		replay.Job = jobV2FromRow(&jobRow)
+		return nil
+	})
+	if err != nil {
+		return service.IdempotentIngestReplay{}, err
+	}
+	return replay, nil
+}
+
 // FailCreatedIngest atomically marks a newly created File Document, Revision and Job failed.
 func (s *DocumentIngestDBStore) FailCreatedIngest(
 	ctx context.Context,
@@ -183,6 +238,37 @@ func (tx *documentIngestTx) CreateFileDocumentNodeRevisionAndJob(
 	}
 	if err := tx.db.WithContext(ctx).Create(jobV2ToRow(job)).Error; err != nil {
 		return translateDBError(err, "创建 File parse Job 失败")
+	}
+	return nil
+}
+
+func (tx *documentIngestTx) GetIdempotencyRecord(
+	ctx context.Context,
+	workspaceID, apiKeyID, knowledgeBaseID uuid.UUID,
+	key string,
+) (service.DocumentIngestIdempotency, error) {
+	if workspaceID != tx.workspaceID {
+		return service.DocumentIngestIdempotency{}, domainerrors.ErrNotFound
+	}
+	var row DocumentIngestIdempotencyRow
+	if err := tx.db.WithContext(ctx).
+		Where("workspace_id = ? AND api_key_id = ? AND knowledge_base_id = ? AND key = ?",
+			workspaceID, apiKeyID, knowledgeBaseID, key).
+		First(&row).Error; err != nil {
+		return service.DocumentIngestIdempotency{}, translateDBError(err, "读取文档导入幂等记录失败")
+	}
+	return documentIngestIdempotencyFromRow(row), nil
+}
+
+func (tx *documentIngestTx) CreateIdempotencyRecord(ctx context.Context, record service.DocumentIngestIdempotency) error {
+	if record.WorkspaceID != tx.workspaceID {
+		return fmt.Errorf("%w: 幂等记录 Workspace 不一致", domainerrors.ErrValidation)
+	}
+	if err := tx.db.WithContext(ctx).Create(documentIngestIdempotencyToRow(record)).Error; err != nil {
+		mapped := translateDBError(err, "创建文档导入幂等记录失败")
+		// Unique-key race surfaces as ErrConflict so the service can reload and
+		// compare the request hash before deciding dedupe-vs-409.
+		return mapped
 	}
 	return nil
 }

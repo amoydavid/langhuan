@@ -51,6 +51,19 @@ curl -X POST https://langhuan.example.com/api/v1/workspaces/acme/search \
 
 OpenAPI 文档（`GET /api/v1/openapi.json`）只收录上述支持 API Key 的对外 REST 接口，并为每个 operation 声明所需 scope；登录、成员、邀请、Provider、模型配置、设置等 Session-only 管理接口不会出现在文档中。
 
+### 3.1 文本导入幂等（Idempotency-Key）
+
+`POST /workspaces/:slug/knowledge-bases/:id/documents/text` 支持 `Idempotency-Key` 头，用于网络重试场景下避免重复沉淀同一份文档（例如 jinshu 把工单写入琅嬛知识库）：
+
+- 仅 Bearer API Key 生效；Session 主体携带该头会被忽略（保持原有非幂等行为）。
+- 取值规则：1..128 个 ASCII 字节，不含 CR/LF；越界或非法返回 `400 validation_error`。
+- 同一 `(workspace, API Key, 知识库, key)` 再次到达：
+  - 请求体哈希相同 -> 返回原 `document`/`job`，响应 `deduped=true`；
+  - 请求体哈希不同 -> 返回 `409 idempotency_conflict`。
+- 请求体哈希由 `{title, content_type, parent_node_id, content_sha256}` 的规范 JSON 计算，`content_sha256` 是请求正文的 SHA-256。
+
+幂等记录在写入文档血缘的同一 Workspace 事务内追加（migration 000021 的 `document_ingest_idempotencies` 表），并发竞争通过唯一索引冲突回退后重载判定。
+
 ## 4. REST 能力与 scope
 
 | REST | Scope | 说明 |
@@ -68,8 +81,9 @@ OpenAPI 文档（`GET /api/v1/openapi.json`）只收录上述支持 API Key 的�
 | `GET /workspaces/:slug/knowledge-bases/:id/documents/:document_id/chunks` | `documents:read` | 文档分块 |
 | `GET /workspaces/:slug/models?type=embedding&status=active&scope=platform` | `knowledge_bases:write` | Bearer 仅可读取平台 active embedding 模型 |
 | `GET /workspaces/:slug/documents/:id` | `documents:read` | 查询文档状态；Bearer 会校验文档所属知识库是否在 key 绑定范围内 |
-| `GET /workspaces/:slug/jobs/:id` | Session-only | 既有 Job 状态入口；不在本次 KB-qualified Bearer 迁移范围 |
+| `GET /workspaces/:slug/jobs/:id` | `documents:read` | 查询任务状态；Session 或 Bearer 均可，Bearer 只能查询其绑定知识库内文档关联的任务，越界统一返回 404 |
 | `DELETE /workspaces/:slug/documents/:id` | `documents:write` | 软删除文档（FAQ 也通过此接口删除）；Bearer 会校验文档所属知识库是否在 key 绑定范围内 |
+| `GET /workspaces/:slug/api-key/self` | Bearer-only（无 scope 要求） | 查询当前 API Key 的 scope 列表；任意有效 Bearer key 均可调用（Session 返回 403），用于下游连接性测试判定 key scope 是否充分；绝不返回 key 明文或用户数据 |
 | `GET /workspaces/:slug/knowledge-bases/:id/chunks/:chunk_id` | `documents:read` | 获取 Chunk |
 | `POST /workspaces/:slug/knowledge-bases/:id/search` | `search:read` | 单库检索 |
 | `POST /workspaces/:slug/search` | `search:read` | 多库检索（按 Embedding 模型分组） |
@@ -174,6 +188,7 @@ Workspace 管理员可通过 `GET /api/v1/workspaces/:workspace_slug/search-sett
 | 403 | `insufficient_scope` | 合法 key 调用未授权操作 |
 | 404 | `not_found` | Workspace/知识库/资源不存在或越界 |
 | 409 | `api_key_limit_reached` | 活跃 key 达上限（100） |
+| 409 | `idempotency_conflict` | 同一 Idempotency-Key 携带了不同的请求体 |
 | 500 | `api_key_secret_unavailable` | reveal 无法恢复 |
 | 500 | `internal_error` | 其它未预期错误 |
 

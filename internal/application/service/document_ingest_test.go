@@ -262,6 +262,9 @@ type fakeDocumentIngestStoreV2 struct {
 	failedErrorClass string
 	failedMessage    string
 	failErr          error
+	// idempotency tracking
+	idempotencyRows      map[string]DocumentIngestIdempotency
+	idempotencyInsertErr error
 }
 
 func (s *fakeDocumentIngestStoreV2) WithinWorkspace(
@@ -305,6 +308,34 @@ func (s *fakeDocumentIngestStoreV2) CreateFileDocumentNodeRevisionAndJob(
 	job *model.Job,
 ) error {
 	s.document, s.node, s.revision, s.job = document, node, revision, job
+	return nil
+}
+
+func (s *fakeDocumentIngestStoreV2) GetIdempotencyRecord(
+	_ context.Context,
+	_, _, _ uuid.UUID,
+	key string,
+) (DocumentIngestIdempotency, error) {
+	if s.idempotencyRows == nil {
+		return DocumentIngestIdempotency{}, domainerrors.ErrNotFound
+	}
+	if row, ok := s.idempotencyRows[key]; ok {
+		return row, nil
+	}
+	return DocumentIngestIdempotency{}, domainerrors.ErrNotFound
+}
+
+func (s *fakeDocumentIngestStoreV2) CreateIdempotencyRecord(_ context.Context, record DocumentIngestIdempotency) error {
+	if s.idempotencyInsertErr != nil {
+		return s.idempotencyInsertErr
+	}
+	if s.idempotencyRows == nil {
+		s.idempotencyRows = map[string]DocumentIngestIdempotency{}
+	}
+	if _, exists := s.idempotencyRows[record.Key]; exists {
+		return domainerrors.ErrConflict
+	}
+	s.idempotencyRows[record.Key] = record
 	return nil
 }
 

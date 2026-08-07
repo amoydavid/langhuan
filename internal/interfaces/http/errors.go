@@ -169,6 +169,7 @@ func modelErrorDetails(err error) (int, string, string, bool) {
 		{domainerrors.ErrAPIKeyImmutable, stdhttp.StatusConflict, "api_key_immutable"},
 		{domainerrors.ErrInsufficientScope, stdhttp.StatusForbidden, "insufficient_scope"},
 		{domainerrors.ErrWorkspaceLimitReached, stdhttp.StatusConflict, "workspace_limit_reached"},
+		{domainerrors.ErrIdempotencyConflict, stdhttp.StatusConflict, "idempotency_conflict"},
 	}
 	for _, mapping := range mappings {
 		if errors.Is(err, mapping.err) {

@@ -626,12 +626,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		documents:               service.NewDocumentService(documentRepo, kbRepo),
 		documentAssets:          service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
 		jobs:                    service.NewJobService(jobRepo),
-		documentIngest: service.NewDocumentIngestService(service.DocumentIngestServiceDeps{
-			Store:            db.NewDocumentIngestDBStore(gormDB),
-			RawStore:         rawStore,
-			Queue:            jobQueue,
-			AllowedFileTypes: cfg.Ingest.AllowedFileTypes,
-		}),
+		documentIngest:          newDocumentIngestService(gormDB, rawStore, jobQueue, cfg),
 		faqDocuments: service.NewFAQDocumentService(service.FAQDocumentServiceDeps{
 			Store: faqRepo,
 			Queue: jobQueue,
@@ -677,6 +672,20 @@ func buildRuntimeRerankRegistry() (rerankFactoryCatalog, error) {
 		rerankcompatible.NewFactory(),
 		siliconflowadapter.NewRerankFactory(),
 	)
+}
+
+// newDocumentIngestService wires the File-ingest service with its persistence
+// store. The same DocumentIngestDBStore serves as both the ingest transaction
+// store and the idempotency replay store (it implements both interfaces).
+func newDocumentIngestService(gormDB *gorm.DB, rawStore storageport.RawDocumentStore, jobQueue queueport.JobQueue, cfg *config.Config) *service.DocumentIngestService {
+	store := db.NewDocumentIngestDBStore(gormDB)
+	return service.NewDocumentIngestService(service.DocumentIngestServiceDeps{
+		Store:            store,
+		ReplayStore:      store,
+		RawStore:         rawStore,
+		Queue:            jobQueue,
+		AllowedFileTypes: cfg.Ingest.AllowedFileTypes,
+	})
 }
 
 // buildRuntimeParserProviderRegistry 构建解析器 Provider Factory 注册表。

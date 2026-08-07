@@ -30,10 +30,15 @@ type DocumentIngestServiceDeps struct {
 	Queue            queue.JobQueue
 	TempDir          string
 	AllowedFileTypes []string
+	// ReplayStore reloads an existing idempotent ingest's lineage after a
+	// unique-key race. Optional: when nil and a race happens, the service falls
+	// back to ErrIdempotencyConflict (safer than guessing).
+	ReplayStore IdempotencyReplayStore
 }
 
 type DocumentIngestService struct {
 	store            DocumentIngestStore
+	replayStore      IdempotencyReplayStore
 	rawStore         storage.RawDocumentStore
 	queue            queue.JobQueue
 	tempDir          string
@@ -49,9 +54,22 @@ type IngestDocumentInput struct {
 	SourceType      string
 	Reader          io.Reader
 	SizeBytes       int64
-	Dedupe          bool
-	ParentNodeID    *uuid.UUID
-	NodeName        string
+	// Dedupe enables content-hash reuse (FindReusableRevision): when an existing
+	// ready File revision with the same SHA-256 exists, it is returned instead of
+	// creating a new document. Mutually exclusive with IdempotencyKey: a caller
+	// MUST NOT set both. Setting both would let the dedupe short-circuit return
+	// before the idempotency row is written, silently breaking replay semantics.
+	Dedupe       bool
+	ParentNodeID *uuid.UUID
+	NodeName     string
+	// CallerAPIKeyID is the API Key id for Bearer callers; nil for Session.
+	// It anchors the idempotency row to a single principal.
+	CallerAPIKeyID *uuid.UUID
+	// IdempotencyKey is the trimmed Idempotency-Key header. Empty keeps the
+	// legacy non-idempotent code path. A non-empty value is only honored for
+	// Bearer callers (CallerAPIKeyID != nil); Session callers ignore it.
+	// Mutually exclusive with Dedupe (see Dedupe comment).
+	IdempotencyKey string
 }
 
 type IngestDocumentResult struct {
@@ -77,6 +95,7 @@ func NewDocumentIngestService(deps DocumentIngestServiceDeps) *DocumentIngestSer
 	}
 	return &DocumentIngestService{
 		store:            deps.Store,
+		replayStore:      deps.ReplayStore,
 		rawStore:         deps.RawStore,
 		queue:            deps.Queue,
 		tempDir:          tempDir,
@@ -116,6 +135,32 @@ func (s *DocumentIngestService) ingestV2(
 		return nil, err
 	}
 	defer os.Remove(tempPath)
+
+	// Idempotent replay fast-path: for Bearer callers carrying an Idempotency-Key,
+	// check whether a matching row already exists. A matching request hash returns
+	// the stored lineage with Deduped=true; a mismatching body returns 409. This
+	// avoids wasteful document/raw-object creation on sequential retries.
+	//
+	// Invariant: this idempotency path is mutually exclusive with input.Dedupe
+	// (content-hash reuse). Callers MUST NOT set both; the handler only sets
+	// IdempotencyKey and never sets Dedupe. If both were set, the FindReusableRevision
+	// short-circuit below could return before the idempotency row is written,
+	// silently breaking replay semantics.
+	if input.IdempotencyKey != "" && input.CallerAPIKeyID != nil && s.replayStore != nil {
+		replay, replayErr := s.replayStore.ReplayIdempotentIngest(
+			ctx, input.WorkspaceID, *input.CallerAPIKeyID, input.KnowledgeBaseID, input.IdempotencyKey,
+		)
+		if replayErr == nil {
+			requestSHA256 := computeRequestSHA256(input, hash)
+			if replay.Record.RequestSHA256 == requestSHA256 {
+				return replayToResult(replay), nil
+			}
+			return nil, domainerrors.ErrIdempotencyConflict
+		} else if !errors.Is(replayErr, domainerrors.ErrNotFound) {
+			return nil, replayErr
+		}
+		// ErrNotFound: no prior row; proceed to create.
+	}
 
 	var existingDocument *model.Document
 	var existingRevision *model.DocumentRevision
@@ -194,6 +239,11 @@ func (s *DocumentIngestService) ingestV2(
 	job.Payload["job_id"] = job.ID.String()
 	var node *model.FileTreeNode
 	var generationID uuid.UUID
+	idempotencyWanted := input.IdempotencyKey != "" && input.CallerAPIKeyID != nil
+	var requestSHA256 string
+	if idempotencyWanted {
+		requestSHA256 = computeRequestSHA256(input, hash)
+	}
 	err = s.store.WithinWorkspace(ctx, input.WorkspaceID, func(txCtx context.Context, tx DocumentIngestTx) error {
 		kb, err := tx.GetKnowledgeBase(txCtx, input.KnowledgeBaseID)
 		if err != nil {
@@ -225,9 +275,36 @@ func (s *DocumentIngestService) ingestV2(
 		if err != nil {
 			return err
 		}
-		return tx.CreateFileDocumentNodeRevisionAndJob(txCtx, document, node, revision, job)
+		if err := tx.CreateFileDocumentNodeRevisionAndJob(txCtx, document, node, revision, job); err != nil {
+			return err
+		}
+		if idempotencyWanted {
+			if err := tx.CreateIdempotencyRecord(txCtx, DocumentIngestIdempotency{
+				WorkspaceID:     input.WorkspaceID,
+				APIKeyID:        *input.CallerAPIKeyID,
+				KnowledgeBaseID: input.KnowledgeBaseID,
+				Key:             input.IdempotencyKey,
+				RequestSHA256:   requestSHA256,
+				DocumentID:      document.ID,
+				JobID:           job.ID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
+		// Idempotency unique-key race: another request with the same natural key
+		// already inserted a row. Reload it and compare the request hash: match
+		// returns the stored lineage with Deduped=true; mismatch surfaces as a
+		// 409 conflict. The freshly created raw object is cleaned up either way.
+		if idempotencyWanted && errors.Is(err, domainerrors.ErrConflict) {
+			cleanupErr := s.rawStore.Delete(ctx, rawObject.Key)
+			if cleanupErr != nil {
+				return nil, fmt.Errorf("%w; 删除原始文件失败: %w", err, cleanupErr)
+			}
+			return s.resolveIdempotencyRace(ctx, input, requestSHA256)
+		}
 		return nil, s.deleteRawAfterError(ctx, rawObject.Key, err)
 	}
 
@@ -340,4 +417,74 @@ func canonicalFileType(fileType string) string {
 		return "markdown"
 	}
 	return fileType
+}
+
+// computeRequestSHA256 derives the canonical request hash for idempotency. The
+// canonical form is stable JSON of {title, content_type, parent_node_id,
+// content_sha256}. The raw content body is represented by its already-computed
+// SHA256 (the `contentSHA256` argument) so the reader does not need to be
+// re-read; two requests with identical metadata but different bodies therefore
+// produce different request hashes.
+func computeRequestSHA256(input IngestDocumentInput, contentSHA256 string) string {
+	parentNodeID := ""
+	if input.ParentNodeID != nil {
+		parentNodeID = input.ParentNodeID.String()
+	}
+	canonical := struct {
+		Title         string `json:"title"`
+		ContentType   string `json:"content_type"`
+		ParentNodeID  string `json:"parent_node_id"`
+		ContentSHA256 string `json:"content_sha256"`
+	}{
+		Title:         strings.TrimSpace(input.Title),
+		ContentType:   strings.TrimSpace(input.ContentType),
+		ParentNodeID:  parentNodeID,
+		ContentSHA256: contentSHA256,
+	}
+	body, err := json.Marshal(canonical)
+	if err != nil {
+		// Should never happen for this fixed shape; fall back to content hash.
+		return contentSHA256
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+// resolveIdempotencyRace reloads the stored idempotency record after a unique-
+// key race. When the stored request hash matches the current request, the
+// original document/job lineage is returned with Deduped=true. A mismatch
+// (different body) surfaces as ErrIdempotencyConflict (409).
+func (s *DocumentIngestService) resolveIdempotencyRace(
+	ctx context.Context,
+	input IngestDocumentInput,
+	requestSHA256 string,
+) (*IngestDocumentResult, error) {
+	if s.replayStore == nil {
+		return nil, domainerrors.ErrIdempotencyConflict
+	}
+	replay, err := s.replayStore.ReplayIdempotentIngest(
+		ctx, input.WorkspaceID, *input.CallerAPIKeyID, input.KnowledgeBaseID, input.IdempotencyKey,
+	)
+	if err != nil {
+		if errors.Is(err, domainerrors.ErrNotFound) {
+			return nil, domainerrors.ErrIdempotencyConflict
+		}
+		return nil, err
+	}
+	if replay.Record.RequestSHA256 != requestSHA256 {
+		return nil, domainerrors.ErrIdempotencyConflict
+	}
+	return replayToResult(replay), nil
+}
+
+// replayToResult assembles the Deduped result from a replayed idempotent
+// ingest. Both the sequential fast-path and the unique-key race resolution use
+// it, so the two paths can never diverge in how they shape the returned
+// document/job.
+func replayToResult(replay IdempotentIngestReplay) *IngestDocumentResult {
+	return &IngestDocumentResult{
+		Document: dto.DocumentFromModelWithRevision(replay.Document, replay.Revision),
+		Job:      dto.JobFromModel(replay.Job),
+		Deduped:  true,
+	}
 }

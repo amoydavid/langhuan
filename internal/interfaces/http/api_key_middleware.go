@@ -199,6 +199,28 @@ func RequireSessionOnly() gin.HandlerFunc {
 	}
 }
 
+// RequireAPIKeyOnly is the inverse of RequireSessionOnly: it allows only Bearer
+// API Key principals and rejects Session auth with 403. Used for endpoints that
+// are part of the programmatic-access contract only (e.g. api-key/self). The
+// upstream auth middleware (SessionOrAPIKeyAuth) must have already resolved the
+// AuthContext.
+func RequireAPIKeyOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authCtx, exists := authFromContext(c)
+		if !exists {
+			writeError(c, stdhttp.StatusInternalServerError, "internal_error", internalErrorMessage)
+			c.Abort()
+			return
+		}
+		if !authCtx.IsAPIKey() {
+			writeError(c, stdhttp.StatusForbidden, "forbidden", domainerrors.ErrForbidden.Error())
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // RequireKnowledgeBaseForAPIKey 要求 API Key 主体只能访问绑定的知识库。
 // paramKey 是 URL 中知识库 ID 的参数名（如 "id" 或 "knowledge_base_id"）；
 // Session 主体直接通过。
