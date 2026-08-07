@@ -54,8 +54,6 @@ type OIDCAuthTx interface {
 	CountWorkspaces(ctx context.Context) (int64, error)
 	// GetFirstWorkspace 返回创建最早的 workspace（单租户自动加入的目标）。
 	GetFirstWorkspace(ctx context.Context) (*model.Workspace, error)
-	// FindMembership 按 workspace+user 查询成员关系；不存在返回 ErrNotFound。
-	FindMembership(ctx context.Context, workspaceID, userID uuid.UUID) (*model.Membership, error)
 }
 
 // ExternalIdentityReader 是事务外的只读身份查询，用于账号设置页展示。
@@ -250,6 +248,29 @@ func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authpo
 				if err := tx.CreateUser(ctx, user); err != nil {
 					return err
 				}
+				// 单租户模式（OIDC 开启）：仅对本次 JIT 新建的用户自动加入唯一
+				// workspace——已存在的用户（identity 复用 / email 合并）不自动
+				// 加入，避免被移除的成员在重新登录时被自动恢复。
+				// 平台尚无 workspace 时（bootstrap：首个用户稍后创建）跳过。
+				if s.singleTenant {
+					count, err := tx.CountWorkspaces(ctx)
+					if err != nil {
+						return err
+					}
+					if count > 0 {
+						ws, err := tx.GetFirstWorkspace(ctx)
+						if err != nil {
+							return err
+						}
+						membership, err := model.NewMembership(ws.ID, user.ID, value.RoleMember)
+						if err != nil {
+							return err
+						}
+						if err := tx.CreateMembership(ctx, membership); err != nil {
+							return err
+						}
+					}
+				}
 			}
 			// 给 user 绑定 identity（合并与 JIT 都需要）。
 			newIdentity, err := model.NewExternalIdentity(user.ID, s.issuer, profile.Subject, normalizedEmail, profile.EmailVerified, profile.RawProfile)
@@ -261,33 +282,8 @@ func (s *OIDCLoginService) LoginOrProvision(ctx context.Context, profile *authpo
 			}
 		}
 
-		// 单租户模式（OIDC 开启）：新用户登录后自动加入唯一 workspace。
-		// 平台尚无 workspace 时（bootstrap：首个用户稍后创建）跳过；
-		// 已有 workspace 时以 member 角色加入，已存在成员关系则幂等跳过。
-		if s.singleTenant {
-			count, err := tx.CountWorkspaces(ctx)
-			if err != nil {
-				return err
-			}
-			if count > 0 {
-				ws, err := tx.GetFirstWorkspace(ctx)
-				if err != nil {
-					return err
-				}
-				if _, err := tx.FindMembership(ctx, ws.ID, user.ID); err != nil {
-					if !errors.Is(err, domainerrors.ErrNotFound) {
-						return err
-					}
-					membership, err := model.NewMembership(ws.ID, user.ID, value.RoleMember)
-					if err != nil {
-						return err
-					}
-					if err := tx.CreateMembership(ctx, membership); err != nil {
-						return err
-					}
-				}
-			}
-		}
+		// 单租户模式（OIDC 开启）：新用户自动加入唯一 workspace 的逻辑在 JIT
+		// 建号分支内完成（仅新建用户，见上），复用/合并的老用户不自动加入。
 
 		sess, err := model.NewSession(user.ID, lifetimeDuration(s.sessionLife), userAgent, ipAddr)
 		if err != nil {

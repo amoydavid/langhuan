@@ -212,17 +212,3 @@ func (t *oidcAuthTx) GetFirstWorkspace(ctx context.Context) (*model.Workspace, e
 	}
 	return workspaceFromRow(&row), nil
 }
-
-func (t *oidcAuthTx) FindMembership(ctx context.Context, workspaceID, userID uuid.UUID) (*model.Membership, error) {
-	var row MembershipRow
-	err := t.tx.WithContext(ctx).
-		Where("workspace_id = ? AND user_id = ?", workspaceID, userID).
-		First(&row).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerrors.ErrNotFound
-		}
-		return nil, fmt.Errorf("查找成员关系失败: %w", err)
-	}
-	return membershipFromRow(&row), nil
-}

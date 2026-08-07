@@ -64,17 +64,16 @@ func (s *fakeStateStore) Consume(ctx context.Context, state, browserNonce string
 
 // fakeAuthTx 实现 OIDCAuthTx 与 OIDCAuthTxRunner 用于测试。
 type fakeAuthTx struct {
-	users               map[uuid.UUID]*model.User
-	usersByEmail        map[string]*model.User
-	identities          []*model.ExternalIdentity
-	sessions            []*model.Session
-	memberships         []*model.Membership
-	invitations         map[string]*model.Invitation // tokenHash → invitation
-	workspaces          []*model.Workspace           // 单租户自动加入用；按创建顺序
-	bootstrapLock       bool
-	bootstrapCnt        int // 记录 AcquireBootstrapLock 调用次数
-	findMembershipCalls int // 记录 FindMembership 调用次数（幂等性断言用）
-	failOn              string
+	users         map[uuid.UUID]*model.User
+	usersByEmail  map[string]*model.User
+	identities    []*model.ExternalIdentity
+	sessions      []*model.Session
+	memberships   []*model.Membership
+	invitations   map[string]*model.Invitation // tokenHash → invitation
+	workspaces    []*model.Workspace           // 单租户自动加入用；按创建顺序
+	bootstrapLock bool
+	bootstrapCnt  int // 记录 AcquireBootstrapLock 调用次数
+	failOn        string
 }
 
 func newFakeAuthTx() *fakeAuthTx {
@@ -189,16 +188,6 @@ func (f *fakeAuthTx) GetFirstWorkspace(ctx context.Context) (*model.Workspace, e
 		return nil, domainerrors.ErrNotFound
 	}
 	return f.workspaces[0], nil
-}
-
-func (f *fakeAuthTx) FindMembership(ctx context.Context, workspaceID, userID uuid.UUID) (*model.Membership, error) {
-	f.findMembershipCalls++
-	for _, m := range f.memberships {
-		if m.WorkspaceID == workspaceID && m.UserID == userID {
-			return m, nil
-		}
-	}
-	return nil, domainerrors.ErrNotFound
 }
 
 // fakeIdentityReader 实现 ExternalIdentityReader。
@@ -824,12 +813,65 @@ func TestOIDCLoginSingleTenantExistingMembershipIdempotent(t *testing.T) {
 	if session.UserID != user.ID {
 		t.Fatalf("session user = %s, want %s", session.UserID, user.ID)
 	}
-	// 已有 membership 不得重复创建，且实现必须实际做过幂等检查。
+	// 老用户（identity 复用）不触发自动加入，membership 保持原样。
 	if len(tx.memberships) != 1 {
-		t.Fatalf("memberships = %d, want 1（幂等）", len(tx.memberships))
+		t.Fatalf("memberships = %d, want 1", len(tx.memberships))
 	}
-	if tx.findMembershipCalls == 0 {
-		t.Fatal("单租户自动加入必须调用 FindMembership 做幂等检查")
+}
+
+func TestOIDCLoginSingleTenantRemovedMemberNotRejoined(t *testing.T) {
+	// 被移除的成员（identity 命中但无 membership）重新登录不得被自动恢复。
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	svc.singleTenant = true
+	ctx := context.Background()
+	ws, err := model.NewWorkspace("Tenant", "tenant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.workspaces = append(tx.workspaces, ws)
+	user, _ := model.NewUser("removed@example.com", "Removed", "$argon2id$h")
+	tx.users[user.ID] = user
+	tx.usersByEmail[user.Email] = user
+	identity, _ := model.NewExternalIdentity(user.ID, "https://sso.example.com", "sub-removed", "removed@example.com", true, "{}")
+	tx.identities = append(tx.identities, identity)
+	// 无 membership（成员已被移除）。
+
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-removed", "removed@example.com", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision error: %v", err)
+	}
+	if session.UserID != user.ID {
+		t.Fatalf("session user = %s, want %s", session.UserID, user.ID)
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("被移除成员不应被自动恢复, memberships = %d", len(tx.memberships))
+	}
+}
+
+func TestOIDCLoginSingleTenantEmailMergeNotAutoJoined(t *testing.T) {
+	// email 合并的既有账号（无 identity）登录不自动加入——可能曾被移除或从未加入。
+	svc, _, _, tx, _ := newTestOIDCLoginService(t, "https://sso.example.com", false)
+	svc.singleTenant = true
+	ctx := context.Background()
+	ws, err := model.NewWorkspace("Tenant", "tenant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.workspaces = append(tx.workspaces, ws)
+	user, _ := model.NewUser("legacy@example.com", "Legacy", "$argon2id$h")
+	tx.users[user.ID] = user
+	tx.usersByEmail[user.Email] = user
+	// 无 identity、无 membership。
+
+	session, err := svc.LoginOrProvision(ctx, validProfile("sub-legacy", "legacy@example.com", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("LoginOrProvision error: %v", err)
+	}
+	if session.UserID != user.ID {
+		t.Fatalf("session user = %s, want %s", session.UserID, user.ID)
+	}
+	if len(tx.memberships) != 0 {
+		t.Fatalf("email 合并的老用户不应自动加入, memberships = %d", len(tx.memberships))
 	}
 }
 
