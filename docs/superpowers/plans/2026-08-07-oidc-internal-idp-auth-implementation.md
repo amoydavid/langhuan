@@ -125,12 +125,12 @@
 - `BindIdentity(ctx, actorUserID, profile) error`：事务内 `FindActiveSession` 确认 BindSessionID 仍属 BindActorID，`(issuer,sub)` 已绑别人 → `ErrConflict`，否则 `AttachIdentity`。
 - `ListIdentities(ctx, userID) ([]*model.ExternalIdentity, error)`。
 
-- [ ] 写 `LoginOrProvision` 表驱动测试：`(issuer,sub)` 已绑 → 复用刷新；sub 未绑 email 命中 → 合并建 identity；都未命中 → JIT；空库首用户 → 唯一 platform_admin；sub/email 缺失或 `require_email_verified=true` 未满足 → `ErrUnauthorized`。
-- [ ] 写 `BindIdentity` 测试：未绑且 session 一致 → 成功；已绑别人 → `ErrConflict`；已绑自己 → 幂等；回调 session 撤销/切换 → `ErrUnauthorized`。
-- [ ] 写 `BeginLogin`/`ConsumeAndExchange` 测试：`next` 拒绝 `//`/绝对 URL/控制字符；invitationToken 存的是 hash 非明文；state payload 含 nonce/verifier。
-- [ ] 运行测试确认 RED。
-- [ ] 实现 service：事务伪代码严格遵循 spec §9.1（持锁 → 锁内 CountUsers → 决定 admin → Create）；email 合并/JIT 同事务提交 session，避免认证成功但持久化不完整。
-- [ ] 运行 `go test ./internal/application/service -run OIDC -count=1`、`go vet`。
+- [x] 写 `LoginOrProvision` 表驱动测试：`(issuer,sub)` 已绑 → 复用刷新；sub 未绑 email 命中 → 合并建 identity；都未命中 → JIT；空库首用户 → 唯一 platform_admin；sub/email 缺失或 `require_email_verified=true` 未满足 → `ErrUnauthorized`。
+- [x] 写 `BindIdentity` 测试：未绑且 session 一致 → 成功；已绑别人 → `ErrConflict`；已绑自己 → 幂等；回调 session 撤销/切换 → `ErrUnauthorized`。
+- [x] 写 `BeginLogin`/`ConsumeAndExchange` 测试：`next` 拒绝 `//`/绝对 URL/控制字符；invitationToken 存的是 hash 非明文；state payload 含 nonce/verifier。
+- [x] 运行测试确认 RED。
+- [x] 实现 service：事务伪代码严格遵循 spec §9.1（持锁 → 锁内 CountUsers → 决定 admin → Create）；email 合并/JIT 同事务提交 session，避免认证成功但持久化不完整。
+- [x] 运行 `go test ./internal/application/service -run OIDC -count=1`、`go vet`。
 
 ### Task 5: InvitationService.AcceptOIDC 与 password 开关
 
