@@ -46,6 +46,7 @@ func TestAutoMigratedModelsCoverRequiredTables(t *testing.T) {
 		"sessions",
 		"workspace_memberships",
 		"workspace_invitations",
+		"external_identities",
 		"workspace_search_settings",
 		"workspace_source_connections",
 	}

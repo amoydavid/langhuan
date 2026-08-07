@@ -48,7 +48,7 @@ func TestV021AuthFlow(t *testing.T) {
 		RateLimit:  config.RateLimitConfig{LoginMaxAttempts: 5, LoginWindowSeconds: 900},
 		Invitation: config.InvitationConfig{LifetimeSeconds: 3600},
 	}
-	userSvc := service.NewUserService(userRepo, hasher)
+	userSvc := service.NewUserService(userRepo, hasher, true)
 	authSvc := service.NewAuthService(userRepo, sessRepo, hasher, fakeRateLimiter{}, authCfg)
 	invSvc := service.NewInvitationService(invRepo, wsRepo, userRepo, hasher, authCfg)
 	mbSvc := service.NewMembershipService(mbRepo, userRepo)

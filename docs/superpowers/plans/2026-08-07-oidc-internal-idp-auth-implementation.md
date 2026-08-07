@@ -172,12 +172,12 @@
 - `OIDCAuthTxRunner.WithinOIDCAuth` 开 `db.Transaction`，把 tx 包成 `OIDCAuthTx` 传入 fn；`AcquireBootstrapLock` 执行 `pg_advisory_xact_lock(hashtextextended('langhuan:auth-bootstrap', 0))`。
 - 既有 `InvitationRepository.AcceptRegistration`（password 路径）不持锁、不改。
 
-- [ ] 写集成测试：迁移 000019 从空库执行成功；`(issuer, subject)` 重复插入失败；`CreateProvisionalUserWithIdentity` 中途失败回滚；`AttachIdentity` 正常。
-- [ ] 写 `OIDCAuthTxRunner` 集成测试：`WithinOIDCAuth` 内 panic 不泄漏（GORM 回滚）；`AcquireBootstrapLock` 在并发两事务中串行化（用 goroutine + channel 验证持锁期间另一事务阻塞）。
-- [ ] 写 **bootstrap advisory lock 并发矩阵**（spec §15.3）：空库下两两并发（password 首注册 × OIDC JIT、OIDC JIT × OIDC 邀请接受新建、password 首注册 × OIDC 邀请接受新建、三路 `errgroup` 并发），断言只产生一个 bootstrap platform_admin；已初始化库（count>0）下 JIT 与邀请接受均建普通用户。
-- [ ] 运行测试确认 RED（连临时 docker pgvector 容器）。
-- [ ] 实现 repository 与 runner；`gorm.ErrRecordNotFound` 映射 `ErrNotFound`；`RowsAffected==0` 映射 `ErrConflict`。
-- [ ] 运行 `go test -tags=integration ./internal/infrastructure/db -count=1`（先 `make test-image`）、`go vet`。
+- [x] 写集成测试：迁移 000019 从空库执行成功；`(issuer, subject)` 重复插入失败；`CreateProvisionalUserWithIdentity` 中途失败回滚；`AttachIdentity` 正常。
+- [x] 写 `OIDCAuthTxRunner` 集成测试：`WithinOIDCAuth` 内 panic 不泄漏（GORM 回滚）；`AcquireBootstrapLock` 在并发两事务中串行化（用 goroutine + channel 验证持锁期间另一事务阻塞）。
+- [x] 写 **bootstrap advisory lock 并发矩阵**（spec §15.3）：空库下两两并发（password 首注册 × OIDC JIT、OIDC JIT × OIDC 邀请接受新建、password 首注册 × OIDC 邀请接受新建、三路 `errgroup` 并发），断言只产生一个 bootstrap platform_admin；已初始化库（count>0）下 JIT 与邀请接受均建普通用户。
+- [x] 运行测试确认 RED（连临时 docker pgvector 容器）。
+- [x] 实现 repository 与 runner；`gorm.ErrRecordNotFound` 映射 `ErrNotFound`；`RowsAffected==0` 映射 `ErrConflict`。
+- [x] 运行 `go test -tags=integration ./internal/infrastructure/db -count=1`（先 `make test-image`）、`go vet`。
 
 ### Task 7: HTTP handler、路由条件挂载与装配
 
