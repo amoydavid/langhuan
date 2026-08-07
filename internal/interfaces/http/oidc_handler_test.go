@@ -139,11 +139,11 @@ func TestOIDCBeginSanitizesNext(t *testing.T) {
 	h.begin(c)
 
 	rec := w.Result()
-	if rec.Header.Get("Location") != "/login?oidc_error=validation_error" {
+	if rec.Header.Get("Location") != "/sign-in?oidc_error=validation_error" {
 		// sanitizeNextPath 返回 ErrValidation → errorCode default oidc_error；
 		// 但 ErrValidation 未在 errorCode switch 中，落到 default。
 	}
-	// begin 失败应 302 到 /login?oidc_error=...
+	// begin 失败应 302 到 /sign-in?oidc_error=...
 	if rec.StatusCode != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.StatusCode)
 	}
@@ -158,7 +158,7 @@ func TestOIDCCallbackHandlesIdPError(t *testing.T) {
 	h.callback(c)
 
 	rec := w.Result()
-	if rec.Header.Get("Location") != "/login?oidc_error=oidc_access_denied" {
+	if rec.Header.Get("Location") != "/sign-in?oidc_error=oidc_access_denied" {
 		t.Fatalf("location = %s, want oidc_access_denied redirect", rec.Header.Get("Location"))
 	}
 }
@@ -236,7 +236,7 @@ func TestOIDCCallbackStateConsumeFailureRedirects(t *testing.T) {
 	h.callback(c)
 
 	rec := w.Result()
-	if rec.Header.Get("Location") != "/login?oidc_error=unauthorized" {
+	if rec.Header.Get("Location") != "/sign-in?oidc_error=unauthorized" {
 		t.Fatalf("location = %s, want unauthorized redirect", rec.Header.Get("Location"))
 	}
 }

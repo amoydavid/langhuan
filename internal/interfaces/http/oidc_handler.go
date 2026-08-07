@@ -33,6 +33,13 @@ type OIDCAcceptor interface {
 // oidcNonceCookiePrefix 是浏览器 nonce cookie 的前缀（动态后缀 = state）。
 const oidcNonceCookiePrefix = "oidc_nonce_"
 
+// 前端路由常量：登录失败/成功后重定向的目标路径，避免硬编码漂移。
+const (
+	loginRoute       = "/sign-in"
+	settingsRoute    = "/settings"
+	defaultNextRoute = "/"
+)
+
 // externalIdentityDTO 是 /auth/external-identities 返回的非敏感摘要。
 type externalIdentityDTO struct {
 	Issuer     string `json:"issuer"`
@@ -67,7 +74,7 @@ func (h oidcHandler) begin(c *gin.Context) {
 	// bind 路径用 POST /auth/oidc/bind/start（见 beginBind），这里不处理 bind。
 	authURL, browserNonce, state, err := h.svc.BeginLogin(c.Request.Context(), next, invitationToken, uuid.Nil, uuid.Nil)
 	if err != nil {
-		c.Redirect(http.StatusFound, "/login?oidc_error="+errorCode(err))
+		c.Redirect(http.StatusFound, loginRoute+"?oidc_error="+errorCode(err))
 		return
 	}
 	// 动态 cookie 名（与 state 绑定），允许并发标签页。
@@ -91,11 +98,11 @@ func (h oidcHandler) beginBind(c *gin.Context) {
 	}
 	next := strings.TrimSpace(c.Query("next"))
 	if next == "" {
-		next = "/settings/account"
+		next = settingsRoute
 	}
 	authURL, browserNonce, state, err := h.svc.BeginLogin(c.Request.Context(), next, "", authCtx.UserID, sessionID)
 	if err != nil {
-		c.Redirect(http.StatusFound, "/settings/account?oidc_error="+errorCode(err))
+		c.Redirect(http.StatusFound, settingsRoute+"?oidc_error="+errorCode(err))
 		return
 	}
 	c.SetSameSite(http.SameSiteLaxMode)
@@ -116,7 +123,7 @@ func (h oidcHandler) callback(c *gin.Context) {
 		if errMsg == "access_denied" {
 			code = "oidc_access_denied"
 		}
-		c.Redirect(http.StatusFound, "/login?oidc_error="+code)
+		c.Redirect(http.StatusFound, loginRoute+"?oidc_error="+code)
 		return
 	}
 
@@ -127,13 +134,13 @@ func (h oidcHandler) callback(c *gin.Context) {
 	payload, profile, err := h.svc.ConsumeAndExchange(c.Request.Context(), code, state, nonceCookie)
 	h.clearNonceCookie(c, state)
 	if err != nil {
-		c.Redirect(http.StatusFound, "/login?oidc_error="+errorCode(err))
+		c.Redirect(http.StatusFound, loginRoute+"?oidc_error="+errorCode(err))
 		return
 	}
 
 	next := payload.Next
 	if next == "" {
-		next = "/"
+		next = defaultNextRoute
 	}
 	userAgent := c.Request.UserAgent()
 	ipAddr := clientIP(c)
@@ -141,12 +148,12 @@ func (h oidcHandler) callback(c *gin.Context) {
 	// 分派。
 	if payload.InvitationTokenHash != "" {
 		if h.acceptor == nil {
-			c.Redirect(http.StatusFound, "/login?oidc_error=oidc_unavailable")
+			c.Redirect(http.StatusFound, loginRoute+"?oidc_error=oidc_unavailable")
 			return
 		}
 		session, err := h.acceptor.AcceptOIDC(c.Request.Context(), payload.InvitationTokenHash, profile, userAgent, ipAddr)
 		if err != nil {
-			c.Redirect(http.StatusFound, "/login?oidc_error="+errorCode(err))
+			c.Redirect(http.StatusFound, loginRoute+"?oidc_error="+errorCode(err))
 			return
 		}
 		h.setSessionCookie(c, session.ID.String())
@@ -157,21 +164,21 @@ func (h oidcHandler) callback(c *gin.Context) {
 	if payload.BindActorID != uuid.Nil {
 		// 绑定：重新认证当前 session，确认 actor/session 一致。
 		if payload.BindSessionID == uuid.Nil {
-			c.Redirect(http.StatusFound, "/settings/account?oidc_error=unauthorized")
+			c.Redirect(http.StatusFound, settingsRoute+"?oidc_error=unauthorized")
 			return
 		}
 		currentSessionID, serr := sessionIDFromCookie(c, h.sessionCfg.CookieName)
 		if serr != nil || currentSessionID != payload.BindSessionID {
-			c.Redirect(http.StatusFound, "/settings/account?oidc_error=unauthorized")
+			c.Redirect(http.StatusFound, settingsRoute+"?oidc_error=unauthorized")
 			return
 		}
 		user, aerr := h.auth.Authenticate(c.Request.Context(), currentSessionID)
 		if aerr != nil || user == nil || user.ID != payload.BindActorID {
-			c.Redirect(http.StatusFound, "/settings/account?oidc_error=unauthorized")
+			c.Redirect(http.StatusFound, settingsRoute+"?oidc_error=unauthorized")
 			return
 		}
 		if err := h.svc.BindIdentity(c.Request.Context(), payload.BindActorID, profile); err != nil {
-			c.Redirect(http.StatusFound, "/settings/account?oidc_error="+errorCode(err))
+			c.Redirect(http.StatusFound, settingsRoute+"?oidc_error="+errorCode(err))
 			return
 		}
 		c.Redirect(http.StatusFound, next)
@@ -181,7 +188,7 @@ func (h oidcHandler) callback(c *gin.Context) {
 	// 常规登录/JIT/合并。
 	session, err := h.svc.LoginOrProvision(c.Request.Context(), profile, userAgent, ipAddr)
 	if err != nil {
-		c.Redirect(http.StatusFound, "/login?oidc_error="+errorCode(err))
+		c.Redirect(http.StatusFound, loginRoute+"?oidc_error="+errorCode(err))
 		return
 	}
 	h.setSessionCookie(c, session.ID.String())
