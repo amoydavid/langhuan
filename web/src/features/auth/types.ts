@@ -17,12 +17,14 @@ export type WorkspaceSummary = {
 export type MeResponse = {
   user: AuthenticatedUser
   workspaces: WorkspaceSummary[]
+  single_tenant: boolean
 }
 
 export type BootstrapStatus = {
   initialized: boolean
   oidc_enabled: boolean
   password_enabled: boolean
+  single_tenant: boolean
 }
 
 export type ExternalIdentity = {

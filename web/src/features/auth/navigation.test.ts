@@ -14,6 +14,7 @@ const baseMe: MeResponse = {
     is_platform_admin: true,
   },
   workspaces: [],
+  single_tenant: false,
 }
 
 describe('safeRedirect', () => {

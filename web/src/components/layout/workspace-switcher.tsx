@@ -97,20 +97,21 @@ export function WorkspaceSwitcher() {
                 <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
               </DropdownMenuItem>
             ))}
-            {me?.user.is_platform_admin && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className='gap-2 p-2'
-                  onClick={() => void navigate({ href: '/workspaces' })}
-                >
-                  <div className='flex size-6 items-center justify-center rounded-md border bg-background'>
-                    <Plus className='size-4' />
-                  </div>
-                  {t('common.layout.createWorkspace')}
-                </DropdownMenuItem>
-              </>
-            )}
+            {me?.user.is_platform_admin &&
+              !(me.single_tenant && me.workspaces.length > 0) && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className='gap-2 p-2'
+                    onClick={() => void navigate({ href: '/workspaces' })}
+                  >
+                    <div className='flex size-6 items-center justify-center rounded-md border bg-background'>
+                      <Plus className='size-4' />
+                    </div>
+                    {t('common.layout.createWorkspace')}
+                  </DropdownMenuItem>
+                </>
+              )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

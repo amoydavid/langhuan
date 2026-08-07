@@ -36,14 +36,15 @@ export function WorkspacePicker() {
             {t('workspaces.picker.description')}
           </p>
         </div>
-        {me.user.is_platform_admin && (
-          <Button asChild>
-            <Link to='/workspaces/new'>
-              <Plus />
-              {t('workspaces.picker.createButton')}
-            </Link>
-          </Button>
-        )}
+        {me.user.is_platform_admin &&
+          !(me.single_tenant && me.workspaces.length > 0) && (
+            <Button asChild>
+              <Link to='/workspaces/new'>
+                <Plus />
+                {t('workspaces.picker.createButton')}
+              </Link>
+            </Button>
+          )}
       </div>
 
       {me.workspaces.length === 0 ? (

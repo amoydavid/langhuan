@@ -40,6 +40,7 @@ async function renderWithSearchProvider() {
       { workspace_id: 'ws-1', slug: 'acme', name: 'Acme', role: 'owner' },
       { workspace_id: 'ws-2', slug: 'beta', name: 'Beta', role: 'member' },
     ],
+    single_tenant: false,
   }
   client.setQueryData(['me'], me)
   client.setQueryData(['knowledge-bases', 'acme'], [])

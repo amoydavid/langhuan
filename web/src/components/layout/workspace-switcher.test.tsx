@@ -28,11 +28,12 @@ const me: MeResponse = {
     { workspace_id: 'ws-1', slug: 'acme', name: 'Acme', role: 'owner' },
     { workspace_id: 'ws-2', slug: 'beta', name: 'Beta', role: 'member' },
   ],
+  single_tenant: false,
 }
 
-async function renderSwitcher() {
+async function renderSwitcher(meOverride?: MeResponse) {
   const client = new QueryClient()
-  client.setQueryData(['me'], me)
+  client.setQueryData(['me'], meOverride ?? me)
   return render(
     <QueryClientProvider client={client}>
       <SidebarProvider>
@@ -72,5 +73,14 @@ describe('WorkspaceSwitcher', () => {
     await expect
       .element(screen.getByRole('menuitem', { name: '创建工作区' }))
       .toBeInTheDocument()
+  })
+
+  it('hides workspace creation in single-tenant mode once a workspace exists', async () => {
+    const singleTenantMe: MeResponse = { ...me, single_tenant: true }
+    const screen = await renderSwitcher(singleTenantMe)
+    await userEvent.click(screen.getByRole('button', { name: /Acme/ }))
+    await expect
+      .element(screen.getByRole('menuitem', { name: '创建工作区' }))
+      .not.toBeInTheDocument()
   })
 })
