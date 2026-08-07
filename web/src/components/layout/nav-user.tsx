@@ -41,7 +41,7 @@ export function NavUser() {
                 className='data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground'
               >
                 <Avatar className='h-8 w-8 rounded-lg'>
-                  <AvatarFallback className='rounded-lg'>
+                  <AvatarFallback className='rounded-lg bg-primary text-primary-foreground'>
                     {user?.nickname.slice(0, 2) ?? t('common.brandName')}
                   </AvatarFallback>
                 </Avatar>
