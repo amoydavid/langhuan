@@ -39,13 +39,14 @@ type SessionRepository interface {
 // 它不创建会话；会话由 AuthService 在登录时创建。ResetPassword 的会话撤销
 // 由 user 仓储的 ResetPassword 在事务内完成，因此本服务不持有 session 仓储。
 type UserService struct {
-	repo   UserRepository
-	hasher authport.PasswordHasher
+	repo            UserRepository
+	hasher          authport.PasswordHasher
+	passwordEnabled bool
 }
 
 // NewUserService 构造一个仅依赖 user 仓储与 hasher 的 UserService。
-func NewUserService(repo UserRepository, hasher authport.PasswordHasher) *UserService {
-	return &UserService{repo: repo, hasher: hasher}
+func NewUserService(repo UserRepository, hasher authport.PasswordHasher, passwordEnabled bool) *UserService {
+	return &UserService{repo: repo, hasher: hasher, passwordEnabled: passwordEnabled}
 }
 
 // IsInitialized reports whether the installation already has at least one user.
@@ -61,6 +62,10 @@ func (s *UserService) IsInitialized(ctx context.Context) (bool, error) {
 // 仅当当前用户数为 0 时允许；已存在用户则返回 ErrConflict，关闭首注册通道。
 // 该流程绝不创建 membership 或 session——首用户的登录与成员关系由后续流程处理。
 func (s *UserService) RegisterFirstUser(ctx context.Context, email, nickname, password string) (*dto.AuthenticatedUser, error) {
+	// password.enabled=false 时关闭 password 首注册通道，bootstrap 由 OIDC JIT 完成。
+	if !s.passwordEnabled {
+		return nil, domainerrors.ErrPasswordRegistrationDisabled
+	}
 	password = strings.TrimSpace(password)
 	if password == "" {
 		return nil, fmt.Errorf("%w: 密码不能为空", domainerrors.ErrValidation)

@@ -9,6 +9,8 @@ var (
 	ErrForbidden                      = stderrors.New("无权限")
 	ErrConflict                       = stderrors.New("资源冲突")
 	ErrRateLimited                    = stderrors.New("请求过于频繁")
+	ErrPasswordLoginDisabled          = stderrors.New("密码登录已关闭")
+	ErrPasswordRegistrationDisabled   = stderrors.New("密码注册已关闭")
 	ErrUnsupportedFileType            = stderrors.New("不支持的文件类型")
 	ErrUnsupportedProvider            = stderrors.New("不支持的 Provider")
 	ErrProviderScopeNotAllowed        = stderrors.New("Provider 不允许用于此作用域")

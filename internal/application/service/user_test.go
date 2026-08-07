@@ -280,7 +280,7 @@ func TestUserServiceIsInitialized(t *testing.T) {
 			if tt.seed {
 				seedUser(repo, "first@example.com", "First", "pw", true)
 			}
-			svc := NewUserService(repo, &fakePasswordHasher{})
+			svc := NewUserService(repo, &fakePasswordHasher{}, true)
 
 			got, err := svc.IsInitialized(context.Background())
 			if err != nil {
@@ -297,7 +297,7 @@ func TestUserServiceIsInitializedWrapsCountError(t *testing.T) {
 	wantErr := errors.New("count failed")
 	repo := newFakeUserRepository()
 	repo.countErr = wantErr
-	svc := NewUserService(repo, &fakePasswordHasher{})
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
 
 	_, err := svc.IsInitialized(context.Background())
 	if !errors.Is(err, wantErr) {
@@ -307,7 +307,7 @@ func TestUserServiceIsInitializedWrapsCountError(t *testing.T) {
 
 func TestFirstUserRegisterIsPlatformAdmin(t *testing.T) {
 	repo := newFakeUserRepository()
-	svc := NewUserService(repo, &fakePasswordHasher{})
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
 
 	out, err := svc.RegisterFirstUser(context.Background(), "Alice@Example.COM", "Alice", "supersecret")
 	if err != nil {
@@ -339,7 +339,7 @@ func TestFirstUserRegisterIsPlatformAdmin(t *testing.T) {
 func TestFirstUserRegisterRejectsSecondFirstUser(t *testing.T) {
 	repo := newFakeUserRepository()
 	seedUser(repo, "first@example.com", "First", "pw", true)
-	svc := NewUserService(repo, &fakePasswordHasher{})
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
 
 	_, err := svc.RegisterFirstUser(context.Background(), "second@example.com", "Second", "pw")
 	if !errors.Is(err, domainerrors.ErrConflict) {
@@ -353,7 +353,7 @@ func TestFirstUserRegisterRejectsSecondFirstUser(t *testing.T) {
 
 func TestFirstUserRegisterRejectsEmptyPassword(t *testing.T) {
 	repo := newFakeUserRepository()
-	svc := NewUserService(repo, &fakePasswordHasher{})
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
 
 	_, err := svc.RegisterFirstUser(context.Background(), "alice@example.com", "Alice", "")
 	if !errors.Is(err, domainerrors.ErrValidation) {
@@ -364,6 +364,19 @@ func TestFirstUserRegisterRejectsEmptyPassword(t *testing.T) {
 	}
 }
 
+func TestRegisterFirstUserRejectsWhenPasswordDisabled(t *testing.T) {
+	repo := newFakeUserRepository()
+	svc := NewUserService(repo, &fakePasswordHasher{}, false) // password.enabled=false
+
+	_, err := svc.RegisterFirstUser(context.Background(), "first@example.com", "First", "pw")
+	if !errors.Is(err, domainerrors.ErrPasswordRegistrationDisabled) {
+		t.Fatalf("expected ErrPasswordRegistrationDisabled, got %v", err)
+	}
+	if len(repo.users) != 0 {
+		t.Fatalf("no user should be created when password disabled, got %d", len(repo.users))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // UserService.ResetPassword
 // ---------------------------------------------------------------------------
@@ -371,7 +384,7 @@ func TestFirstUserRegisterRejectsEmptyPassword(t *testing.T) {
 func TestResetPasswordRequiresPlatformAdmin(t *testing.T) {
 	repo := newFakeUserRepository()
 	target := seedUser(repo, "victim@example.com", "Victim", "oldpw", false)
-	svc := NewUserService(repo, &fakePasswordHasher{})
+	svc := NewUserService(repo, &fakePasswordHasher{}, true)
 
 	err := svc.ResetPassword(context.Background(), uuid.New(), false, target.ID, "newpw")
 	if !errors.Is(err, domainerrors.ErrForbidden) {
@@ -387,7 +400,7 @@ func TestResetPasswordAdminUpdatesPassword(t *testing.T) {
 	userRepo := newFakeUserRepository()
 	target := seedUser(userRepo, "victim@example.com", "Victim", "oldpw", false)
 
-	svc := NewUserService(userRepo, &fakePasswordHasher{})
+	svc := NewUserService(userRepo, &fakePasswordHasher{}, true)
 
 	if err := svc.ResetPassword(context.Background(), uuid.New(), true, target.ID, "brand-new"); err != nil {
 		t.Fatalf("ResetPassword returned error: %v", err)

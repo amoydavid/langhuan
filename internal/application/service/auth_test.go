@@ -11,6 +11,7 @@ import (
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+	"github.com/dajee/langhuan/internal/domain/model"
 )
 
 // testAuthConfig 返回一份测试用的 AuthConfig（短 lifetime / 小阈值）。
@@ -21,6 +22,9 @@ func testAuthConfig() config.AuthConfig {
 			LifetimeSeconds: 3600,
 			SecureCookie:    true,
 			Domain:          "",
+		},
+		Password: config.PasswordConfig{
+			Enabled: true,
 		},
 		RateLimit: config.RateLimitConfig{
 			LoginMaxAttempts:   3,
@@ -241,4 +245,41 @@ func TestAuthenticateRejectsExpiredSession(t *testing.T) {
 	if !errors.Is(err, domainerrors.ErrUnauthorized) {
 		t.Fatalf("expected ErrUnauthorized for expired session, got %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// password.enabled 开关
+// ---------------------------------------------------------------------------
+
+func TestLoginRejectsWhenPasswordDisabled(t *testing.T) {
+	userRepo := newFakeUserRepository()
+	sessRepo := newFakeSessionRepository()
+	seedUser(userRepo, "alice@example.com", "Alice", "correct-pw", false)
+
+	// 构造 password.enabled=false 的配置。
+	cfg := testAuthConfig()
+	cfg.Password.Enabled = false
+	svc := NewAuthService(userRepo, sessRepo, &fakePasswordHasher{}, &fakeRateLimiter{}, cfg)
+
+	_, err := svc.Login(context.Background(), "alice@example.com", "correct-pw", "ua", "1.2.3.4")
+	if !errors.Is(err, domainerrors.ErrPasswordLoginDisabled) {
+		t.Fatalf("expected ErrPasswordLoginDisabled, got %v", err)
+	}
+}
+
+func TestLoginRejectsProvisionalUserWithoutPassword(t *testing.T) {
+	userRepo := newFakeUserRepository()
+	sessRepo := newFakeSessionRepository()
+	// 预置一个无密码账号（OIDC JIT 建号）：用 seedUser 建号后清空 password_hash。
+	provUser := seedUser(userRepo, "ada@example.com", "Ada", "dummy", false)
+	provUser.PasswordHash = ""
+
+	svc := NewAuthService(userRepo, sessRepo, &fakePasswordHasher{}, &fakeRateLimiter{}, testAuthConfig())
+
+	_, err := svc.Login(context.Background(), "ada@example.com", "any-password", "ua", "1.2.3.4")
+	if !errors.Is(err, invalidLoginError) {
+		t.Fatalf("expected unified invalidLoginError for passwordless user, got %v", err)
+	}
+	// 避免 unused model 告警（seedUser 已用 model，这里保险引用）。
+	_ = model.User{}
 }

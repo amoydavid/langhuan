@@ -149,12 +149,12 @@
 - `InvitationService.Accept`（既有 password 邀请）在 `password.enabled=false` 返回 `password_registration_disabled`。
 - `RegisterFirstUser` 在 `password.enabled=false` 返回 `password_registration_disabled`。
 
-- [ ] 写 `AcceptOIDC` 测试：email 匹配 → 事务一致建 user/membership/identity/标记 accepted/session；email 不匹配 → `ErrForbidden`；invitation 已接受 → `ErrConflict`；不存在/过期 → `ErrNotFound`；identity 与 email 命中不同 user → `ErrConflict`。
-- [ ] 写 `AuthService.Login` 测试：`password.enabled=false` → `password_login_disabled`；provisional user 密码登录 → 统一失败错误（防枚举）。
-- [ ] 写 password 开关测试：`Accept` / `RegisterFirstUser` 在 `password.enabled=false` 均返回 `password_registration_disabled`。
-- [ ] 运行测试确认 RED。
-- [ ] 实现 AcceptOIDC（复用 §9.1 同一 `OIDCAuthTxRunner`）；password 开关在 service 层强制（非仅 handler/前端）。
-- [ ] 运行 `go test ./internal/application/service -count=1`、`go vet`。
+- [x] 写 `AcceptOIDC` 测试：email 匹配 → 事务一致建 user/membership/identity/标记 accepted/session；email 不匹配 → `ErrForbidden`；invitation 已接受 → `ErrConflict`；不存在/过期 → `ErrNotFound`；identity 与 email 命中不同 user → `ErrConflict`。
+- [x] 写 `AuthService.Login` 测试：`password.enabled=false` → `password_login_disabled`；provisional user 密码登录 → 统一失败错误（防枚举）。
+- [x] 写 password 开关测试：`Accept` / `RegisterFirstUser` 在 `password.enabled=false` 均返回 `password_registration_disabled`。
+- [x] 运行测试确认 RED。
+- [x] 实现 AcceptOIDC（复用 §9.1 同一 `OIDCAuthTxRunner`）；password 开关在 service 层强制（非仅 handler/前端）。
+- [x] 运行 `go test ./internal/application/service -count=1`、`go vet`。
 
 ### Task 6: Repository 实现与 OIDCAuthTxRunner
 

@@ -430,7 +430,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		limiter = authadapter.NewRedisRateLimiter(redisClient)
 	}
 
-	users := service.NewUserService(userRepo, hasher)
+	users := service.NewUserService(userRepo, hasher, cfg.Auth.Password.Enabled)
 	auth := service.NewAuthService(userRepo, sessionRepo, hasher, limiter, cfg.Auth)
 	invitations := service.NewInvitationService(invitationRepo, wsRepo, userRepo, hasher, cfg.Auth)
 	memberships := service.NewMembershipService(membershipRepo, userRepo)

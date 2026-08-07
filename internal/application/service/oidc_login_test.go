@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -67,6 +68,8 @@ type fakeAuthTx struct {
 	usersByEmail  map[string]*model.User
 	identities    []*model.ExternalIdentity
 	sessions      []*model.Session
+	memberships   []*model.Membership
+	invitations   map[string]*model.Invitation // tokenHash → invitation
 	bootstrapLock bool
 	bootstrapCnt  int // 记录 AcquireBootstrapLock 调用次数
 	failOn        string
@@ -76,6 +79,7 @@ func newFakeAuthTx() *fakeAuthTx {
 	return &fakeAuthTx{
 		users:        map[uuid.UUID]*model.User{},
 		usersByEmail: map[string]*model.User{},
+		invitations:  map[string]*model.Invitation{},
 	}
 }
 
@@ -152,15 +156,26 @@ func (f *fakeAuthTx) FindActiveSession(ctx context.Context, sessionID uuid.UUID)
 }
 
 func (f *fakeAuthTx) FindPendingInvitationForUpdate(ctx context.Context, tokenHash string) (*model.Invitation, error) {
+	if inv, ok := f.invitations[tokenHash]; ok {
+		return inv, nil
+	}
 	return nil, domainerrors.ErrNotFound
 }
 
 func (f *fakeAuthTx) CreateMembership(ctx context.Context, membership *model.Membership) error {
+	f.memberships = append(f.memberships, membership)
 	return nil
 }
 
 func (f *fakeAuthTx) MarkInvitationAccepted(ctx context.Context, invitationID, userID uuid.UUID) error {
-	return nil
+	for _, inv := range f.invitations {
+		if inv.ID == invitationID {
+			inv.AcceptedAt = ptrTimeNow()
+			inv.AcceptedUserID = userID
+			return nil
+		}
+	}
+	return domainerrors.ErrConflict
 }
 
 // fakeIdentityReader 实现 ExternalIdentityReader。
@@ -176,6 +191,11 @@ func (r *fakeIdentityReader) ListByUserID(ctx context.Context, userID uuid.UUID)
 		}
 	}
 	return out, nil
+}
+
+func ptrTimeNow() *time.Time {
+	now := time.Now()
+	return &now
 }
 
 func newTestOIDCLoginService(t *testing.T, issuer string, requireVerified bool) (*OIDCLoginService, *fakeOIDCProvider, *fakeStateStore, *fakeAuthTx, *fakeIdentityReader) {
@@ -451,6 +471,113 @@ func TestListIdentities(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].UserID != uid {
 		t.Fatalf("should return only identities for uid, got %+v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// InvitationService.AcceptOIDC（复用 fakeAuthTx）
+// ---------------------------------------------------------------------------
+
+func newTestInvitationServiceForOIDC(t *testing.T, passwordEnabled bool) (*InvitationService, *fakeAuthTx) {
+	t.Helper()
+	invRepo := newFakeInvitationRepository()
+	wsRepo := newFakeWorkspaceRepository()
+	userRepo := newFakeUserRepository()
+	hasher := &fakePasswordHasher{}
+	cfg := testAuthConfig()
+	cfg.Password.Enabled = passwordEnabled
+	cfg.OIDC.Issuer = "https://sso.example.com"
+	svc := NewInvitationService(invRepo, wsRepo, userRepo, hasher, cfg)
+	tx := newFakeAuthTx()
+	svc.WithOIDCAuthTx(tx)
+	return svc, tx
+}
+
+func seedPendingInvitationInTx(tx *fakeAuthTx, email string, role value.WorkspaceRole) string {
+	inv := &model.Invitation{
+		ID:           uuid.New(),
+		WorkspaceID:  uuid.New(),
+		InvitedEmail: strings.ToLower(strings.TrimSpace(email)),
+		Role:         role,
+	}
+	tokenHash := sha256HexString("invite-token-" + email)
+	tx.invitations[tokenHash] = inv
+	return tokenHash
+}
+
+func TestAcceptOIDCEmailMismatchRejects(t *testing.T) {
+	svc, tx := newTestInvitationServiceForOIDC(t, false)
+	tokenHash := seedPendingInvitationInTx(tx, "invited@example.com", value.RoleMember)
+	ctx := context.Background()
+
+	_, err := svc.AcceptOIDC(ctx, tokenHash, validProfile("sub-1", "other@example.com", true), "ua", "1.2.3.4")
+	if !errors.Is(err, domainerrors.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden for email mismatch, got %v", err)
+	}
+}
+
+func TestAcceptOIDCInvalidTokenHashRejects(t *testing.T) {
+	svc, _ := newTestInvitationServiceForOIDC(t, false)
+	ctx := context.Background()
+	_, err := svc.AcceptOIDC(ctx, "not-a-hash", validProfile("sub-1", "a@b.com", true), "ua", "1.2.3.4")
+	if !errors.Is(err, domainerrors.ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized for invalid hash, got %v", err)
+	}
+}
+
+func TestAcceptOIDCSuccessCreatesUserMembershipSession(t *testing.T) {
+	svc, tx := newTestInvitationServiceForOIDC(t, false)
+	tokenHash := seedPendingInvitationInTx(tx, "invited@example.com", value.RoleMember)
+	ctx := context.Background()
+
+	session, err := svc.AcceptOIDC(ctx, tokenHash, validProfile("sub-1", "invited@example.com", true), "ua", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("AcceptOIDC error: %v", err)
+	}
+	if session == nil {
+		t.Fatal("session should be created")
+	}
+	if len(tx.users) != 1 {
+		t.Fatalf("should create 1 user, got %d", len(tx.users))
+	}
+	if len(tx.memberships) != 1 {
+		t.Fatalf("should create 1 membership, got %d", len(tx.memberships))
+	}
+	if len(tx.identities) != 1 {
+		t.Fatalf("should create 1 identity, got %d", len(tx.identities))
+	}
+	// invitation 应标记已接受。
+	for _, inv := range tx.invitations {
+		if inv.AcceptedAt == nil {
+			t.Fatal("invitation should be marked accepted")
+		}
+	}
+}
+
+func TestAcceptOIDCInvitationNotFoundRejects(t *testing.T) {
+	svc, _ := newTestInvitationServiceForOIDC(t, false)
+	ctx := context.Background()
+	// 合法格式但不存在。
+	tokenHash := sha256HexString("nonexistent-token")
+	_, err := svc.AcceptOIDC(ctx, tokenHash, validProfile("sub-1", "invited@example.com", true), "ua", "1.2.3.4")
+	if !errors.Is(err, domainerrors.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestAcceptPasswordDisabledRejects(t *testing.T) {
+	// password.enabled=false 时，password Accept 路径应拒绝。
+	invRepo := newFakeInvitationRepository()
+	wsRepo := newFakeWorkspaceRepository()
+	userRepo := newFakeUserRepository()
+	hasher := &fakePasswordHasher{}
+	cfg := testAuthConfig()
+	cfg.Password.Enabled = false
+	svc := NewInvitationService(invRepo, wsRepo, userRepo, hasher, cfg)
+
+	_, err := svc.Accept(context.Background(), "any-token", "a@b.com", "nick", "pw", "ua", "1.2.3.4")
+	if !errors.Is(err, domainerrors.ErrPasswordRegistrationDisabled) {
+		t.Fatalf("expected ErrPasswordRegistrationDisabled, got %v", err)
 	}
 }
 

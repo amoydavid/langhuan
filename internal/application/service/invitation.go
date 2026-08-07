@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -55,13 +56,16 @@ type CreateInvitationInput struct {
 // 数据库仅存 SHA-256 hex hash 与 8 字符前缀；明文 token 仅出现在创建响应与接受请求中，
 // 绝不入库/入日志/进入公开 DTO。
 type InvitationService struct {
-	invRepo     InvitationRepository
-	wsRepo      WorkspaceRepository
-	userRepo    UserRepository
-	hasher      authport.PasswordHasher
-	inviteLife  time.Duration
-	sessionLife time.Duration
-	now         func() time.Time
+	invRepo         InvitationRepository
+	wsRepo          WorkspaceRepository
+	userRepo        UserRepository
+	hasher          authport.PasswordHasher
+	inviteLife      time.Duration
+	sessionLife     time.Duration
+	now             func() time.Time
+	passwordEnabled bool
+	authTx          OIDCAuthTxRunner // OIDC 邀请接受路径；password 模式可为 nil
+	oidcIssuer      string           // AcceptOIDC 使用
 }
 
 // NewInvitationService 构造 InvitationService，注入邀请与会话寿命。
@@ -73,14 +77,23 @@ func NewInvitationService(
 	cfg config.AuthConfig,
 ) *InvitationService {
 	return &InvitationService{
-		invRepo:     invRepo,
-		wsRepo:      wsRepo,
-		userRepo:    userRepo,
-		hasher:      hasher,
-		inviteLife:  time.Duration(cfg.Invitation.LifetimeSeconds) * time.Second,
-		sessionLife: time.Duration(cfg.Session.LifetimeSeconds) * time.Second,
-		now:         time.Now,
+		invRepo:         invRepo,
+		wsRepo:          wsRepo,
+		userRepo:        userRepo,
+		hasher:          hasher,
+		inviteLife:      time.Duration(cfg.Invitation.LifetimeSeconds) * time.Second,
+		sessionLife:     time.Duration(cfg.Session.LifetimeSeconds) * time.Second,
+		now:             time.Now,
+		passwordEnabled: cfg.Password.Enabled,
+		oidcIssuer:      strings.TrimSpace(cfg.OIDC.Issuer),
 	}
+}
+
+// WithOIDCAuthTx 注入 OIDC 事务 runner，使 AcceptOIDC 可用。
+// 仅在 oidc.enabled=true 时由装配层调用。
+func (s *InvitationService) WithOIDCAuthTx(tx OIDCAuthTxRunner) *InvitationService {
+	s.authTx = tx
+	return s
 }
 
 // List 返回 workspace 的邀请管理视图。仅 admin+ 可调用；pending 邀请优先，
@@ -215,6 +228,10 @@ func (s *InvitationService) GetPublic(ctx context.Context, plaintextToken string
 // 并标记邀请已接受。邮箱不匹配返回 ErrForbidden（防止 A 的邀请被 B 顶用）。
 // 已被接受/撤销的邀请返回 ErrConflict（不可复用）。
 func (s *InvitationService) Accept(ctx context.Context, plaintextToken, email, nickname, password, userAgent, ipAddr string) (*model.Session, error) {
+	// password.enabled=false 时关闭 password 邀请接受，改走 OIDC AcceptOIDC。
+	if !s.passwordEnabled {
+		return nil, domainerrors.ErrPasswordRegistrationDisabled
+	}
 	tokenHash := hashInvitationToken(strings.TrimSpace(plaintextToken))
 	invitation, err := s.invRepo.FindPendingByTokenHash(ctx, tokenHash)
 	if err != nil {
@@ -257,6 +274,128 @@ func (s *InvitationService) Accept(ctx context.Context, plaintextToken, email, n
 		return nil, err
 	}
 	return session, nil
+}
+
+// AcceptOIDC 在 OIDC 回调中接受邀请（spec §6.4）。
+// 凭据是 profile.Email（已由 provider.Exchange 验签）与 IdP 签名。
+// invitationTokenHash 为邀请 token 的 sha256 hex；profile 来自 IdP 回调。
+//
+// 流程：
+//  1. 校验 token hash 格式与 profile（sub/email/email_verified 策略）。
+//  2. FindPendingByTokenHash 快速失败（不作为并发安全依据）。
+//  3. email 匹配 invitation.InvitedEmail。
+//  4. 事务内 FOR UPDATE 重读 invitation，按 issuer+sub/email 决定复用/合并/JIT 建 user，
+//     建 membership，标记 accepted，建 session。
+func (s *InvitationService) AcceptOIDC(ctx context.Context, invitationTokenHash string, profile *authport.OIDCProfile, userAgent, ipAddr string) (*model.Session, error) {
+	if s.authTx == nil {
+		return nil, fmt.Errorf("%w: OIDC 邀请接受未配置事务 runner", domainerrors.ErrValidation)
+	}
+	if err := validateInvitationTokenHash(invitationTokenHash); err != nil {
+		return nil, err
+	}
+	if err := validateOIDCProfile(profile, true); err != nil {
+		return nil, err
+	}
+
+	normalizedEmail := normalizeEmailLocal(profile.Email)
+
+	var session *model.Session
+	err := s.authTx.WithinOIDCAuth(ctx, func(tx OIDCAuthTx) error {
+		invitation, err := tx.FindPendingInvitationForUpdate(ctx, invitationTokenHash)
+		if err != nil {
+			return err
+		}
+		if normalizedEmail != invitation.InvitedEmail {
+			return domainerrors.ErrForbidden
+		}
+
+		// 决定 user：identity 命中复用 / email 命中合并 / 均未命中 JIT 建号。
+		var user *model.User
+		identity, idErr := tx.FindIdentityByIssuerSubject(ctx, s.oidcIssuer, profile.Subject)
+		if idErr != nil && !errors.Is(idErr, domainerrors.ErrNotFound) {
+			return idErr
+		}
+		if identity != nil {
+			user, err = tx.FindUserByID(ctx, identity.UserID)
+			if err != nil {
+				return err
+			}
+		} else {
+			emailUser, feErr := tx.FindUserByEmail(ctx, normalizedEmail)
+			if feErr != nil && !errors.Is(feErr, domainerrors.ErrNotFound) {
+				return feErr
+			}
+			user = emailUser
+			if user == nil {
+				// JIT 建号：持 bootstrap lock，count==0 授 platform_admin。
+				if err := tx.AcquireBootstrapLock(ctx); err != nil {
+					return err
+				}
+				count, err := tx.CountUsers(ctx)
+				if err != nil {
+					return err
+				}
+				user, err = model.NewProvisionalUser(normalizedEmail, deriveNickname(profile))
+				if err != nil {
+					return err
+				}
+				user.IsPlatformAdmin = count == 0
+				if err := tx.CreateUser(ctx, user); err != nil {
+					return err
+				}
+			}
+			newIdentity, err := model.NewExternalIdentity(user.ID, s.oidcIssuer, profile.Subject, normalizedEmail, profile.EmailVerified, profile.RawProfile)
+			if err != nil {
+				return err
+			}
+			if err := tx.CreateIdentity(ctx, newIdentity); err != nil {
+				return err
+			}
+		}
+
+		// 建 membership（role 取自 invitation）。
+		membership, err := model.NewMembership(invitation.WorkspaceID, user.ID, invitation.Role)
+		if err != nil {
+			return err
+		}
+		if err := tx.CreateMembership(ctx, membership); err != nil {
+			return err
+		}
+
+		// 标记 invitation accepted（WHERE accepted_at IS NULL 防并发重放）。
+		if err := tx.MarkInvitationAccepted(ctx, invitation.ID, user.ID); err != nil {
+			return err
+		}
+
+		sess, err := model.NewSession(user.ID, s.sessionLife, userAgent, ipAddr)
+		if err != nil {
+			return err
+		}
+		if err := tx.CreateSession(ctx, sess); err != nil {
+			return err
+		}
+		_ = tx.TouchLastLogin(ctx, user.ID)
+		session = sess
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// validateInvitationTokenHash 校验 token hash 为 64 位小写 SHA-256 hex。
+func validateInvitationTokenHash(tokenHash string) error {
+	tokenHash = strings.TrimSpace(tokenHash)
+	if len(tokenHash) != 64 {
+		return fmt.Errorf("%w: invitation token hash 格式非法", domainerrors.ErrUnauthorized)
+	}
+	for _, r := range tokenHash {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return fmt.Errorf("%w: invitation token hash 含非法字符", domainerrors.ErrUnauthorized)
+		}
+	}
+	return nil
 }
 
 // Revoke 撤销邀请。授权规则：

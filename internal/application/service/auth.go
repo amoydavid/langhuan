@@ -27,13 +27,14 @@ var invalidLoginError = fmt.Errorf("%w: %s", domainerrors.ErrUnauthorized, inval
 // 它依赖 ports/auth 的 PasswordHasher 与 RateLimiter 抽象，绝不直接依赖
 // argon2 或 Redis SDK；仓储通过服务层本地接口注入。
 type AuthService struct {
-	userRepo    UserRepository
-	sessionRepo SessionRepository
-	hasher      authport.PasswordHasher
-	limiter     authport.RateLimiter
-	sessionLife time.Duration
-	maxAttempts int
-	loginWindow time.Duration
+	userRepo        UserRepository
+	sessionRepo     SessionRepository
+	hasher          authport.PasswordHasher
+	limiter         authport.RateLimiter
+	sessionLife     time.Duration
+	maxAttempts     int
+	loginWindow     time.Duration
+	passwordEnabled bool
 }
 
 // NewAuthService 构造 AuthService，从 config 提取会话寿命与限流参数。
@@ -45,13 +46,14 @@ func NewAuthService(
 	cfg config.AuthConfig,
 ) *AuthService {
 	return &AuthService{
-		userRepo:    userRepo,
-		sessionRepo: sessionRepo,
-		hasher:      hasher,
-		limiter:     limiter,
-		sessionLife: time.Duration(cfg.Session.LifetimeSeconds) * time.Second,
-		maxAttempts: cfg.RateLimit.LoginMaxAttempts,
-		loginWindow: time.Duration(cfg.RateLimit.LoginWindowSeconds) * time.Second,
+		userRepo:        userRepo,
+		sessionRepo:     sessionRepo,
+		hasher:          hasher,
+		limiter:         limiter,
+		sessionLife:     time.Duration(cfg.Session.LifetimeSeconds) * time.Second,
+		maxAttempts:     cfg.RateLimit.LoginMaxAttempts,
+		loginWindow:     time.Duration(cfg.RateLimit.LoginWindowSeconds) * time.Second,
+		passwordEnabled: cfg.Password.Enabled,
 	}
 }
 
@@ -66,6 +68,11 @@ func NewAuthService(
 //
 // 未知用户与错误密码返回完全相同的错误（同哨兵、同消息），不可枚举区分。
 func (s *AuthService) Login(ctx context.Context, email, password, userAgent, ipAddr string) (*model.Session, error) {
+	// password.enabled=false 时直接拒绝密码登录（OIDC-first 形态）。
+	if !s.passwordEnabled {
+		return nil, domainerrors.ErrPasswordLoginDisabled
+	}
+
 	normalizedEmail := strings.ToLower(strings.TrimSpace(email))
 
 	// 2. 限流优先：被阻断时不查询用户。
@@ -89,7 +96,12 @@ func (s *AuthService) Login(ctx context.Context, email, password, userAgent, ipA
 		return nil, fmt.Errorf("查找用户失败: %w", err)
 	}
 
-	// 4. 校验密码。
+	// 4. 校验密码。无密码账号（OIDC JIT 建号）执行 dummy 校验后返回统一失败，
+	// 与未知用户行为一致，防枚举。
+	if !user.HasPassword() {
+		_ = s.hasher.VerifyDummy(password)
+		return nil, invalidLoginError
+	}
 	ok, err := s.hasher.Verify(user.PasswordHash, password)
 	if err != nil {
 		return nil, fmt.Errorf("密码校验失败: %w", err)
