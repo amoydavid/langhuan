@@ -569,6 +569,8 @@ func validAuthConfig() config.AuthConfig {
 			Argon2MemoryKiB:   65536,
 			Argon2Iterations:  3,
 			Argon2Parallelism: 2,
+			// 默认 true（与 config.defaultAuthConfig 一致）：e2e 依赖 password 首注册引导。
+			Enabled: true,
 		},
 		RateLimit: config.RateLimitConfig{
 			LoginMaxAttempts:   5,

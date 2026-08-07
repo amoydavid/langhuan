@@ -44,7 +44,7 @@ func TestV021AuthFlow(t *testing.T) {
 	hasher := authadapter.NewArgon2Hasher(128, 1, 1)
 	authCfg := config.AuthConfig{
 		Session:    config.SessionConfig{CookieName: "langhuan_session", LifetimeSeconds: 3600},
-		Password:   config.PasswordConfig{Argon2MemoryKiB: 128, Argon2Iterations: 1, Argon2Parallelism: 1},
+		Password:   config.PasswordConfig{Argon2MemoryKiB: 128, Argon2Iterations: 1, Argon2Parallelism: 1, Enabled: true},
 		RateLimit:  config.RateLimitConfig{LoginMaxAttempts: 5, LoginWindowSeconds: 900},
 		Invitation: config.InvitationConfig{LifetimeSeconds: 3600},
 	}
