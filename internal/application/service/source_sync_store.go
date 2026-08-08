@@ -37,6 +37,11 @@ type SourceSyncTx interface {
 	GetFileTreeNodeForUpdate(ctx context.Context, id uuid.UUID) (*model.FileTreeNode, error)
 	// CreateFileTreeNode 写入一个 folder 节点（同步目录树）。
 	CreateFileTreeNode(ctx context.Context, node *model.FileTreeNode) error
+	// ListFileTreeNodes 返回该 KB 下所有 file tree 节点（含 folder/file/root），
+	// 供完整 snapshot 的 folder 删除检测使用。
+	ListFileTreeNodes(ctx context.Context, kbID uuid.UUID) ([]*model.FileTreeNode, error)
+	// DeleteFileTreeNode 删除一个 folder 节点（仅用于完整 snapshot 删除空的失踪 folder）。
+	DeleteFileTreeNode(ctx context.Context, id uuid.UUID) error
 	// CreateSyncedDocumentNodeRevisionAndJob 原子写入一份同步文档：
 	// document row + fileTreeNode row + documentRevision row + job row。
 	CreateSyncedDocumentNodeRevisionAndJob(

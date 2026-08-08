@@ -33,6 +33,10 @@ type LocalDocView struct {
 	Status value.DocumentStatus
 	// ActiveRevisionID 是已发布的活跃 revision；可为空。
 	ActiveRevisionID *uuid.UUID
+	// LatestRevisionID 是该文档最新 source（reason=crawl）revision 的 id。
+	// 即使该 revision 仍 pending/failed，它也是重试路径（spec 6.3）要复用的 revision。
+	// 可为空表示还没有任何 crawl revision。
+	LatestRevisionID *uuid.UUID
 	// RevisionNo 是当前最新 source revision 的序号。
 	RevisionNo int64
 	// RetryRequired 表示文档需要重试：处于 failed、最新 source revision 未成功完成、

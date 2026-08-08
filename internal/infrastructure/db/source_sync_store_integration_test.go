@@ -358,6 +358,75 @@ func TestSourceSyncTxSoftDeleteDocument(t *testing.T) {
 	}
 }
 
+// TestSourceSyncTxListAndDeleteFileTreeNode 验证 ListFileTreeNodes 返回该 KB 的节点，
+// 且 DeleteFileTreeNode 能按 external_id 清理单个 folder（来源同步删除闸门用）。
+func TestSourceSyncTxListAndDeleteFileTreeNode(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	// 插入一个带 external_id 的 folder 节点（父 = root）。
+	rootID := seed.rootID
+	folder, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID,
+		ParentID: &rootID, NodeType: value.FileTreeNodeFolder,
+		Name: "同步目录", ExternalID: "folderExt1",
+	})
+	if err != nil {
+		t.Fatalf("new folder node: %v", err)
+	}
+	if err := store.WithinWorkspace(
+		ctx, seed.workspaceID,
+		func(txCtx context.Context, tx appservice.SourceSyncTx) error {
+			return tx.CreateFileTreeNode(txCtx, folder)
+		},
+	); err != nil {
+		t.Fatalf("CreateFileTreeNode: %v", err)
+	}
+
+	// ListFileTreeNodes 应包含 root + folder。
+	var listed []*model.FileTreeNode
+	if err := store.WithinWorkspace(
+		ctx, seed.workspaceID,
+		func(txCtx context.Context, tx appservice.SourceSyncTx) error {
+			var err error
+			listed, err = tx.ListFileTreeNodes(txCtx, seed.kbID)
+			return err
+		},
+	); err != nil {
+		t.Fatalf("ListFileTreeNodes: %v", err)
+	}
+	foundFolder := false
+	for _, n := range listed {
+		if n.ID == folder.ID {
+			foundFolder = true
+		}
+	}
+	if !foundFolder {
+		t.Fatalf("ListFileTreeNodes 未返回插入的 folder; got %d nodes", len(listed))
+	}
+
+	// DeleteFileTreeNode 应删除该 folder。
+	if err := store.WithinWorkspace(
+		ctx, seed.workspaceID,
+		func(txCtx context.Context, tx appservice.SourceSyncTx) error {
+			return tx.DeleteFileTreeNode(txCtx, folder.ID)
+		},
+	); err != nil {
+		t.Fatalf("DeleteFileTreeNode: %v", err)
+	}
+
+	var count int64
+	if err := database.WithContext(ctx).Model(&FileTreeNodeRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, folder.ID).
+		Count(&count).Error; err != nil {
+		t.Fatalf("count folder after delete: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("DeleteFileTreeNode 后 folder 仍存在; count=%d", count)
+	}
+}
+
 // TestSourceSyncStoreUpdateSyncCursor 验证 source_config.sync_cursor 正确更新。
 func TestSourceSyncStoreUpdateSyncCursor(t *testing.T) {
 	ctx, database := newAuthTestDB(t)

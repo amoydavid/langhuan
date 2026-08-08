@@ -189,6 +189,33 @@ func (tx *sourceSyncTx) CreateFileTreeNode(ctx context.Context, node *model.File
 	return nil
 }
 
+// ListFileTreeNodes 返回该 KB 下所有 file tree 节点（含 folder/file/root），
+// 供完整 snapshot 的 folder 删除检测使用。
+func (tx *sourceSyncTx) ListFileTreeNodes(ctx context.Context, kbID uuid.UUID) ([]*model.FileTreeNode, error) {
+	var rows []FileTreeNodeRow
+	if err := tx.db.WithContext(ctx).
+		Where("workspace_id = ? AND knowledge_base_id = ?", tx.workspaceID, kbID).
+		Find(&rows).Error; err != nil {
+		return nil, translateDBError(err, "读取 KB 文件树节点失败")
+	}
+	nodes := make([]*model.FileTreeNode, 0, len(rows))
+	for i := range rows {
+		nodes = append(nodes, fileTreeNodeFromRow(&rows[i]))
+	}
+	return nodes, nil
+}
+
+// DeleteFileTreeNode 删除一个 file tree 节点（仅用于完整 snapshot 删除空的失踪 folder）。
+func (tx *sourceSyncTx) DeleteFileTreeNode(ctx context.Context, id uuid.UUID) error {
+	result := tx.db.WithContext(ctx).
+		Where("workspace_id = ? AND id = ?", tx.workspaceID, id).
+		Delete(&FileTreeNodeRow{})
+	if result.Error != nil {
+		return translateDBError(result.Error, "删除同步 folder 节点失败")
+	}
+	return nil
+}
+
 // CreateSyncedDocumentNodeRevisionAndJob 在单事务内原子写入
 // document + fileTreeNode + documentRevision + job 四条记录。
 func (tx *sourceSyncTx) CreateSyncedDocumentNodeRevisionAndJob(
@@ -362,6 +389,7 @@ WHERE workspace_id = ?
 			ContentHash:      dereferenceString(r.ContentHash),
 			Status:           value.DocumentStatus(r.Status),
 			ActiveRevisionID: r.ActiveRevisionID,
+			LatestRevisionID: r.RevisionID,
 			DeletedAt:        r.DeletedAt,
 		}
 		if r.RevisionID != nil {
