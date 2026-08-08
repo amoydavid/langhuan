@@ -116,9 +116,9 @@ func schemaCustomizer(name string, t reflect.Type, tag reflect.StructTag, schema
 	case reflect.TypeFor[value.WorkspaceRole]():
 		applyStringEnum(schema, value.RoleMember, value.RoleAdmin, value.RoleOwner)
 	case reflect.TypeFor[value.APIScope]():
-		applyStringEnum(schema,
-			value.ScopeKnowledgeBasesRead, value.ScopeKnowledgeBasesWrite, value.ScopeDocumentsRead,
-			value.ScopeDocumentsWrite, value.ScopeSearchRead)
+		// 刻意派生自 AllAPIScopes() 而非手写字面量：scope 是前后端共享的稳定小集合，
+		// 集中到单一权威源可避免「常量已改、文档 enum 未跟」的漂移（scope_contract_test 会锁死）。
+		applyAPIScopeEnum(schema, value.AllAPIScopes())
 	case reflect.TypeFor[value.ChunkRole]():
 		applyStringEnum(schema, value.ChunkRoleParent, value.ChunkRoleChild, value.ChunkRoleFlat)
 	case reflect.TypeFor[value.ChunkingStrategy]():
@@ -184,6 +184,16 @@ func applyStringEnum(schema *openapi3.Schema, vals ...any) {
 		enum[i] = v
 	}
 	schema.Enum = enum
+}
+
+// applyAPIScopeEnum 把 AllAPIScopes() 的结果转成 enum。单独成函数是因为
+// []APIScope 无法直接展开成 applyStringEnum 的 ...any，需要逐元素转换。
+func applyAPIScopeEnum(schema *openapi3.Schema, scopes []value.APIScope) {
+	enum := make([]any, len(scopes))
+	for i, s := range scopes {
+		enum[i] = s
+	}
+	applyStringEnum(schema, enum...)
 }
 
 // schemaRef 反射一个 Go 类型得到 *openapi3.SchemaRef，并补 required 数组。
