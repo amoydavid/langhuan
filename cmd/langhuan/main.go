@@ -142,6 +142,8 @@ type runtimeServices struct {
 	indexGenerationBuilder  *service.IndexGenerationBuildService
 	sourceSync              *service.SourceSyncService
 	sourceSyncScheduler     *service.SourceSyncScheduler
+	sourceCleanup           *service.SourceCleanupService
+	sourceCleanupScheduler  *service.SourceCleanupScheduler
 	sourceConnections       *service.SourceConnectionService
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
@@ -358,6 +360,11 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			Store:      app.services.documentTaskStore,
 			Dispatcher: app.services.sourceSyncScheduler,
 			Logger:     log,
+		})
+		worker.RegisterSourceCleanupHandler(app.workerMux, worker.SourceCleanupHandler{
+			Runner: app.services.sourceCleanup,
+			Store:  app.services.documentTaskStore,
+			Logger: log,
 		})
 	}
 
@@ -589,6 +596,21 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Logger:                     log,
 	})
 
+	// 来源对象清理：service（幂等删除 raw/parser/asset）+ scheduler（恢复 pending 孤儿）。
+	sourceCleanupStore := db.NewSourceCleanupStore(gormDB)
+	sourceCleanup := service.NewSourceCleanupService(service.SourceCleanupServiceDeps{
+		Store:      sourceCleanupStore,
+		RawStore:   rawStore,
+		AssetStore: assetStore,
+		Logger:     log,
+	})
+	sourceCleanupScheduler := service.NewSourceCleanupScheduler(service.SourceCleanupSchedulerDeps{
+		Store:    sourceCleanupStore,
+		Queue:    jobQueue,
+		Interval: time.Duration(cfg.SourceSync.SchedulerIntervalSeconds) * time.Second,
+		Logger:   log,
+	})
+
 	return &runtimeServices{
 		userRepo:        userRepo,
 		sessionRepo:     sessionRepo,
@@ -640,6 +662,8 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		indexGenerationBuilder: indexGenerationBuilder,
 		sourceSync:             sourceSync,
 		sourceSyncScheduler:    sourceSyncScheduler,
+		sourceCleanup:          sourceCleanup,
+		sourceCleanupScheduler: sourceCleanupScheduler,
 		sourceConnections:      sourceConnectionService,
 		search:                 search,
 		multiSearch:            multiSearch,
@@ -896,6 +920,15 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 		// 来源同步 Meta Scheduler：随 worker 生命周期运行，ctx 取消即停（随 shutdown 取消）。
 		if a.services != nil && a.services.sourceSyncScheduler != nil {
 			go func() { _ = a.services.sourceSyncScheduler.Run(ctx) }()
+		}
+		// 来源对象清理 Scheduler：启动时 RequeuePending 恢复孤儿 Job，随后周期 Tick 重派。
+		if a.services != nil && a.services.sourceCleanupScheduler != nil {
+			go func() {
+				if err := a.services.sourceCleanupScheduler.RequeuePending(ctx); err != nil && ctx.Err() == nil {
+					log.Warn("source_cleanup scheduler 启动恢复失败", "error", err.Error())
+				}
+				_ = a.services.sourceCleanupScheduler.Run(ctx)
+			}()
 		}
 		readyCh <- struct{}{}
 	}

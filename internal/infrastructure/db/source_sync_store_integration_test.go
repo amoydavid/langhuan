@@ -873,12 +873,15 @@ func TestDeleteSourceDocumentKeepSoftDeletes(t *testing.T) {
 	document, rev, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档keep", "doccnDelKeep")
 	store := NewSourceSyncDBStore(database)
 
-	objects, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteKeep)
+	objects, jobs, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteKeep)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument keep: %v", err)
 	}
 	if len(objects) != 0 {
 		t.Fatalf("keep 策略应返回空清理列表，got %d", len(objects))
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("keep 策略应返回空清理 Job 列表，got %d", len(jobs))
 	}
 
 	var docRow DocumentRow
@@ -909,12 +912,15 @@ func TestDeleteSourceDocumentRemoveCollectsKeysAndCascades(t *testing.T) {
 	document, rev, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档remove", "doccnDelRemove")
 	store := NewSourceSyncDBStore(database)
 
-	objects, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	objects, jobs, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument remove: %v", err)
 	}
 	if len(objects) == 0 {
 		t.Fatal("remove 策略应收集清理对象")
+	}
+	if len(jobs) == 0 {
+		t.Fatal("remove 策略应创建至少一个 source_cleanup Job")
 	}
 	// 应包含该 revision 的 raw key。
 	wantRaw := "raw/doccnDelRemove.md"

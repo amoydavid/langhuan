@@ -44,3 +44,10 @@ func DocumentPollTaskID(workspaceID, revisionID, jobID uuid.UUID) string {
 func SourceSyncTaskID(workspaceID, kbID uuid.UUID) string {
 	return fmt.Sprintf("source_sync:%s:%s", workspaceID, kbID)
 }
+
+// SourceCleanupTaskID 返回 source_cleanup 任务的稳定 TaskID（幂等去重）。
+// 按 Job 维度幂等：同一清理 Job 同时只允许一个 source_cleanup 任务在队列中，
+// scheduler 重复派发也会被 asynq 去重。
+func SourceCleanupTaskID(workspaceID, jobID uuid.UUID) string {
+	return fmt.Sprintf("source_cleanup:%s:%s", workspaceID, jobID)
+}

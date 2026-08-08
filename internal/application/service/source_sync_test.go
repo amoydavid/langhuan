@@ -535,11 +535,11 @@ func (s *fakeSourceSyncStore) RetrySourceRevision(_ context.Context, request Ret
 	}, nil
 }
 
-func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, error) {
+func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, []*model.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.deleteErr != nil {
-		return nil, s.deleteErr
+		return nil, nil, s.deleteErr
 	}
 	s.deleteCalls = append(s.deleteCalls, deleteCall{DocumentID: documentID, Policy: policy})
 	if doc, ok := s.documents[documentID]; ok && doc.DeletedAt == nil {
@@ -547,7 +547,7 @@ func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID
 		doc.DeletedAt = &now
 		doc.Status = value.DocumentStatusDeleted
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (s *fakeSourceSyncStore) RequestSourceSync(_ context.Context, _, _, _ uuid.UUID, _ bool) (*model.Job, bool, error) {

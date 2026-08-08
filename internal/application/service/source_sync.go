@@ -865,7 +865,9 @@ func (s *SourceSyncService) retryRevision(
 // enqueueParseJob 入队 document_parse_start；失败时把刚创建的 revision/job 标记失败。
 
 // applyMissingDocuments 执行删除策略（spec 5.5）。返回删除文档数与待清理对象数。
-// 仅在 snapshot.Complete=true 时调用（删除闸门）。
+// 仅在 snapshot.Complete=true 时调用（删除闸门）。remove 策略下，DeleteSourceDocument
+// 已在事务内创建 KB 级 source_cleanup Job（pending），此处负责在事务提交后把它们入队
+// asynq；入队失败由 SourceCleanupScheduler 在下一次 Tick 周期恢复派发。
 func (s *SourceSyncService) applyMissingDocuments(
 	ctx context.Context,
 	workspaceID, kbID uuid.UUID,
@@ -879,7 +881,7 @@ func (s *SourceSyncService) applyMissingDocuments(
 	deleted := 0
 	cleanupPending := 0
 	for _, view := range toRemove {
-		objects, delErr := s.store.DeleteSourceDocument(ctx, view.DocumentID, policy)
+		objects, cleanupJobs, delErr := s.store.DeleteSourceDocument(ctx, view.DocumentID, policy)
 		if delErr != nil {
 			s.logger.Error("删除同步文档失败",
 				"workspace_id", workspaceID.String(),
@@ -897,8 +899,50 @@ func (s *SourceSyncService) applyMissingDocuments(
 			"external_id", view.ExternalID,
 			"policy", policy.String(),
 		)
+		// remove 策略下，把事务内创建的清理 Job 入队（提交后入队）。
+		for _, job := range cleanupJobs {
+			if err := s.enqueueCleanupJob(ctx, workspaceID, kbID, job.ID); err != nil {
+				// 入队失败：Job 已 pending 落库，scheduler 会在下一次 Tick 恢复派发；只记日志。
+				s.logger.Warn("入队 source_cleanup 任务失败，等待 scheduler 恢复",
+					"workspace_id", workspaceID.String(),
+					"knowledge_base_id", kbID.String(),
+					"job_id", job.ID.String(),
+					"error", err.Error(),
+				)
+			}
+		}
 	}
 	return deleted, cleanupPending
+}
+
+// enqueueCleanupJob 把一个 KB 级 source_cleanup Job 入队 asynq。
+// payload 携带 lineage（workspace/kb/job），object keys 由 worker 从 DB 读取（避免 payload 膨胀）。
+// 按 job_id 幂等去重（queue.SourceCleanupTaskID）。
+func (s *SourceSyncService) enqueueCleanupJob(ctx context.Context, workspaceID, kbID, jobID uuid.UUID) error {
+	if s.queue == nil {
+		return fmt.Errorf("%w: cleanup 队列未配置", domainerrors.ErrValidation)
+	}
+	payload, err := json.Marshal(sourceCleanupTaskPayload{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID, JobID: jobID,
+	})
+	if err != nil {
+		return fmt.Errorf("编码 source_cleanup payload 失败: %w", err)
+	}
+	if _, err := s.queue.Enqueue(ctx, queue.JobRequest{
+		Type: model.SourceCleanupJobType, Payload: payload,
+		TaskID: queue.SourceCleanupTaskID(workspaceID, jobID),
+	}); err != nil {
+		return fmt.Errorf("入队 source_cleanup 任务失败: %w", err)
+	}
+	return nil
+}
+
+// sourceCleanupTaskPayload 是 source_cleanup 任务的队列载荷（worker 与 scheduler 共用）。
+// object keys 不放入 payload：worker 通过 job_id 从 DB 的 Job.Payload 读取，避免队列消息膨胀。
+type sourceCleanupTaskPayload struct {
+	WorkspaceID     uuid.UUID `json:"workspace_id"`
+	KnowledgeBaseID uuid.UUID `json:"knowledge_base_id"`
+	JobID           uuid.UUID `json:"job_id"`
 }
 
 // enqueueParseJob 入队 document_parse_start；失败时把刚创建的 revision/job 标记失败。

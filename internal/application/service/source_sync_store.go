@@ -148,8 +148,9 @@ type SourceSyncStore interface {
 	// 创建/重置幂等的 parse Job。
 	RetrySourceRevision(ctx context.Context, request RetryDocumentRequest) (*SyncWriteResult, error)
 	// DeleteSourceDocument 按策略删除文档：keep 仅软删；remove 先收集 raw/parser/asset key、
-	// 建立 KB 级清理 Job、再删除 Document（外键级联）。返回收集到的清理对象供调用方入队。
-	DeleteSourceDocument(ctx context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, error)
+	// 建立 KB 级清理 Job（按 SourceCleanupObjectBatchSize 拆批，每批一个 Job）、再删除 Document（外键级联）。
+	// 返回所有收集到的清理对象 + 在事务内创建的清理 Job（pending 状态），供调用方在提交后入队。
+	DeleteSourceDocument(ctx context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, []*model.Job, error)
 	// RequestSourceSync 在 KB 锁定事务内：latch = old OR requestedForce；
 	// 存在 pending/running 的 source_sync Job 则复用（created=false），否则新建（created=true）。
 	RequestSourceSync(ctx context.Context, workspaceID, kbID, connectionID uuid.UUID, requestedForce bool) (job *model.Job, created bool, err error)

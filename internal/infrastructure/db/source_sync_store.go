@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -735,21 +736,24 @@ func (s *SourceSyncDBStore) RetrySourceRevision(
 
 // DeleteSourceDocument 按策略删除文档（spec 9.2）。
 //   - keep：软删（status=deleted, deleted_at=now），保留原始对象。
-//   - remove：先收集 raw/parser/asset key，建立 KB 级 source_cleanup Job（payload 携带 key 列表），
+//   - remove：先收集 raw/parser/asset key，按 service.SourceCleanupObjectBatchSize 拆批
+//     建立 KB 级 source_cleanup Job（每批 payload 携带该批 key 列表），
 //     再硬删 Document（FK 级联清理 revisions/assets/file_tree/jobs）。
 //
-// 返回收集到的清理对象供调用方在事务提交后入队。keep 策略返回空切片。
+// 返回所有收集到的清理对象 + 在事务内创建的清理 Job（pending），供调用方在提交后入队。
+// keep 策略返回空对象切片与空 Job 切片。
 func (s *SourceSyncDBStore) DeleteSourceDocument(
 	ctx context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy,
-) ([]service.CleanupObject, error) {
+) ([]service.CleanupObject, []*model.Job, error) {
 	if documentID == uuid.Nil {
-		return nil, fmt.Errorf("%w: DeleteSourceDocument document 不能为空", domainerrors.ErrValidation)
+		return nil, nil, fmt.Errorf("%w: DeleteSourceDocument document 不能为空", domainerrors.ErrValidation)
 	}
 	if !policy.IsValid() {
-		return nil, fmt.Errorf("%w: DeleteSourceDocument policy 非法", domainerrors.ErrValidation)
+		return nil, nil, fmt.Errorf("%w: DeleteSourceDocument policy 非法", domainerrors.ErrValidation)
 	}
 
 	var collected []service.CleanupObject
+	var createdJobs []*model.Job
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 读取 Document 以获取 workspace/kb lineage 与 connection。
 		var docRow DocumentRow
@@ -786,21 +790,13 @@ func (s *SourceSyncDBStore) DeleteSourceDocument(
 		}
 		collected = objects
 
-		// 建立 KB 级 source_cleanup Job，payload 携带 key 列表（无 document FK）。
-		// Task 8 负责按批次拆分；这里先建单个 Job 携带全部 key。
-		payload := map[string]any{
-			"objects": cleanupObjectsToPayload(objects),
-		}
-		job, err := model.NewJob(model.NewJobInput{
-			WorkspaceID: docRow.WorkspaceID, KnowledgeBaseID: docRow.KnowledgeBaseID,
-			Type: model.SourceCleanupJobType, Status: value.JobStatusPending, Payload: payload,
-		})
+		// 按 service.SourceCleanupObjectBatchSize 拆批建立 KB 级 source_cleanup Job，
+		// 每个 Job 的 payload 只携带一个批次的对象 key（无 document FK）。
+		jobs, err := createSourceCleanupJobs(wctx, docRow.WorkspaceID, docRow.KnowledgeBaseID, objects)
 		if err != nil {
 			return err
 		}
-		if err := wctx.Create(jobV2ToRow(job)).Error; err != nil {
-			return translateDBError(err, "创建 source_cleanup Job 失败")
-		}
+		createdJobs = jobs
 
 		// 硬删 Document（FK 级联清理 revisions/assets/file_tree/parse jobs）。
 		result := wctx.Where("workspace_id = ? AND id = ?", docRow.WorkspaceID, documentID).
@@ -814,9 +810,50 @@ func (s *SourceSyncDBStore) DeleteSourceDocument(
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return collected, nil
+	return collected, createdJobs, nil
+}
+
+// createSourceCleanupJobs 按稳定 key 顺序拆批创建 KB 级 source_cleanup Job。
+// 空对象列表返回空切片（不创建任何 Job）。每个 Job 的 payload 形如
+// {"objects": [{"key": "...", "store": "raw|parser|asset"}, ...]}，仅含该批 key。
+func createSourceCleanupJobs(tx *gorm.DB, workspaceID, kbID uuid.UUID, objects []service.CleanupObject) ([]*model.Job, error) {
+	if len(objects) == 0 {
+		return nil, nil
+	}
+	// 按 key 稳定排序，保证批次切分可复现（避免随机顺序导致重复 Job）。
+	sorted := make([]service.CleanupObject, len(objects))
+	copy(sorted, objects)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
+
+	batchSize := service.SourceCleanupObjectBatchSize
+	if batchSize <= 0 {
+		batchSize = len(sorted)
+	}
+	jobs := make([]*model.Job, 0, (len(sorted)+batchSize-1)/batchSize)
+	for start := 0; start < len(sorted); start += batchSize {
+		end := start + batchSize
+		if end > len(sorted) {
+			end = len(sorted)
+		}
+		batch := sorted[start:end]
+		payload := map[string]any{
+			"objects": cleanupObjectsToPayload(batch),
+		}
+		job, err := model.NewJob(model.NewJobInput{
+			WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
+			Type: model.SourceCleanupJobType, Status: value.JobStatusPending, Payload: payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := tx.Create(jobV2ToRow(job)).Error; err != nil {
+			return nil, translateDBError(err, "创建 source_cleanup Job 失败")
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
 }
 
 // collectDocumentCleanupObjects 收集 Document 的 raw/parser/asset key（在硬删前调用）。
