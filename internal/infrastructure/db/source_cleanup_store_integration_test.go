@@ -22,7 +22,7 @@ func TestSourceCleanupStoreDeleteSourceDocumentBatchesJobs(t *testing.T) {
 	document, _, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档batch", "doccnCleanupBatch")
 	store := NewSourceSyncDBStore(database)
 
-	objects, jobs, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	objects, jobs, err := store.DeleteSourceDocument(ctx, seed.workspaceID, document.ID, value.SourceDeleteRemove)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestSourceCleanupStoreGetAndMarkRoundtrip(t *testing.T) {
 	syncStore := NewSourceSyncDBStore(database)
 	cleanupStore := NewSourceCleanupStore(database)
 
-	objects, jobs, err := syncStore.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	objects, jobs, err := syncStore.DeleteSourceDocument(ctx, seed.workspaceID, document.ID, value.SourceDeleteRemove)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestSourceCleanupStoreMarkFailedSetsStatus(t *testing.T) {
 	syncStore := NewSourceSyncDBStore(database)
 	cleanupStore := NewSourceCleanupStore(database)
 
-	_, jobs, err := syncStore.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	_, jobs, err := syncStore.DeleteSourceDocument(ctx, seed.workspaceID, document.ID, value.SourceDeleteRemove)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSourceCleanupStoreRejectsCrossWorkspaceGet(t *testing.T) {
 	syncStore := NewSourceSyncDBStore(database)
 	cleanupStore := NewSourceCleanupStore(database)
 
-	_, jobs, err := syncStore.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	_, jobs, err := syncStore.DeleteSourceDocument(ctx, seed.workspaceID, document.ID, value.SourceDeleteRemove)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument: %v", err)
 	}

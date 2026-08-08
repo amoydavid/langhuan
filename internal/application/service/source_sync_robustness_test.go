@@ -164,10 +164,6 @@ func TestDeletedDocumentReappearingIsRestored(t *testing.T) {
 // TestNestedFolderDeepDeleteClearsLeafFolders（spec 5.2/12.2）验证完整 snapshot 删除失踪
 // folder 时按深度从深到浅处理：叶子 folder 被删除，仍含子节点的 folder 被保留。
 // 既有 TestCompleteSnapshotDeletesEmptyMissingFolder 只覆盖单层平铺 folder。
-//
-// 注意：当前实现的 hasChild 映射在一次同步内是静态的（基于 ListFileTreeNodes 的快照），
-// 因此"父 folder 因同一次删除的子 folder 而变空"需要在下一次同步中才能清理（此时子 folder
-// 已从快照消失）。本测试覆盖单次同步能保证的语义：叶子优先删除、非空保留。
 func TestNestedFolderDeepDeleteClearsLeafFolders(t *testing.T) {
 	env := newSourceSyncServiceTestEnv(t)
 	rootID := env.kb.FileTreeRootID
@@ -230,6 +226,48 @@ func TestNestedFolderDeepDeleteClearsLeafFolders(t *testing.T) {
 	}
 	if _, stillThere := env.store.folderByExternal["folderKept"]; !stillThere {
 		t.Fatal("完整 snapshot 应保留含 file 子节点的 folderKept")
+	}
+}
+
+// TestNestedFolderCascadeDeleteClearsParentInOnePass（spec 5.2）验证：
+// 完整 snapshot 下，当叶子 folder 被删除后，因失去子节点而变空的父 folder
+// 必须在同一轮同步中级联删除（深度从深到浅），而不是等到下一次同步。
+func TestNestedFolderCascadeDeleteClearsParentInOnePass(t *testing.T) {
+	env := newSourceSyncServiceTestEnv(t)
+	rootID := env.kb.FileTreeRootID
+
+	// parent -> child（两层 folder），两者都远端缺失且均为空。
+	parent, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: env.workspaceID, KnowledgeBaseID: env.kb.ID,
+		ParentID: &rootID, NodeType: value.FileTreeNodeFolder,
+		Name: "父目录", ExternalID: "parentFolder",
+	})
+	if err != nil {
+		t.Fatalf("new parent: %v", err)
+	}
+	child, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: env.workspaceID, KnowledgeBaseID: env.kb.ID,
+		ParentID: &parent.ID, NodeType: value.FileTreeNodeFolder,
+		Name: "子目录", ExternalID: "childFolder",
+	})
+	if err != nil {
+		t.Fatalf("new child: %v", err)
+	}
+	env.store.nodes[parent.ID] = parent
+	env.store.nodes[child.ID] = child
+	env.store.folderByExternal["parentFolder"] = parent.ID
+	env.store.folderByExternal["childFolder"] = child.ID
+
+	// 完整 snapshot 不含这两个 folder。
+	env.connector.complete = true
+	env.connector.tree = nil
+	env.syncOnce(t)
+
+	if _, stillThere := env.store.folderByExternal["childFolder"]; stillThere {
+		t.Fatal("完整 snapshot 应删除叶子 childFolder")
+	}
+	if _, stillThere := env.store.folderByExternal["parentFolder"]; stillThere {
+		t.Fatal("完整 snapshot 应在同一轮级联删除变空的 parentFolder")
 	}
 }
 

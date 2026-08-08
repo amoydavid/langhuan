@@ -55,12 +55,16 @@ type updateCandidate struct {
 // syncPlan 是一次 diff 的产物：需要新增、更新、删除的文档集合，以及跳过数和告警。
 //
 // ToRemove 仅在 snapshot.Complete=true 时填充（删除闸门，spec 5.5）。
+// SkippedNodes 携带被 cursor 跳过的远端文档节点（EditTime <= cursor 且无重试需求），
+// 供调用方为它们产出"成功"outcome，否则安全 cursor watermark 会被这些已被覆盖的节点
+// 阻断前缀而无法越过 cursor（spec 6.4）。
 type syncPlan struct {
-	ToAdd    []model.ExternalNode
-	ToUpdate []updateCandidate
-	ToRemove []LocalDocView
-	Skipped  int
-	Warnings []string
+	ToAdd        []model.ExternalNode
+	ToUpdate     []updateCandidate
+	ToRemove     []LocalDocView
+	Skipped      int
+	SkippedNodes []model.ExternalNode
+	Warnings     []string
 }
 
 // diff 是 spec 5.4 的核心纯函数：输入去重前的远端快照、本地投影、增量游标与 force 标志，
@@ -116,6 +120,7 @@ func diff(snapshot sourceport.TreeSnapshot, local []LocalDocView, cursor time.Ti
 			plan.ToUpdate = append(plan.ToUpdate, updateCandidate{Remote: node, Local: localDoc})
 		} else {
 			plan.Skipped++
+			plan.SkippedNodes = append(plan.SkippedNodes, node)
 		}
 	}
 

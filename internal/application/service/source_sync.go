@@ -595,11 +595,12 @@ func (s *SourceSyncService) applyFolders(ctx context.Context, syncCtx *syncRunCt
 		sort.SliceStable(missing, func(i, j int) bool {
 			return depthOf(missing[i].ID) > depthOf(missing[j].ID)
 		})
-		// 子节点集合：用于判断 folder 是否仍非空（含子 folder 或 file 文档）。
-		hasChild := make(map[uuid.UUID]bool)
+		// 子节点计数：用于判断 folder 是否仍非空（含子 folder 或 file 文档）。
+		// 用计数而非布尔，便于子 folder 被删除后实时递减，让父 folder 在同一轮级联清理（spec 5.2）。
+		childCount := make(map[uuid.UUID]int)
 		for _, n := range all {
 			if n.ParentID != nil && *n.ParentID != syncCtx.kb.FileTreeRootID {
-				hasChild[*n.ParentID] = true
+				childCount[*n.ParentID]++
 			}
 		}
 		// 已删除的节点实时维护，保证深度优先链式清理。
@@ -608,7 +609,7 @@ func (s *SourceSyncService) applyFolders(ctx context.Context, syncCtx *syncRunCt
 			if deleted[folder.ID] {
 				continue
 			}
-			if hasChild[folder.ID] {
+			if childCount[folder.ID] > 0 {
 				// 仍含子节点（file 文档或未删除的子 folder）：保留。
 				continue
 			}
@@ -619,8 +620,10 @@ func (s *SourceSyncService) applyFolders(ctx context.Context, syncCtx *syncRunCt
 				continue
 			}
 			deleted[folder.ID] = true
-			// 父 folder 可能因这次删除而变空：标记 hasChild 需重新评估，
-			// 但深度优先顺序已保证父在子之后处理，所以无需更新。
+			// 本 folder 删除后，其父 folder 的子节点计数减一；归零时父 folder 可在本轮继续级联删除。
+			if folder.ParentID != nil && *folder.ParentID != syncCtx.kb.FileTreeRootID {
+				childCount[*folder.ParentID]--
+			}
 		}
 		return nil
 	})
@@ -652,6 +655,11 @@ func (s *SourceSyncService) applyDocumentNodes(
 	for _, candidate := range plan.ToUpdate {
 		outcome := s.updateSourceDocument(ctx, syncCtx, candidate, &counts, force)
 		outcomes = append(outcomes, outcome)
+	}
+	// 被 cursor 跳过的节点（spec 6.4）：它们已被当前 cursor 覆盖，视为成功 outcome，
+	// 否则 computeSafeCursor 的前缀扫描会因缺少 outcome 在这些节点处中断，watermark 永远无法越过 cursor。
+	for _, node := range plan.SkippedNodes {
+		outcomes = append(outcomes, nodeOutcome{Token: node.Token, EditTime: node.EditTime, Result: nodeResultSuccess})
 	}
 	// 不支持的文档类型（sheet/bitable 等）：告警 + 计数，不算失败。
 	for _, node := range snapshot.Nodes {
@@ -862,7 +870,7 @@ func (s *SourceSyncService) updateSourceDocument(
 	if !hashUnchanged || force {
 		return s.createUpdateRevision(ctx, syncCtx, external, local, title, parentNodeID, markdown, contentHash, counts)
 	}
-	return s.retryRevision(ctx, syncCtx, local, title, parentNodeID, contentHash, counts, external)
+	return s.retryRevision(ctx, syncCtx, local, title, parentNodeID, markdown, contentHash, counts, external)
 }
 
 // createUpdateRevision 内容变化或 force 时创建新 revision（spec 6.3 更新路径）。
@@ -926,6 +934,7 @@ func (s *SourceSyncService) retryRevision(
 	local LocalDocView,
 	title string,
 	parentNodeID uuid.UUID,
+	markdown []byte,
 	contentHash string,
 	counts *syncCounts,
 	external model.ExternalNode,
@@ -933,7 +942,8 @@ func (s *SourceSyncService) retryRevision(
 	retryRevisionID := local.LatestRevisionID
 	if retryRevisionID == nil || *retryRevisionID == uuid.Nil {
 		// 没有记录的 source revision：回退到创建新 revision 路径，保证幂等。
-		return s.createUpdateRevision(ctx, syncCtx, external, local, title, parentNodeID, []byte{}, contentHash, counts)
+		// 传入已 Fetch 的 markdown，避免写入空内容。
+		return s.createUpdateRevision(ctx, syncCtx, external, local, title, parentNodeID, markdown, contentHash, counts)
 	}
 
 	result, err := s.store.RetrySourceRevision(ctx, RetryDocumentRequest{
@@ -979,7 +989,7 @@ func (s *SourceSyncService) applyMissingDocuments(
 	deleted := 0
 	cleanupPending := 0
 	for _, view := range toRemove {
-		objects, cleanupJobs, delErr := s.store.DeleteSourceDocument(ctx, view.DocumentID, policy)
+		objects, cleanupJobs, delErr := s.store.DeleteSourceDocument(ctx, workspaceID, view.DocumentID, policy)
 		if delErr != nil {
 			s.logger.Error("删除同步文档失败",
 				"workspace_id", workspaceID.String(),

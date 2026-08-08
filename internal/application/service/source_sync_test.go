@@ -545,7 +545,7 @@ func (s *fakeSourceSyncStore) RetrySourceRevision(_ context.Context, request Ret
 	}, nil
 }
 
-func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, []*model.Job, error) {
+func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, _ uuid.UUID, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, []*model.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.deleteErr != nil {

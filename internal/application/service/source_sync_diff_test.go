@@ -571,3 +571,53 @@ func TestSafeCursorPreviousHigherThanComputed(t *testing.T) {
 		t.Fatalf("不应回退 previous，got %v want %v", got, future)
 	}
 }
+
+// TestSafeCursorSkippedNodesAdvanceOverCursor 验证 spec 6.4：
+// 被 cursor 覆盖的 skip 节点（EditTime <= previous）必须以成功 outcome 参与 watermark，
+// 否则缺少 outcome 会断开前缀，导致更晚的成功节点无法把 watermark 推过 cursor。
+func TestSafeCursorSkippedNodesAdvanceOverCursor(t *testing.T) {
+	// previous=cursorOld(6/1)；a 的 EditTime=editOld(5/1) <= previous（被 skip）；
+	// b 的 EditTime=editNew(7/1) > previous（本轮成功）。
+	snapshot := sourceport.TreeSnapshot{
+		Nodes: []model.ExternalNode{
+			diffDocNode("a", editOld),
+			diffDocNode("b", editNew),
+		},
+		Complete: true,
+	}
+	// 调用方（applyDocumentNodes）为 skip 节点补发成功 outcome。
+	outcomes := []nodeOutcome{
+		{Token: "a", EditTime: editOld, Result: nodeResultSuccess}, // skipped but success
+		{Token: "b", EditTime: editNew, Result: nodeResultSuccess},
+	}
+	got := computeSafeCursor(snapshot, outcomes, cursorOld)
+	if !got.Equal(editNew) {
+		t.Fatalf("skip 节点应允许 watermark 推过 cursor，got %v want %v", got, editNew)
+	}
+}
+
+// TestDiffPopulatesSkippedNodes 验证 diff 把被 cursor 跳过的节点放入 plan.SkippedNodes，
+// 让调用方可以为它们补发成功 outcome（配合 computeSafeCursor 的前缀推进）。
+func TestDiffPopulatesSkippedNodes(t *testing.T) {
+	snapshot := sourceport.TreeSnapshot{
+		Nodes: []model.ExternalNode{
+			diffDocNode("skip-me", editOld),
+			diffDocNode("new-me", editNew),
+		},
+		Complete: true,
+	}
+	// skip-me 本地已存在、内容未变、EditTime(5/1) <= cursor(6/1) => skipped。
+	// new-me 本地不存在 => ToAdd。
+	local := []LocalDocView{diffLocalView("skip-me")}
+	plan := diff(snapshot, local, cursorOld, false)
+	if plan.Skipped != 1 || len(plan.SkippedNodes) != 1 {
+		t.Fatalf("expect 1 skipped node recorded, got Skipped=%d SkippedNodes=%d",
+			plan.Skipped, len(plan.SkippedNodes))
+	}
+	if plan.SkippedNodes[0].Token != "skip-me" {
+		t.Fatalf("skipped node token = %q, want skip-me", plan.SkippedNodes[0].Token)
+	}
+	if len(plan.ToAdd) != 1 || plan.ToAdd[0].Token != "new-me" {
+		t.Fatalf("expect new-me in ToAdd, got %#v", plan.ToAdd)
+	}
+}

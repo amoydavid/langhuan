@@ -738,6 +738,46 @@ func TestRequestSourceSyncForceFalseDoesNotSetLatch(t *testing.T) {
 	}
 }
 
+// TestFinalizeSourceSyncJobIsIdempotentOnRetry（spec 8.2 / AGENTS 5.5）验证：
+// 对一个已终结的 Job 再次调用 FinalizeSourceSyncJob 不应重复转换状态，
+// 也不应在 latch 被重新置位时为同一个已终结 Job 再创建下一个 Job
+// （避免 asynq 重试已完成的任务时产生重复后续 Job）。
+func TestFinalizeSourceSyncJobIsIdempotentOnRetry(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	current, created, err := store.RequestSourceSync(ctx, seed.workspaceID, seed.kbID, seed.connectionID, false)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+	if !created {
+		t.Fatal("首次 RequestSourceSync 应创建新 Job")
+	}
+
+	// 第一次 finalize：succeeded，latch=false => 无下一个 Job。
+	next, err := store.FinalizeSourceSyncJob(ctx, seed.workspaceID, seed.kbID, current.ID, value.JobStatusCompleted, "")
+	if err != nil {
+		t.Fatalf("第一次 FinalizeSourceSyncJob: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("latch=false 时不应创建下一个 Job，got %s", next.ID)
+	}
+
+	// 模拟 asynq 重试：在 Job 已终结后，用户又请求 force（latch=true），
+	// 然后对同一个已终结 Job 再次 finalize（worker 重试到达）。
+	if _, _, err := store.RequestSourceSync(ctx, seed.workspaceID, seed.kbID, seed.connectionID, true); err != nil {
+		t.Fatalf("第二次 RequestSourceSync(force=true): %v", err)
+	}
+	retryNext, err := store.FinalizeSourceSyncJob(ctx, seed.workspaceID, seed.kbID, current.ID, value.JobStatusFailed, "retry")
+	if err != nil {
+		t.Fatalf("重试 FinalizeSourceSyncJob 不应报错: %v", err)
+	}
+	if retryNext != nil {
+		t.Fatalf("已终结 Job 再次 finalize 不应创建后续 Job，got %s", retryNext.ID)
+	}
+}
+
 // TestListFeishuKBsWithForceLatchAndNoActiveJob 验证 spec 8.2 latch 恢复扫描：
 // 返回 latch=true 且无 active source_sync Job 的飞书 KB；存在 active Job 时不返回；
 // latch=false 时不返回。
@@ -958,7 +998,7 @@ func TestDeleteSourceDocumentKeepSoftDeletes(t *testing.T) {
 	document, rev, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档keep", "doccnDelKeep")
 	store := NewSourceSyncDBStore(database)
 
-	objects, jobs, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteKeep)
+	objects, jobs, err := store.DeleteSourceDocument(ctx, seed.workspaceID, document.ID, value.SourceDeleteKeep)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument keep: %v", err)
 	}
@@ -997,7 +1037,7 @@ func TestDeleteSourceDocumentRemoveCollectsKeysAndCascades(t *testing.T) {
 	document, rev, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档remove", "doccnDelRemove")
 	store := NewSourceSyncDBStore(database)
 
-	objects, jobs, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	objects, jobs, err := store.DeleteSourceDocument(ctx, seed.workspaceID, document.ID, value.SourceDeleteRemove)
 	if err != nil {
 		t.Fatalf("DeleteSourceDocument remove: %v", err)
 	}

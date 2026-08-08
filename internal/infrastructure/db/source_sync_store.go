@@ -757,6 +757,23 @@ func (s *SourceSyncDBStore) RetrySourceRevision(
 			return domainerrors.ErrNotFound
 		}
 
+		// 更新 FileTreeNode（按 document_id 定位 file 节点）的 parent/name（spec 6.3 步骤 6，
+		// 与 CreateSyncedDocumentRevisionJob 保持一致）。
+		nodeUpdate := tx.WithContext(ctx).Model(&FileTreeNodeRow{}).
+			Where("workspace_id = ? AND document_id = ?", request.WorkspaceID, request.DocumentID).
+			Updates(map[string]any{
+				"parent_id":  nullableUUID(request.ParentNodeID),
+				"name":       request.Title,
+				"updated_at": now,
+			})
+		if nodeUpdate.Error != nil {
+			mapped := translateDBError(nodeUpdate.Error, "更新重试 FileTreeNode 失败")
+			if errors.Is(mapped, domainerrors.ErrConflict) {
+				return domainerrors.ErrFileTreeNameConflict
+			}
+			return mapped
+		}
+
 		result = &service.SyncWriteResult{
 			DocumentID: request.DocumentID,
 			RevisionID: request.RevisionID,
@@ -781,10 +798,10 @@ func (s *SourceSyncDBStore) RetrySourceRevision(
 // 返回所有收集到的清理对象 + 在事务内创建的清理 Job（pending），供调用方在提交后入队。
 // keep 策略返回空对象切片与空 Job 切片。
 func (s *SourceSyncDBStore) DeleteSourceDocument(
-	ctx context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy,
+	ctx context.Context, workspaceID, documentID uuid.UUID, policy value.SourceDeletePolicy,
 ) ([]service.CleanupObject, []*model.Job, error) {
-	if documentID == uuid.Nil {
-		return nil, nil, fmt.Errorf("%w: DeleteSourceDocument document 不能为空", domainerrors.ErrValidation)
+	if workspaceID == uuid.Nil || documentID == uuid.Nil {
+		return nil, nil, fmt.Errorf("%w: DeleteSourceDocument workspace/document 不能为空", domainerrors.ErrValidation)
 	}
 	if !policy.IsValid() {
 		return nil, nil, fmt.Errorf("%w: DeleteSourceDocument policy 非法", domainerrors.ErrValidation)
@@ -793,10 +810,10 @@ func (s *SourceSyncDBStore) DeleteSourceDocument(
 	var collected []service.CleanupObject
 	var createdJobs []*model.Job
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 读取 Document 以获取 workspace/kb lineage 与 connection。
+		// 读取 Document（显式 workspace 隔离，AGENTS 5.6）。
 		var docRow DocumentRow
 		if err := tx.WithContext(ctx).
-			First(&docRow, "id = ?", documentID).Error; err != nil {
+			First(&docRow, "workspace_id = ? AND id = ?", workspaceID, documentID).Error; err != nil {
 			return translateDBError(err, "读取待删除 Document 失败")
 		}
 		if err := tx.WithContext(ctx).Exec(
@@ -1085,7 +1102,8 @@ func (s *SourceSyncDBStore) FinalizeSourceSyncJob(
 			return err
 		}
 
-		// 标记当前 Job 终态。
+		// 标记当前 Job 终态（幂等：仅当 Job 仍处于 pending/running 时才转换，
+		// 避免 asynq 重试已终结的 Job 时重复执行同步并创建重复的后续 Job）。
 		now := time.Now().UTC()
 		updates := map[string]any{
 			"status":     string(status),
@@ -1095,14 +1113,17 @@ func (s *SourceSyncDBStore) FinalizeSourceSyncJob(
 			updates["error_message"] = errorMessage
 		}
 		result := tx.WithContext(ctx).Model(&JobRow{}).
-			Where("workspace_id = ? AND knowledge_base_id = ? AND id = ? AND type = ?",
-				workspaceID, kbID, jobID, model.SourceSyncJobType).
+			Where("workspace_id = ? AND knowledge_base_id = ? AND id = ? AND type = ? AND status IN ?",
+				workspaceID, kbID, jobID, model.SourceSyncJobType,
+				[]string{string(value.JobStatusPending), string(value.JobStatusRunning)}).
 			Updates(updates)
 		if result.Error != nil {
 			return translateDBError(result.Error, "标记 source_sync Job 终态失败")
 		}
-		if result.RowsAffected != 1 {
-			return domainerrors.ErrNotFound
+		if result.RowsAffected == 0 {
+			// Job 已是终态（completed/failed）或不存在：视为已完成，不再创建后续 Job。
+			next = nil
+			return nil
 		}
 
 		// 读取 latch（KB 行仍被本事务锁定）。
