@@ -247,28 +247,39 @@ Worker payload显式包含 Workspace、KB、Document、Revision、Generation 和
 
 ```text
 飞书 KB（凭证来自 workspace_source_connections）
-  -> SourceConnector.ListTree（递归 wiki/drive 节点树）
-  -> 按增量游标 sync_cursor 跳过未变更 docx（基于 obj_edit_time）
-  -> SourceConnector.Fetch docx（raw_content → markdown）
-  -> rawStore.Put
-  -> 单 Workspace 事务：Document(file, external_id) + Revision(reason=crawl, markdown)
-     + FileTreeNode(file) + Job(document_parse_start)
-  -> 入队 document_parse_start
+  -> SourceConnector.ListTree -> TreeSnapshot{Nodes, Complete, Warnings, MaxEditTime}
+  -> 读取本地投影 ListSourceDocuments（含 deleted/failed/retry 状态）
+  -> 纯函数 diff（去重 + 增量规则 + 删除闸门）
+  -> 应用 plan：
+       folder：按 external_id upsert；完整 snapshot 删除空的失踪 folder（partial 不删）
+       add：预分配 revision ID -> 受限 Fetch -> SHA-256 -> revision-scoped raw Put
+            -> 单 Workspace 事务：Document(file, external_id) + FileTreeNode + Revision(reason=crawl) + Job
+       update：复用 Document -> 受限 Fetch -> hash 变化/force 创建新 revision；
+               hash 不变且 RetryRequired 复用失败 revision；hash 不变且无重试跳过
+       remove（仅 snapshot.Complete）：按 on_delete 策略删除 Document，remove 收集对象 key 入 source_cleanup Job
+  -> 仅完整 snapshot 计算安全 cursor watermark（成功前缀）
+  -> 写 sync_last_result + cursor
+  -> 入队 document_parse_start（每个新增/更新文档）
   -> 复用现有 parse / chunk / index / publish 管线
 ```
 
-- folder 节点同步为 FileTree folder 节点；docx 节点同步为 File Document；sheet/bitable 等非 docx 文档类型跳过并记 warning。
-- 删除检测：DB 里存在、本次飞书树里不存在的 external_id，软删对应 Document。
-- 同步后回写 `source_config.sync_cursor`（所有节点 EditTime 最大值），下次同步据此增量跳过。
+- `TreeSnapshot.Complete` 是删除闸门：不完整 snapshot 只新增/更新，绝不删除 Document 或 folder，且全局不推进 cursor；空且完整的 snapshot 是合法结果，可删除全部远端缺失文档。
+- folder 节点按 `external_id` 稳定 upsert；docx 节点以 `external_id` 复用稳定 Document 身份（不再每次新建 UUID）；sheet/bitable 等非 docx 类型计入 `unsupported_nodes` 并记 warning。
+- 内容去重：`documents.content_hash` 记录最新已接受 source revision 的 SHA-256；hash 未变且无待重试状态时不重建 revision，force 或待重试时重建/复用。
+- 删除策略 `source_config.on_delete`：`keep`（默认）软删保留审计/恢复；`remove` 在 DB 事务级联删除后，由幂等 `source_cleanup` Job 异步清理 raw/parser/asset 对象。
+- `sync_last_result.status` 为 `succeeded|partial|failed`：节点失败、不完整 snapshot 或 folder 删除失败记 `partial`（仍是 Job 的 succeeded）；fatal ListTree error 记 `failed`。`partial` 不是通用 `JobStatus`。
+- 同步后仅完整 snapshot 才回写 `source_config.sync_cursor`，值为安全前缀 watermark（成功节点的最大 EditTime），失败/超限/零值节点不推进。
+- force 同步通过 `source_config.sync_requested_force` latch 合并：HTTP `POST .../sync {"force":true}` 写 latch，worker 开始时原子消费，不修改已入队 payload；force 不创建/激活新 IndexGeneration。
 
 ### Meta Scheduler 限流
 
 进程内单 goroutine Meta Scheduler（`SourceSyncScheduler`）周期扫描到期飞书 KB，按 `source_connection_id` 分组并限流：
 
-- 每个来源连接的最大并发同步任务数由 `config.yaml` 的 `source_sync.max_concurrent_per_connection` 配置（默认 2）；`source_sync.scheduler_interval_seconds` 控制 Tick 周期（默认 60s）。
+- 每个来源连接的最大并发同步任务数由 `config.yaml` 的 `source_sync.max_concurrent_per_connection` 配置（默认 2）；`source_sync.scheduler_interval_seconds` 控制 Tick 周期（默认 60s）；`source_sync.max_content_bytes`（默认 52428800 = 50MiB）限制 connector 返回的 markdown 字节数，在 adapter 与 application 两层生效。
 - 限流查询命中 `idx_jobs_conn_active` 部分索引，只统计 `type='source_sync' AND status IN ('pending','running')`。
 - 入队成功后按 `source_config.cron`（5 字段标准 cron）推进 `next_sync_at`；无 cron 时仅手动触发。
 - check-then-act 在单进程内无竞态；worker 完成后可调用 `TryDispatchConnection` 续跑同 connection 队列，避免空等下一个 Tick。
+- force latch 恢复：Meta Scheduler 每个 Tick 还会扫描 `sync_requested_force=true` 且无 active `source_sync` Job 的 KB 并重新派发，保证「DB 已提交、首次 enqueue 失败」的 force 请求不会永久滞留；`source_cleanup` 的 pending 孤儿 Job 由 `SourceCleanupScheduler` 同样补偿派发。
 
 ### 凭证
 

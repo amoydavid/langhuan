@@ -330,28 +330,40 @@ Cleanup 仍然必须进入 `WithinWorkspace`，不允许用无租户的全表后
 `knowledge_bases` 来源字段（迁移 000018）：
 
 - `source_type text NOT NULL DEFAULT 'upload'`（CHECK `upload|feishu_drive|feishu_wiki`）。默认 `upload` 使既有 KB 无需回填。
-- `source_config jsonb NOT NULL DEFAULT '{}'`：存同步根（`url` 或 `root_token`+`root_kind`）、可选 `cron`、运行期写入的 `next_sync_at` / `sync_cursor`（RFC3339）。
+- `source_config jsonb NOT NULL DEFAULT '{}'`：存同步根（`url` 或 `root_token`+`root_kind`）、可选 `cron`、`on_delete`（`keep`/`remove`，默认 `keep`）、运行期写入的 `next_sync_at` / `sync_cursor`（RFC3339）/ `sync_requested_force`（bool latch）/ `sync_last_result`（JSON）。
 - `source_connection_id uuid NULL ... REFERENCES workspace_source_connections(id) ON DELETE SET NULL`。
+- 局部更新 `source_config` 必须用 `jsonb_set`，保留其它运行期键；`PATCH .../source-policy` 只更新 `on_delete`，`UpdateSyncResult` 只更新 `sync_last_result`，`UpdateSyncCursor` 只更新 `sync_cursor`。
 
-`documents.external_id`（迁移 000018）保存飞书节点稳定 token，用于增量幂等与删除检测：
+`documents.external_id` + `documents.content_hash`（迁移 000018/000022）保存飞书节点稳定 token 与内容 SHA-256，用于增量幂等、内容去重与删除检测：
 
-- 部分索引 `idx_documents_kb_external ON documents(knowledge_base_id, external_id) WHERE external_id IS NOT NULL`，只索引飞书同步来源的文档。
-- 查询 `ListDocumentsByKB` 读取该 KB 下所有 `external_id` 非空的文档（含已软删的），与飞书树存活集合做差集实现删除检测。
+- 唯一部分索引 `uq_documents_workspace_kb_external ON documents(workspace_id, knowledge_base_id, external_id) WHERE external_id IS NOT NULL AND external_id <> ''`（迁移 000022 替换了迁移 000018 的旧非唯一 `idx_documents_kb_external`），保证同一 (workspace, KB) 下 external_id 唯一。
+- `content_hash` 表示「最新已接受 source revision」的 SHA-256（非「已发布到检索索引」的 hash），上传文档保持 NULL；它只在与 source revision 同一事务中写入。
+- 查询 `ListSourceDocuments` 读取该 KB 下所有 `external_id` 非空的文档投影（含 deleted/failed/retry 状态），供纯函数 diff 计算增量/删除计划。
+
+`file_tree_nodes.external_id`（迁移 000022）让 folder/file 节点都保存远端稳定 token：
+
+- 唯一部分索引 `uq_file_tree_nodes_kb_external ON file_tree_nodes(workspace_id, knowledge_base_id, external_id) WHERE external_id IS NOT NULL AND external_id <> ''`。
+- folder 按 `(workspace_id, knowledge_base_id, external_id)` upsert；上传创建的节点保持 `external_id=NULL`，不受该索引约束。
 
 `jobs.source_connection_id`（迁移 000018）+ Meta Scheduler 限流：
 
 - `source_connection_id uuid NULL`（source_sync 任务填此列，普通任务为 NULL）。
 - 部分索引 `idx_jobs_conn_active ON jobs(workspace_id, source_connection_id, type, status) WHERE source_connection_id IS NOT NULL`，专供 `CountActiveByConnection`（统计某 connection 下 `type='source_sync' AND status IN ('pending','running')`）使用，避免全表扫描。
 
-`jobs_target_check`（迁移 000017）增加第三分支，放宽为三选一：
+`jobs_target_check`（迁移 000017/000022）放宽为四选一：
 
 ```sql
 (document_id IS NOT NULL AND document_revision_id IS NOT NULL AND index_generation_id IS NULL)
 OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NOT NULL)
 OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND type = 'source_sync')
+OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND type = 'source_cleanup')
 ```
 
-第三分支只允许 `type='source_sync'` 的任务以仅关联 KB 的形式落库（`document_id`/`document_revision_id`/`index_generation_id` 三者皆 nil）；非 source_sync 类型三者皆 nil 仍被拒绝。领域层 `model.NewJob` 同步放宽：当且仅当 `Type=="source_sync"` 时允许三者全 nil。
+第三、四分支允许 `source_sync` 与 `source_cleanup` 以仅关联 KB 的形式落库；其它类型三者皆 nil 仍被拒绝。领域层 `model.NewJob` 同步放宽：`Type=="source_sync"` 或 `Type=="source_cleanup"` 时允许三者全 nil。
+
+### 异步对象清理（两阶段）
+
+外部对象存储不参与 PostgreSQL 事务。`on_delete=remove` 的删除分两阶段：在 Workspace DB 事务内锁定 Document、收集所有 revision raw/parser/asset key 并按 `SourceCleanupObjectBatchSize`（100）拆批创建 KB-only `source_cleanup` Job，随后删除 Document 依赖 FK cascade 清理 retrieval/chunk/revision/file tree；事务提交后由 application 入队 `source_cleanup` task。**`SourceCleanupService.Run` 绝不在 DB 事务内调用 storage/index adapter**；它逐个幂等删除对象，`storage.ErrObjectNotFound` 视为成功，其它失败标记 Job failed 以便重试。`SourceCleanupScheduler` 在启动与周期 Tick 重新派发仍 pending 的 cleanup Job，保证「DB 已提交、首次 enqueue 失败」不形成永久孤儿。
 
 ## 10. 迁移与测试
 

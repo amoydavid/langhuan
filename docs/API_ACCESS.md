@@ -226,7 +226,8 @@ SiliconFlow 使用一个 `provider=siliconflow` 连接，同时承载 Embedding 
 
 | REST | 鉴权 | 说明 |
 |---|---|---|
-| `POST /api/v1/workspaces/:slug/knowledge-bases/:id/sync` | Session admin/owner | 无请求体；返回 `202 {"job_id": ...}`；按 KB 幂等去重，同一 KB 同时只允许一个同步任务在队列中 |
+| `POST /api/v1/workspaces/:slug/knowledge-bases/:id/sync` | Session admin/owner | 可选请求体 `{"force":true}`（默认 `force=false`，空 body 等价；未知字段返回 `400`）；返回 `202 {"job_id": ...}`。同一 KB 同时只允许一个同步任务在队列中：若已有 pending/running 任务则复用其 `job_id`。`force=true` 写入 `source_config.sync_requested_force` latch，worker 开始时原子消费，在当前 active Generation 下重新拉取并重建所有远端 docx（hash 未变也创建新 revision）；force 不创建或激活新 Generation。 |
+| `PATCH /api/v1/workspaces/:slug/knowledge-bases/:id/source-policy` | Session admin/owner | 请求体 `{"on_delete":"keep\|remove"}`，只更新 `source_config.on_delete`，保留 `root_token`/`sync_cursor`/`cron`/`next_sync_at`/latch/`sync_last_result`。非法值（如 `purge`）或缺失返回 `400`；历史缺失按 `keep`。`keep`（默认）软删保留审计/恢复；`remove` 在 DB 级联删除后由幂等 `source_cleanup` Job 异步清理外部对象。从 `keep` 改为 `remove` 不自动清理历史已删除文档。 |
 
 知识库创建支持来源字段（`POST /api/v1/workspaces/:slug/knowledge-bases`，Session admin/owner）：
 

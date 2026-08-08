@@ -379,6 +379,20 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 验收：飞书协议正确性由 Task 4 的 `feishuAPI` fake 单测覆盖（薄接口设计下协议逻辑单测已充分）；worker 业务正确性由 Task 6 单测覆盖（fake store/connector）；持久化层（`CreateSourceSyncJob` / `CountActiveByConnection` / `CreateSyncedDocumentNodeRevisionAndJob` / `SoftDeleteDocument` / `UpdateSyncCursor`）由 `internal/infrastructure/db/source_sync_store_integration_test.go` 的 DB 集成测试覆盖；全链路 e2e 因官方 SDK mock 复杂度，依赖真实飞书凭证手动验收。文档见 `docs/ARCHITECTURE.md` 8.1、`docs/API_ACCESS.md` 8.2、`docs/DATABASE_GUIDELINES.md` 9.z。
 
+#### 飞书同步健壮性改进（已交付）
+
+在上述飞书同步能力之上，修正增量同步的生命周期与失败恢复语义，降低目录快照不完整、内容漂移、限流、大文档与大规模删除造成的数据风险。本改进不扩展首版能力边界（sheet/bitable 的异步导出与多子表建模仍未支持）：
+
+- 快照完整性闸门：`SourceConnector.ListTree` 返回 `TreeSnapshot{Complete, Warnings, MaxEditTime}`；`Complete=false` 时禁止删除任何 Document/folder 且全局不推进 cursor；fatal error 返回 error 不应用任何节点。
+- 稳定 Document 身份：以 `external_id` 复用同一 Document（不再每次新建 UUID），revision_no 单调递增；`documents.content_hash` 记录最新已接受 source revision 的 SHA-256，hash 未变且无待重试状态时不重建。
+- 失败可恢复：Fetch/落库/入队失败、超限文档、零值 EditTime 节点都不会被 cursor 永久越过；`RetryRequired` 覆盖 hash 去重，失败后下次仍会重试。
+- force 同步与队列合并：`POST .../sync {"force":true}` 写 `source_config.sync_requested_force` latch，worker 原子消费后在当前 active Generation 下重建所有 docx；同一 KB 复用 active Job，force 意图在 enqueue/consume/finalize 竞态下不丢失；force 不创建/激活新 IndexGeneration。
+- 删除策略与异步清理：`source_config.on_delete` 支持 `keep`（默认，软删保留审计/恢复）/ `remove`（DB 级联删除后由幂等 `source_cleanup` Job 异步清理外部对象）；`PATCH .../source-policy` 只更新 `on_delete` 且保留其它运行期配置。
+- 内容大小保护：`source_sync.max_content_bytes`（默认 50MiB）在 connector 与 application 两层生效，超限不无界读入。
+- 数据库：迁移 000022 新增 `documents.content_hash`、`file_tree_nodes.external_id`、两个 (workspace,kb,external_id) 唯一部分索引、`jobs_target_check` 第四分支（source_cleanup 仅 KB），并对历史重复 external_id fail-fast。
+
+验收：纯函数（diff/去重/安全 cursor watermark）由表驱动单测覆盖；service 编排、worker latch 流程、cleanup 幂等/重试、force 合并、partial 结果由应用层单测覆盖；持久化层与迁移由临时 pgvector/zhparser 容器的 DB 集成测试覆盖。设计规格见 `docs/superpowers/specs/2026-08-07-feishu-sync-robustness-improvements-design.md`。
+
 ### v0.7.0 - MinerU Cloud PDF 解析与资产归档（已完成）
 
 目标：在可视化和程序化消费闭环之上，补齐 PDF 这一最重的输入格式。
