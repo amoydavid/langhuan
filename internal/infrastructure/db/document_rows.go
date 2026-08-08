@@ -8,14 +8,16 @@ import (
 
 // DocumentRow maps stable Document identity; revision-local content is not stored here.
 type DocumentRow struct {
-	ID               uuid.UUID `gorm:"type:uuid;primaryKey"`
-	WorkspaceID      uuid.UUID `gorm:"type:uuid;not null;index"`
-	KnowledgeBaseID  uuid.UUID `gorm:"type:uuid;not null;index"`
-	Kind             string
-	Title            string
-	SourceType       string
-	SourceURI        *string
-	ExternalID       *string
+	ID              uuid.UUID `gorm:"type:uuid;primaryKey"`
+	WorkspaceID     uuid.UUID `gorm:"type:uuid;not null;index"`
+	KnowledgeBaseID uuid.UUID `gorm:"type:uuid;not null;index"`
+	Kind            string
+	Title           string
+	SourceType      string
+	SourceURI       *string
+	ExternalID      *string
+	// ContentHash 是文档正文（normalized markdown）的稳定哈希，可空。
+	ContentHash      *string
 	Status           string
 	ActiveRevisionID *uuid.UUID `gorm:"type:uuid"`
 	Metadata         JSONMap    `gorm:"type:jsonb"`

@@ -38,6 +38,7 @@ func documentV2ToRow(document *model.Document) *DocumentRow {
 		ID: document.ID, WorkspaceID: document.WorkspaceID, KnowledgeBaseID: document.KnowledgeBaseID,
 		Kind: string(document.Kind), Title: document.Title, SourceType: document.SourceType,
 		SourceURI: nullableString(document.SourceURI), ExternalID: nullableString(document.ExternalID),
+		ContentHash:      nullableString(document.ContentHash),
 		Status:           string(document.Status),
 		ActiveRevisionID: document.ActiveRevisionID, Metadata: normalizedJSONMap(document.Metadata),
 		CreatedAt: document.CreatedAt, UpdatedAt: document.UpdatedAt, DeletedAt: document.DeletedAt,
@@ -49,6 +50,7 @@ func documentV2FromRow(row *DocumentRow) *model.Document {
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		Kind: value.DocumentKind(row.Kind), Title: row.Title, SourceType: row.SourceType,
 		SourceURI: dereferenceString(row.SourceURI), ExternalID: dereferenceString(row.ExternalID),
+		ContentHash:      dereferenceString(row.ContentHash),
 		Status:           value.DocumentStatus(row.Status),
 		ActiveRevisionID: row.ActiveRevisionID, Metadata: normalizedDomainMap(row.Metadata),
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
@@ -153,7 +155,7 @@ func fileTreeNodeToRow(node *model.FileTreeNode) *FileTreeNodeRow {
 	return &FileTreeNodeRow{
 		ID: node.ID, WorkspaceID: node.WorkspaceID, KnowledgeBaseID: node.KnowledgeBaseID,
 		ParentID: node.ParentID, NodeType: string(node.NodeType), Name: node.Name,
-		DocumentID: node.DocumentID, DocumentKind: documentKind,
+		DocumentID: node.DocumentID, DocumentKind: documentKind, ExternalID: nullableString(node.ExternalID),
 		CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt,
 	}
 }
@@ -162,7 +164,8 @@ func fileTreeNodeFromRow(row *FileTreeNodeRow) *model.FileTreeNode {
 	return &model.FileTreeNode{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		ParentID: row.ParentID, NodeType: value.FileTreeNodeType(row.NodeType), Name: row.Name,
-		DocumentID: row.DocumentID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		DocumentID: row.DocumentID, ExternalID: dereferenceString(row.ExternalID),
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 
