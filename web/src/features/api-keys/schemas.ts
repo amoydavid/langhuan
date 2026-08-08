@@ -32,6 +32,7 @@ const apiKeyKnowledgeBaseIdsField = z
 const apiKeyScopesField = z
   .array(
     z.enum([
+      'knowledge_bases:read',
       'knowledge_bases:write',
       'documents:read',
       'documents:write',

@@ -40,6 +40,7 @@ export const apiKeyStatusBadgeVariant: Record<APIKeyStatus, BadgeVariant> = {
 // scope 到中文标签的映射；文案随当前语言惰性求值。
 export function apiKeyScopeLabel(t: TFunction): Record<APIKeyScope, string> {
   return {
+    'knowledge_bases:read': t('apiKeys.display.scopeKnowledgeBasesRead'),
     'knowledge_bases:write': t('apiKeys.display.scopeKnowledgeBasesWrite'),
     'documents:read': t('apiKeys.display.scopeDocumentsRead'),
     'documents:write': t('apiKeys.display.scopeDocumentsWrite'),
@@ -49,6 +50,7 @@ export function apiKeyScopeLabel(t: TFunction): Record<APIKeyScope, string> {
 
 // scope 顺序固定，与后端 AllAPIScopes 一致，便于展示稳定。
 export const apiKeyScopeOrder: readonly APIKeyScope[] = [
+  'knowledge_bases:read',
   'knowledge_bases:write',
   'documents:read',
   'documents:write',

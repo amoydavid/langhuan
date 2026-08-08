@@ -143,6 +143,7 @@ export const apiKeys = {
     statusExpiring: 'Expiring soon',
     statusExpired: 'Expired',
     statusRevoked: 'Revoked',
+    scopeKnowledgeBasesRead: 'Knowledge base read',
     scopeKnowledgeBasesWrite: 'Knowledge base write',
     scopeDocumentsRead: 'Document read',
     scopeDocumentsWrite: 'Document write',

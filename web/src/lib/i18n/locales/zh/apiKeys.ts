@@ -123,6 +123,7 @@ export const apiKeys = {
     statusExpiring: '即将到期',
     statusExpired: '已过期',
     statusRevoked: '已吊销',
+    scopeKnowledgeBasesRead: '知识库读取',
     scopeKnowledgeBasesWrite: '知识库写入',
     scopeDocumentsRead: '文档读取',
     scopeDocumentsWrite: '文档写入',

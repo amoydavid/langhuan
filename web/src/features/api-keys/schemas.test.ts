@@ -78,17 +78,18 @@ describe('apiKeyCreateSchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('accepts all four canonical scopes', () => {
+  it('accepts all five canonical scopes', () => {
     const { scopes } = apiKeyCreateSchema.parse({
       ...validBase,
       scopes: [
+        'knowledge_bases:read',
         'knowledge_bases:write',
         'documents:read',
         'documents:write',
         'search:read',
       ],
     })
-    expect(scopes).toHaveLength(4)
+    expect(scopes).toHaveLength(5)
   })
 
   it('rejects a malformed knowledge base id', () => {

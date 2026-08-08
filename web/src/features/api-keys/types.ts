@@ -4,6 +4,7 @@
 export type APIKeyStatus = 'active' | 'expiring' | 'expired' | 'revoked'
 
 export type APIKeyScope =
+  | 'knowledge_bases:read'
   | 'knowledge_bases:write'
   | 'documents:read'
   | 'documents:write'
