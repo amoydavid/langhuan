@@ -33,6 +33,9 @@ type NewDocumentInput struct {
 	ErrorMessage       string
 	SourceURI          string
 	ExternalID         string
+	// ContentHash 是文档正文（normalized markdown）的稳定哈希，供来源同步增量去重。
+	// 可为空：上传/解析场景不依赖该字段。
+	ContentHash string
 }
 
 type Document struct {
@@ -58,9 +61,12 @@ type Document struct {
 	FAQQuestionCount   int
 	ErrorMessage       string
 	ExternalID         string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	DeletedAt          *time.Time
+	// ContentHash 是文档正文（normalized markdown）的稳定哈希，供来源同步增量去重。
+	// 可为空：上传/解析场景不依赖该字段。
+	ContentHash string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	DeletedAt   *time.Time
 }
 
 // NewDocumentIdentity creates stable Document identity without revision-local content fields.
@@ -184,6 +190,7 @@ func NewDocument(input NewDocumentInput) (*Document, error) {
 		Metadata:           metadata,
 		ErrorMessage:       input.ErrorMessage,
 		ExternalID:         strings.TrimSpace(input.ExternalID),
+		ContentHash:        input.ContentHash,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}, nil

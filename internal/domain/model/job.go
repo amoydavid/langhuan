@@ -48,6 +48,9 @@ type Job struct {
 // SourceSyncJobType 是知识库级同步任务（仅关联 KB，不带 document/generation）的类型。
 const SourceSyncJobType = "source_sync"
 
+// SourceCleanupJobType 是知识库级来源清理任务（仅关联 KB，不带 document/generation）的类型。
+const SourceCleanupJobType = "source_cleanup"
+
 func NewJob(input NewJobInput) (*Job, error) {
 	jobType := strings.TrimSpace(input.Type)
 	if jobType == "" {
@@ -56,8 +59,8 @@ func NewJob(input NewJobInput) (*Job, error) {
 	if input.DocumentID != uuid.Nil && input.IndexGenerationID != uuid.Nil {
 		return nil, fmt.Errorf("%w: Job 不能同时关联 Document 与 Generation", domainerrors.ErrValidation)
 	}
-	// source_sync 任务仅关联 KB，允许 document/revision/generation 三者皆 nil。
-	if jobType != SourceSyncJobType && input.DocumentID == uuid.Nil && input.IndexGenerationID == uuid.Nil {
+	// source_sync / source_cleanup 任务仅关联 KB，允许 document/revision/generation 三者皆 nil。
+	if !kbOnlyJobType(jobType) && input.DocumentID == uuid.Nil && input.IndexGenerationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: document_id/index_generation_id 必须提供一个", domainerrors.ErrValidation)
 	}
 	if input.Status == "" {
@@ -86,4 +89,10 @@ func NewJob(input NewJobInput) (*Job, error) {
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}, nil
+}
+
+// kbOnlyJobType 报告该任务类型是否仅关联知识库（不带 document/revision/generation）。
+// 这类任务允许三者全 nil，用于知识库级来源同步与清理。
+func kbOnlyJobType(jobType string) bool {
+	return jobType == SourceSyncJobType || jobType == SourceCleanupJobType
 }

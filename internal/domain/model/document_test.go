@@ -124,3 +124,38 @@ func TestNewDocumentIdentityWithExternalPropagatesValidationError(t *testing.T) 
 		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 }
+
+// TestNewDocumentPropagatesContentHash 验证 NewDocument 把 NewDocumentInput.ContentHash
+// 写入 Document.ContentHash 字段，供来源同步去重使用。
+func TestNewDocumentPropagatesContentHash(t *testing.T) {
+	const hash = "sha256:deadbeef"
+	doc, err := NewDocument(NewDocumentInput{
+		KnowledgeBaseID: uuid.New(),
+		Title:           "a.pdf", FileType: "pdf", SourceType: "upload",
+		Status: value.DocumentStatusPending, SHA256: "abc", RawStorageKey: "raw/a.pdf",
+		SizeBytes: 3, ContentType: "application/pdf",
+		ContentHash: hash,
+	})
+	if err != nil {
+		t.Fatalf("NewDocument error = %v", err)
+	}
+	if doc.ContentHash != hash {
+		t.Fatalf("ContentHash = %q, want %q", doc.ContentHash, hash)
+	}
+}
+
+// TestNewDocumentDefaultsContentHashToEmpty 验证 ContentHash 默认为空（向后兼容）。
+func TestNewDocumentDefaultsContentHashToEmpty(t *testing.T) {
+	doc, err := NewDocument(NewDocumentInput{
+		KnowledgeBaseID: uuid.New(),
+		Title:           "a.pdf", FileType: "pdf", SourceType: "upload",
+		Status: value.DocumentStatusPending, SHA256: "abc", RawStorageKey: "raw/a.pdf",
+		SizeBytes: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewDocument error = %v", err)
+	}
+	if doc.ContentHash != "" {
+		t.Fatalf("ContentHash = %q, want empty", doc.ContentHash)
+	}
+}

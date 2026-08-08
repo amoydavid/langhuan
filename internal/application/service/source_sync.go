@@ -206,10 +206,13 @@ func (s *SourceSyncService) SyncKnowledgeBase(ctx context.Context, workspaceID, 
 		Status:                "active",
 	}
 
-	nodes, err := s.connector.ListTree(ctx, conn, root)
+	snapshot, err := s.connector.ListTree(ctx, conn, root)
 	if err != nil {
 		return fmt.Errorf("列举飞书目录树失败: %w", err)
 	}
+	nodes := snapshot.Nodes
+	// TODO(task-4): 根据 snapshot.Complete 决定是否执行删除检测；当前假设 Complete=true。
+	// TODO(task-4): 用 snapshot.MaxEditTime 推进游标，当前沿用循环内累计的 maxEditTime。
 
 	// 同步开始前，读出该 KB 下所有 external_id 非空的文档（含已软删的），用于删除检测。
 	existingDocs, err := s.listDocumentsForDeleteDetection(ctx, workspaceID, kbID)
@@ -461,7 +464,8 @@ func (s *SourceSyncService) syncDocxNode(
 	parentNodeID uuid.UUID,
 	tokenToNodeID map[string]uuid.UUID,
 ) error {
-	fetched, err := s.connector.Fetch(ctx, conn, external.Token)
+	// TODO(task-7): 从配置注入 MaxContentBytes；当前不设上限，保持与旧行为兼容。
+	fetched, err := s.connector.Fetch(ctx, conn, external.Token, sourceport.FetchOptions{})
 	if err != nil {
 		return fmt.Errorf("拉取飞书文档失败: %w", err)
 	}

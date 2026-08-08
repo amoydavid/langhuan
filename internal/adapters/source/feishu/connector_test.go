@@ -228,9 +228,11 @@ func TestListTreeWalksWikiNodesRecursively(t *testing.T) {
 		wikiNode(grandToken, "doxcnG", "docx", childBToken, "孙文档", false),
 	}
 
-	nodes, err := testConnector(api).ListTree(context.Background(), testConn(),
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
 		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
 	require.NoError(t, err)
+	nodes := snapshot.Nodes
+	require.True(t, snapshot.Complete, "首版假设 Complete=true")
 	require.Len(t, nodes, 4, "应返回 root+2子+1孙 共4个节点")
 
 	// 根节点。
@@ -281,9 +283,10 @@ func TestListTreeWalksDriveFolderRecursively(t *testing.T) {
 		{Token: strPtr("doxcn2"), Name: strPtr("文档2"), Type: strPtr("docx")},
 	}
 
-	nodes, err := testConnector(api).ListTree(context.Background(), testConn(),
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
 		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: rootFolder})
 	require.NoError(t, err)
+	nodes := snapshot.Nodes
 	require.Len(t, nodes, 3, "应返回 root 下 2 文件 + subfolder 下 1 文件 共3个节点")
 
 	byToken := map[string]model.ExternalNode{}
@@ -313,7 +316,7 @@ func TestFetchReturnsDocxMarkdown(t *testing.T) {
 	api.docxContent[docID] = "# 标题\n正文"
 	api.docxTitle[docID] = "文档A"
 
-	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID)
+	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID, sourceport.FetchOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "文档A", doc.Title)
 	assert.Equal(t, "docx", doc.ObjType)
@@ -329,7 +332,7 @@ func TestFetchToleratesMissingTitle(t *testing.T) {
 	api.docxContent[docID] = "# 仅正文"
 	api.docxTitleErr[docID] = errors.New("title endpoint 503")
 
-	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID)
+	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID, sourceport.FetchOptions{})
 	require.NoError(t, err, "标题获取失败应降级而非报错")
 	assert.Empty(t, doc.Title, "标题降级为空")
 	assert.Equal(t, "docx", doc.ObjType)
@@ -393,9 +396,10 @@ func TestListTreeDrivePagination(t *testing.T) {
 	api.driveNext[drivePageKey{folder, page2}] = ""
 	api.driveHasMore[drivePageKey{folder, page2}] = false
 
-	nodes, err := testConnector(api).ListTree(context.Background(), testConn(),
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
 		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: folder})
 	require.NoError(t, err)
+	nodes := snapshot.Nodes
 	require.Len(t, nodes, 3, "两页文件都应被收集")
 	assert.Equal(t, 2, api.driveListCalls, "DriveList 应被调用两次（两页）")
 

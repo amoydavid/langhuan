@@ -12,12 +12,33 @@ import (
 // SourceConnector 抽象一类外部内容源（飞书、Notion 等）的列举与拉取能力。
 // 实现位于 internal/adapters/source/<provider>。
 type SourceConnector interface {
-	// ListTree 递归遍历同步根下的整棵目录树，返回外部节点。
-	ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot) ([]model.ExternalNode, error)
-	// Fetch 拉取单个可同步文档的内容（docx → markdown）与元数据。
-	Fetch(ctx context.Context, conn model.SourceConnection, externalID string) (model.FetchedDocument, error)
+	// ListTree 递归遍历同步根下的整棵目录树，返回快照（节点 + 完整性标记）。
+	ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot) (TreeSnapshot, error)
+	// Fetch 按上限拉取单个可同步文档的内容（docx → markdown）与元数据。
+	Fetch(ctx context.Context, conn model.SourceConnection, externalID string, options FetchOptions) (model.FetchedDocument, error)
 	// Provider 返回该实现服务的 provider 标识（如 "feishu"）。
 	Provider() string
+}
+
+// TreeSnapshot 是一次目录树列举的结果快照。
+//
+//   - Nodes 为本次列举到的外部节点（含 folder 与文档）。
+//   - Complete 表示本次列举是否完整；截断/限流等场景为 false，调用方据此决定是否做删除检测。
+//   - Warnings 记录非致命告警（如部分子树被跳过），不携带敏感数据。
+//   - MaxEditTime 是本次快照中所有节点的最大编辑时间，用于推进增量游标。
+type TreeSnapshot struct {
+	Nodes       []model.ExternalNode
+	Complete    bool
+	Warnings    []string
+	MaxEditTime time.Time
+}
+
+// FetchOptions 控制 Fetch 的拉取行为。
+//
+//   - MaxContentBytes 限制单次拉取的内容字节数，超过应返回 ErrSourceContentTooLarge。
+//     <=0 表示不限。
+type FetchOptions struct {
+	MaxContentBytes int64
 }
 
 var (
@@ -25,6 +46,8 @@ var (
 	ErrSourceUnavailable = errors.New("source unavailable")
 	// ErrSourceNotFound 表示外部对象不存在或无权限。
 	ErrSourceNotFound = errors.New("source not found")
+	// ErrSourceContentTooLarge 表示拉取的文档内容超过配置的上限。
+	ErrSourceContentTooLarge = errors.New("source content too large")
 )
 
 // SyncRootKind 是同步根的类型。

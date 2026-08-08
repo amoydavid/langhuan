@@ -90,26 +90,36 @@ func NewConnector(opts ...Option) *Connector {
 func (c *Connector) Provider() string { return ProviderName }
 
 // ListTree 按 SyncRoot.Kind 分派，递归遍历飞书节点树。
-func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot) ([]model.ExternalNode, error) {
+func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot) (sourceport.TreeSnapshot, error) {
 	if root.Token == "" {
-		return nil, fmt.Errorf("%w: sync root token 为空", sourceport.ErrSourceNotFound)
+		return sourceport.TreeSnapshot{}, fmt.Errorf("%w: sync root token 为空", sourceport.ErrSourceNotFound)
 	}
 	api, err := c.apiFor(ctx, conn)
 	if err != nil {
-		return nil, err
+		return sourceport.TreeSnapshot{}, err
 	}
+	var nodes []model.ExternalNode
 	switch root.Kind {
 	case sourceport.SyncRootWikiNode:
-		return c.walkWiki(ctx, api, root.Token)
+		nodes, err = c.walkWiki(ctx, api, root.Token)
 	case sourceport.SyncRootDriveFolder:
-		return c.walkDrive(ctx, api, root.Token)
+		nodes, err = c.walkDrive(ctx, api, root.Token)
 	default:
-		return nil, fmt.Errorf("不支持的 sync root kind: %s", root.Kind)
+		return sourceport.TreeSnapshot{}, fmt.Errorf("不支持的 sync root kind: %s", root.Kind)
 	}
+	if err != nil {
+		return sourceport.TreeSnapshot{}, err
+	}
+	// TODO(task-4): 真正计算 completeness / warnings / MaxEditTime。
+	// 首版假设全量列举成功即 Complete=true，MaxEditTime 由调用方在循环中另行推进。
+	return sourceport.TreeSnapshot{Nodes: nodes, Complete: true}, nil
 }
 
 // Fetch 拉取单个外部文档（首版仅 docx）。
-func (c *Connector) Fetch(ctx context.Context, conn model.SourceConnection, externalID string) (model.FetchedDocument, error) {
+//
+// TODO(task-7): 根据 options.MaxContentBytes 限制拉取大小，超限返回 ErrSourceContentTooLarge。
+// 当前实现忽略上限，保持与旧调用方兼容，由后续任务补齐。
+func (c *Connector) Fetch(ctx context.Context, conn model.SourceConnection, externalID string, options sourceport.FetchOptions) (model.FetchedDocument, error) {
 	if externalID == "" {
 		return model.FetchedDocument{}, fmt.Errorf("%w: external_id 为空", sourceport.ErrSourceNotFound)
 	}

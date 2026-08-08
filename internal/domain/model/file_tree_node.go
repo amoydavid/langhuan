@@ -21,6 +21,8 @@ type NewFileTreeNodeInput struct {
 	Name            string
 	DocumentID      *uuid.UUID
 	DocumentKind    value.DocumentKind
+	// ExternalID 记录外部内容源（飞书）的稳定节点标识，供同步对账使用；可空。
+	ExternalID string
 }
 
 // FileTreeNode organizes File Documents without changing content identity.
@@ -32,8 +34,10 @@ type FileTreeNode struct {
 	NodeType        value.FileTreeNodeType
 	Name            string
 	DocumentID      *uuid.UUID
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// ExternalID 记录外部内容源（飞书）的稳定节点标识，供同步对账使用；可空。
+	ExternalID string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // NewFileTreeNode validates node shape and File-only document ownership.
@@ -63,7 +67,8 @@ func NewFileTreeNode(input NewFileTreeNodeInput) (*FileTreeNode, error) {
 	return &FileTreeNode{
 		ID: id.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		ParentID: input.ParentID, NodeType: input.NodeType, Name: name,
-		DocumentID: input.DocumentID, CreatedAt: now, UpdatedAt: now,
+		DocumentID: input.DocumentID, ExternalID: strings.TrimSpace(input.ExternalID),
+		CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 

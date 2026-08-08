@@ -62,6 +62,43 @@ func TestNewJobStillRejectsNonSourceSyncWithAllNilTargets(t *testing.T) {
 	}
 }
 
+// TestNewJobAllowsSourceCleanupKBOnly 验证 source_cleanup 任务类型与 source_sync 一样
+// 仅关联 KB（document/revision/generation 三者全 nil 合法）。
+func TestNewJobAllowsSourceCleanupKBOnly(t *testing.T) {
+	workspaceID, kbID := uuid.New(), uuid.New()
+	job, err := NewJob(NewJobInput{
+		WorkspaceID:     workspaceID,
+		KnowledgeBaseID: kbID,
+		Type:            SourceCleanupJobType,
+		Status:          value.JobStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("expected nil err for source_cleanup KB-only, got %v", err)
+	}
+	if job.Type != SourceCleanupJobType {
+		t.Fatalf("type = %q, want %q", job.Type, SourceCleanupJobType)
+	}
+	if job.DocumentID != uuid.Nil || job.DocumentRevisionID != uuid.Nil || job.IndexGenerationID != uuid.Nil {
+		t.Fatalf("source_cleanup job should not carry doc/revision/generation: %#v", job)
+	}
+}
+
+// TestNewJobRejectsOtherTypesWithAllNilTargets 验证 source_sync/source_cleanup 之外
+// 的类型在全 nil 时仍被拒绝。
+func TestNewJobRejectsOtherTypesWithAllNilTargets(t *testing.T) {
+	for _, jobType := range []string{"parse", "index_build", "reparse"} {
+		_, err := NewJob(NewJobInput{
+			WorkspaceID:     uuid.New(),
+			KnowledgeBaseID: uuid.New(),
+			Type:            jobType,
+			Status:          value.JobStatusPending,
+		})
+		if !errors.Is(err, domainerrors.ErrValidation) {
+			t.Fatalf("type %q with all-nil targets should be rejected; got err = %v", jobType, err)
+		}
+	}
+}
+
 func TestNewJobDefaultsAttemptsAndPayload(t *testing.T) {
 	job, err := NewJob(NewJobInput{
 		DocumentID: uuid.New(),

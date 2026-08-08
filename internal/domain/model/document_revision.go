@@ -61,8 +61,19 @@ type DocumentRevision struct {
 	CompletedAt          *time.Time
 }
 
-// NewDocumentRevision validates kind-local facts and creates an immutable revision.
+// NewDocumentRevision validates kind-local facts and creates an immutable revision，
+// 内部委托给 NewDocumentRevisionWithID 并自动生成 UUIDv7。
+// 保留为兼容入口；显式传入 ID 的场景（如来源同步幂等回写）应使用 NewDocumentRevisionWithID。
 func NewDocumentRevision(input NewDocumentRevisionInput) (*DocumentRevision, error) {
+	return NewDocumentRevisionWithID(id.New(), input)
+}
+
+// NewDocumentRevisionWithID 使用显式 revisionID 创建不可变 revision。
+// revisionID 为 uuid.Nil 时返回校验错误，避免调用方误用零值。
+func NewDocumentRevisionWithID(revisionID uuid.UUID, input NewDocumentRevisionInput) (*DocumentRevision, error) {
+	if revisionID == uuid.Nil {
+		return nil, fmt.Errorf("%w: DocumentRevision id 不能为空", domainerrors.ErrValidation)
+	}
 	if input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil || input.DocumentID == uuid.Nil {
 		return nil, fmt.Errorf("%w: DocumentRevision lineage 不能为空", domainerrors.ErrValidation)
 	}
@@ -103,7 +114,7 @@ func NewDocumentRevision(input NewDocumentRevisionInput) (*DocumentRevision, err
 	}
 
 	return &DocumentRevision{
-		ID: id.New(), WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
+		ID: revisionID, WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		DocumentID: input.DocumentID, Kind: input.Kind, RevisionNo: input.RevisionNo,
 		Reason: input.Reason, OriginalFilename: input.OriginalFilename, FileType: input.FileType,
 		ContentType: strings.TrimSpace(input.ContentType), RawStorageKey: input.RawStorageKey,

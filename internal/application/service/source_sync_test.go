@@ -31,14 +31,14 @@ type fakeSourceConnector struct {
 	fetchedTokens []string // 记录所有 Fetch 调用的 externalID（顺序）
 }
 
-func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnection, _ model.SyncRoot) ([]model.ExternalNode, error) {
+func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnection, _ model.SyncRoot) (sourceport.TreeSnapshot, error) {
 	if c.listErr != nil {
-		return nil, c.listErr
+		return sourceport.TreeSnapshot{}, c.listErr
 	}
-	return append([]model.ExternalNode(nil), c.tree...), nil
+	return sourceport.TreeSnapshot{Nodes: append([]model.ExternalNode(nil), c.tree...), Complete: true}, nil
 }
 
-func (c *fakeSourceConnector) Fetch(_ context.Context, _ model.SourceConnection, externalID string) (model.FetchedDocument, error) {
+func (c *fakeSourceConnector) Fetch(_ context.Context, _ model.SourceConnection, externalID string, _ sourceport.FetchOptions) (model.FetchedDocument, error) {
 	c.fetchedTokens = append(c.fetchedTokens, externalID)
 	if c.fetchFn != nil {
 		return c.fetchFn(externalID)
