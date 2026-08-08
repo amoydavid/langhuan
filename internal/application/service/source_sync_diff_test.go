@@ -41,8 +41,8 @@ func diffFolderNode(token string, editTime time.Time) model.ExternalNode {
 }
 
 // diffLocalView 构造一个未删除、非重试的本地文档投影。
-func diffLocalView(externalID string) localDocView {
-	return localDocView{
+func diffLocalView(externalID string) LocalDocView {
+	return LocalDocView{
 		DocumentID:  diffViewUUID(externalID),
 		ExternalID:  externalID,
 		ContentHash: "hash-" + externalID,
@@ -56,7 +56,7 @@ func diffViewUUID(externalID string) uuid.UUID {
 }
 
 // diffFailedView 构造一个 RetryRequired=true 的本地文档投影（已失败需重试）。
-func diffFailedView(externalID string) localDocView {
+func diffFailedView(externalID string) LocalDocView {
 	v := diffLocalView(externalID)
 	v.Status = value.DocumentStatusFailed
 	v.RetryRequired = true
@@ -64,7 +64,7 @@ func diffFailedView(externalID string) localDocView {
 }
 
 // diffDeletedView 构造一个已软删的本地文档投影。
-func diffDeletedView(externalID string) localDocView {
+func diffDeletedView(externalID string) LocalDocView {
 	v := diffLocalView(externalID)
 	v.Status = value.DocumentStatusDeleted
 	t := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -87,7 +87,7 @@ func TestDiffRules(t *testing.T) {
 	cases := []struct {
 		name     string
 		snapshot sourceport.TreeSnapshot
-		local    []localDocView
+		local    []LocalDocView
 		cursor   time.Time
 		force    bool
 		want     counts
@@ -117,28 +117,28 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "远端无 / 本地有未删除 + Complete => ToRemove",
 			snapshot: sourceport.TreeSnapshot{Nodes: nil, Complete: true},
-			local:    []localDocView{diffLocalView("missing")},
+			local:    []LocalDocView{diffLocalView("missing")},
 			want:     counts{remove: 1},
 		},
 		// 删除闸门: Complete=false 时 ToRemove 必须为空
 		{
 			name:     "远端无 / 本地有未删除 + Incomplete => 不删除",
 			snapshot: sourceport.TreeSnapshot{Nodes: nil, Complete: false},
-			local:    []localDocView{diffLocalView("missing")},
+			local:    []LocalDocView{diffLocalView("missing")},
 			want:     counts{},
 		},
 		// 行 3: 无/有且已删除 => 忽略（不计入任何集合）
 		{
 			name:     "远端无 / 本地已软删 => 忽略",
 			snapshot: sourceport.TreeSnapshot{Nodes: nil, Complete: true},
-			local:    []localDocView{diffDeletedView("gone")},
+			local:    []LocalDocView{diffDeletedView("gone")},
 			want:     counts{},
 		},
 		// 行: force=true 优先，即使 cursor 落后也更新
 		{
 			name:     "force=true 即使 EditTime <= cursor 也 ToUpdate",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("same", editOld)}, Complete: true},
-			local:    []localDocView{diffLocalView("same")},
+			local:    []LocalDocView{diffLocalView("same")},
 			cursor:   cursorOld,
 			force:    true,
 			want:     counts{update: 1},
@@ -147,7 +147,7 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "RetryRequired=true 即使 EditTime <= cursor 也 ToUpdate",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("same", editOld)}, Complete: true},
-			local:    []localDocView{diffFailedView("same")},
+			local:    []LocalDocView{diffFailedView("same")},
 			cursor:   cursorOld,
 			want:     counts{update: 1},
 		},
@@ -155,7 +155,7 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "EditTime 零值 => ToUpdate",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("same", time.Time{})}, Complete: true},
-			local:    []localDocView{diffLocalView("same")},
+			local:    []LocalDocView{diffLocalView("same")},
 			cursor:   cursorOld,
 			want:     counts{update: 1},
 		},
@@ -163,7 +163,7 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "EditTime > cursor => ToUpdate",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("same", editNew)}, Complete: true},
-			local:    []localDocView{diffLocalView("same")},
+			local:    []LocalDocView{diffLocalView("same")},
 			cursor:   cursorOld,
 			want:     counts{update: 1},
 		},
@@ -171,7 +171,7 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "EditTime <= cursor 且无重试 => Skipped",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("same", editOld)}, Complete: true},
-			local:    []localDocView{diffLocalView("same")},
+			local:    []LocalDocView{diffLocalView("same")},
 			cursor:   cursorOld,
 			want:     counts{skipped: 1},
 		},
@@ -179,7 +179,7 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "EditTime == cursor => Skipped",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("same", cursorOld)}, Complete: true},
-			local:    []localDocView{diffLocalView("same")},
+			local:    []LocalDocView{diffLocalView("same")},
 			cursor:   cursorOld,
 			want:     counts{skipped: 1},
 		},
@@ -194,7 +194,7 @@ func TestDiffRules(t *testing.T) {
 				},
 				Complete: true,
 			},
-			local: []localDocView{
+			local: []LocalDocView{
 				diffLocalView("changed"),
 				diffLocalView("stable"),
 				diffLocalView("gone"), // 本地有、远端无 => remove
@@ -206,7 +206,7 @@ func TestDiffRules(t *testing.T) {
 		{
 			name:     "已软删 + 远端重新出现 => ToUpdate",
 			snapshot: sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("back", editNew)}, Complete: true},
-			local:    []localDocView{diffDeletedView("back")},
+			local:    []LocalDocView{diffDeletedView("back")},
 			cursor:   cursorOld,
 			want:     counts{update: 1},
 		},
@@ -242,7 +242,7 @@ func TestDiffDedupRemoteDuplicateToken(t *testing.T) {
 		},
 		Complete: true,
 	}
-	local := []localDocView{diffLocalView("dup")}
+	local := []LocalDocView{diffLocalView("dup")}
 
 	plan := diff(snapshot, local, time.Time{}, false)
 
@@ -288,7 +288,7 @@ func TestDiffDedupLocalDuplicateExternalID(t *testing.T) {
 	// 远端没有该 token（Complete=true），按删除规则这两条理论上都应被删除，但因为是重复项，
 	// 必须排除出删除集合，绝不自动合并业务数据。
 	snapshot := sourceport.TreeSnapshot{Nodes: nil, Complete: true}
-	local := []localDocView{
+	local := []LocalDocView{
 		diffLocalView("dup"),
 		diffLocalView("dup"), // 重复
 	}
@@ -305,7 +305,7 @@ func TestDiffDedupLocalDuplicateExternalID(t *testing.T) {
 func TestDiffDedupLocalDuplicateKeepsFirstForUpdate(t *testing.T) {
 	// 远端有匹配节点，本地重复：首项用于 ToUpdate，重复项产生 warning。
 	snapshot := sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("dup", editNew)}, Complete: true}
-	local := []localDocView{
+	local := []LocalDocView{
 		diffLocalView("dup"),
 		diffLocalView("dup"),
 	}
@@ -330,7 +330,7 @@ func TestDiffIgnoresNonDocumentNodes(t *testing.T) {
 		},
 		Complete: true,
 	}
-	local := []localDocView{diffLocalView("folder-1")} // 本地以 folder-1 作为 external_id 的文档
+	local := []LocalDocView{diffLocalView("folder-1")} // 本地以 folder-1 作为 external_id 的文档
 	plan := diff(snapshot, local, cursorOld, false)
 
 	if len(plan.ToAdd) != 1 || plan.ToAdd[0].Token != "doc-1" {
@@ -356,7 +356,7 @@ func TestDiffForceOverridesSkipForAllMatching(t *testing.T) {
 		},
 		Complete: true,
 	}
-	local := []localDocView{diffLocalView("a"), diffLocalView("b")}
+	local := []LocalDocView{diffLocalView("a"), diffLocalView("b")}
 	plan := diff(snapshot, local, cursorOld, true)
 
 	if len(plan.ToUpdate) != 2 {
@@ -370,7 +370,7 @@ func TestDiffForceOverridesSkipForAllMatching(t *testing.T) {
 func TestDiffRetryRequiredBeatsCursor(t *testing.T) {
 	// 同一个节点同时满足 RetryRequired=true 和 EditTime<=cursor，RetryRequired 优先 => ToUpdate。
 	snapshot := sourceport.TreeSnapshot{Nodes: []model.ExternalNode{diffDocNode("a", editOld)}, Complete: true}
-	local := []localDocView{diffFailedView("a")}
+	local := []LocalDocView{diffFailedView("a")}
 	plan := diff(snapshot, local, cursorOld, false)
 
 	if len(plan.ToUpdate) != 1 {

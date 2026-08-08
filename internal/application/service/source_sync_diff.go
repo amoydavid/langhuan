@@ -13,15 +13,16 @@ import (
 )
 
 // 本文件实现 spec 5.3/5.4/5.5/6.4 中的纯函数：
-//   - localDocView / updateCandidate / syncPlan：本地 diff 视图与同步计划类型；
+//   - LocalDocView / updateCandidate / syncPlan：本地 diff 视图与同步计划类型；
 //   - diff：根据远端快照、本地投影、增量游标与 force 标志产出同步计划（去重 + 删除闸门）；
 //   - nodeOutcome / nodeResult / computeSafeCursor：基于成功前缀的安全 cursor watermark。
 //
 // 这些函数都是无 I/O 的纯函数，可独立单测，供 SourceSyncService（Task 7）编排使用。
 
-// localDocView 是单个本地文档在 diff 视图中的投影。
+// LocalDocView 是单个本地文档在 diff 视图中的投影。
 // 它由 SourceSyncStore（Task 6）从 documents/document_revisions 读出，聚合为 diff 所需的最小字段。
-type localDocView struct {
+// 导出以便 DB 层（package db）实现 ListSourceDocuments 时跨包返回该投影。
+type LocalDocView struct {
 	// DocumentID 是本地文档主键。
 	DocumentID uuid.UUID
 	// ExternalID 是远端稳定标识（飞书 docx token）；空表示非来源同步文档。
@@ -44,7 +45,7 @@ type localDocView struct {
 // updateCandidate 是一个 有/有 匹配对：远端节点 + 对应的本地投影。
 type updateCandidate struct {
 	Remote model.ExternalNode
-	Local  localDocView
+	Local  LocalDocView
 }
 
 // syncPlan 是一次 diff 的产物：需要新增、更新、删除的文档集合，以及跳过数和告警。
@@ -53,7 +54,7 @@ type updateCandidate struct {
 type syncPlan struct {
 	ToAdd    []model.ExternalNode
 	ToUpdate []updateCandidate
-	ToRemove []localDocView
+	ToRemove []LocalDocView
 	Skipped  int
 	Warnings []string
 }
@@ -68,7 +69,7 @@ type syncPlan struct {
 // diff 假设调用方传入的快照中需要被 diff 的文档节点都已经过类型过滤。
 //
 // diff 不做任何 I/O，也不修改 cursor；cursor 的推进由 computeSafeCursor 计算。
-func diff(snapshot sourceport.TreeSnapshot, local []localDocView, cursor time.Time, force bool) syncPlan {
+func diff(snapshot sourceport.TreeSnapshot, local []LocalDocView, cursor time.Time, force bool) syncPlan {
 	plan := syncPlan{}
 
 	// 1) 对本地投影按 external_id 去重：保留首项用于更新匹配，重复项从删除集合排除并产生 warning。
@@ -141,8 +142,8 @@ func diff(snapshot sourceport.TreeSnapshot, local []localDocView, cursor time.Ti
 
 // dedupLocal 对本地投影按 external_id 去重，返回首项索引以及"因重复而必须从删除集合排除"的 external_id 集合。
 // 重复项产生 warning；绝不自动合并业务数据（spec 5.1）。
-func dedupLocal(local []localDocView, plan *syncPlan) (map[string]localDocView, map[string]bool) {
-	byID := make(map[string]localDocView, len(local))
+func dedupLocal(local []LocalDocView, plan *syncPlan) (map[string]LocalDocView, map[string]bool) {
+	byID := make(map[string]LocalDocView, len(local))
 	excludedFromRemoval := make(map[string]bool)
 	for _, doc := range local {
 		if doc.ExternalID == "" {
@@ -165,7 +166,7 @@ func dedupLocal(local []localDocView, plan *syncPlan) (map[string]localDocView, 
 //	force → RetryRequired → EditTime 零值 → EditTime > cursor → 否则 Skipped。
 //
 // 返回 true 表示进入 ToUpdate；false 表示进入 Skipped。
-func classifyUpdate(force bool, local localDocView, editTime, cursor time.Time) bool {
+func classifyUpdate(force bool, local LocalDocView, editTime, cursor time.Time) bool {
 	switch {
 	case force:
 		// force 优先于 hash 与 cursor，所有匹配节点强制重新 Fetch + hash 判断。

@@ -90,6 +90,30 @@ type fakeSourceSyncStore struct {
 	listDocsErr       error
 	softDeleted       []uuid.UUID // 记录被 SoftDeleteDocument 调用的 document id
 	softDeleteErr     error
+	// Task 6 新增方法的最小可注入状态
+	upsertFolderCalls   int
+	upsertFolderErr     error
+	createRevCalls      int
+	nextRevisionNo      int64
+	createRevErr        error
+	retryCalls          int
+	retryErr            error
+	deleteCalls         []deleteCall
+	deleteErr           error
+	activeSyncJob       *model.Job
+	forceLatch          bool
+	requestSyncErr      error
+	consumeLatchErr     error
+	finalizeErr         error
+	failEnqueueErr      error
+	lastSyncResult      *SyncResult
+	updateSyncResultErr error
+}
+
+// deleteCall 记录一次 DeleteSourceDocument 调用的参数，供断言。
+type deleteCall struct {
+	DocumentID uuid.UUID
+	Policy     value.SourceDeletePolicy
 }
 
 func newFakeSourceSyncStore(kb *model.KnowledgeBase) *fakeSourceSyncStore {
@@ -232,6 +256,165 @@ func (s *fakeSourceSyncStore) CountActiveByConnection(_ context.Context, _ uuid.
 		return 0, s.activeCountErr
 	}
 	return s.activeCount, nil
+}
+
+// 以下方法覆盖 Task 6 新增的 SourceSyncStore 契约。这里仅提供可注入结果的最小 fake，
+// 供现有 source_sync service 测试编译通过；语义级断言由 Task 7 在使用处补充。
+func (s *fakeSourceSyncStore) ListSourceDocuments(_ context.Context, _ uuid.UUID) ([]LocalDocView, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listDocsErr != nil {
+		return nil, s.listDocsErr
+	}
+	views := make([]LocalDocView, 0, len(s.existingDocuments))
+	for _, doc := range s.existingDocuments {
+		views = append(views, LocalDocView{
+			DocumentID: doc.ID,
+			ExternalID: doc.ExternalID,
+			Status:     doc.Status,
+			DeletedAt:  doc.DeletedAt,
+		})
+	}
+	return views, nil
+}
+
+func (s *fakeSourceSyncStore) UpsertSourceFolder(_ context.Context, folder *model.FileTreeNode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upsertFolderErr != nil {
+		return s.upsertFolderErr
+	}
+	if folder != nil {
+		s.nodes[folder.ID] = folder
+	}
+	s.upsertFolderCalls++
+	return nil
+}
+
+func (s *fakeSourceSyncStore) CreateSyncedDocumentRevisionJob(_ context.Context, request UpdateDocumentRequest) (*SyncWriteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.createRevErr != nil {
+		return nil, s.createRevErr
+	}
+	s.createRevCalls++
+	result := &SyncWriteResult{
+		DocumentID: request.DocumentID,
+		RevisionID: request.RevisionID,
+		RevisionNo: s.nextRevisionNo,
+		JobID:      uuid.New(),
+		RawKey:     request.RawStorageKey,
+	}
+	s.nextRevisionNo++
+	return result, nil
+}
+
+func (s *fakeSourceSyncStore) RetrySourceRevision(_ context.Context, request RetryDocumentRequest) (*SyncWriteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retryErr != nil {
+		return nil, s.retryErr
+	}
+	s.retryCalls++
+	return &SyncWriteResult{
+		DocumentID: request.DocumentID,
+		RevisionID: request.RevisionID,
+		RevisionNo: s.nextRevisionNo,
+		JobID:      uuid.New(),
+	}, nil
+}
+
+func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deleteErr != nil {
+		return nil, s.deleteErr
+	}
+	s.deleteCalls = append(s.deleteCalls, deleteCall{DocumentID: documentID, Policy: policy})
+	if doc, ok := s.documents[documentID]; ok && doc.DeletedAt == nil {
+		now := time.Now().UTC()
+		doc.DeletedAt = &now
+		doc.Status = value.DocumentStatusDeleted
+	}
+	return nil, nil
+}
+
+func (s *fakeSourceSyncStore) RequestSourceSync(_ context.Context, _, _, _ uuid.UUID, _ bool) (*model.Job, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.requestSyncErr != nil {
+		return nil, false, s.requestSyncErr
+	}
+	if s.activeSyncJob != nil {
+		return s.activeSyncJob, false, nil
+	}
+	job, err := model.NewJob(model.NewJobInput{
+		WorkspaceID: s.kb.WorkspaceID, KnowledgeBaseID: s.kb.ID,
+		Type: model.SourceSyncJobType, Status: value.JobStatusPending,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	s.activeSyncJob = job
+	s.jobs[job.ID] = job
+	return job, true, nil
+}
+
+func (s *fakeSourceSyncStore) ConsumeForceLatch(_ context.Context, _, _, _ uuid.UUID) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.consumeLatchErr != nil {
+		return false, s.consumeLatchErr
+	}
+	v := s.forceLatch
+	s.forceLatch = false
+	return v, nil
+}
+
+func (s *fakeSourceSyncStore) FinalizeSourceSyncJob(_ context.Context, _, _, jobID uuid.UUID, status value.JobStatus, _ string) (*model.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finalizeErr != nil {
+		return nil, s.finalizeErr
+	}
+	if job, ok := s.jobs[jobID]; ok {
+		job.Status = status
+	}
+	s.activeSyncJob = nil
+	if s.forceLatch {
+		next, err := model.NewJob(model.NewJobInput{
+			WorkspaceID: s.kb.WorkspaceID, KnowledgeBaseID: s.kb.ID,
+			Type: model.SourceSyncJobType, Status: value.JobStatusPending,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.forceLatch = false
+		s.jobs[next.ID] = next
+		s.activeSyncJob = next
+		return next, nil
+	}
+	return nil, nil
+}
+
+func (s *fakeSourceSyncStore) FailSourceSyncEnqueue(_ context.Context, _, _, jobID uuid.UUID, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failEnqueueErr != nil {
+		return s.failEnqueueErr
+	}
+	if job, ok := s.jobs[jobID]; ok {
+		job.Status = value.JobStatusFailed
+		job.ErrorMessage = message
+	}
+	return nil
+}
+
+func (s *fakeSourceSyncStore) UpdateSyncResult(_ context.Context, _, _ uuid.UUID, result SyncResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastSyncResult = &result
+	return s.updateSyncResultErr
 }
 
 // fakeSyncRawStore 返回基于 document id 的固定 key，记录 put/delete。

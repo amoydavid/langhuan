@@ -4,6 +4,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -434,5 +435,527 @@ func TestSourceSyncStoreUpdateSyncCursorNotFound(t *testing.T) {
 	err := store.UpdateSyncCursor(ctx, seed.workspaceID, missingKB, time.Now().UTC())
 	if err == nil {
 		t.Fatal("UpdateSyncCursor on missing KB returned nil; want ErrNotFound")
+	}
+}
+
+// seedSyncedDocument 落库一份飞书同步文档（external_id + reason=crawl revision），
+// 返回 (document, revision, node, job)，供更新/重试/删除测试复用。
+func seedSyncedDocument(
+	t *testing.T, ctx context.Context, database *gorm.DB, seed sourceSyncSeed, title, externalID string,
+) (*model.Document, *model.DocumentRevision, *model.FileTreeNode, *model.Job) {
+	t.Helper()
+	document, node, revision, job := newSyncedFileAggregate(t, seed.workspaceID, seed.kbID, seed.rootID, title, externalID)
+	store := NewSourceSyncDBStore(database)
+	if err := store.WithinWorkspace(
+		ctx, seed.workspaceID,
+		func(txCtx context.Context, tx appservice.SourceSyncTx) error {
+			return tx.CreateSyncedDocumentNodeRevisionAndJob(txCtx, document, node, revision, job)
+		},
+	); err != nil {
+		t.Fatalf("seed synced document: %v", err)
+	}
+	return document, revision, node, job
+}
+
+// ---- Task 6: 稳定 Document 更新路径 ----
+
+// TestSourceSyncStoreReusesDocumentAndIncrementsRevision 验证 CreateSyncedDocumentRevisionJob
+// 复用既有 Document（同一 DocumentID），revision_no=max+1，更新 content_hash/status/title。
+func TestSourceSyncStoreReusesDocumentAndIncrementsRevision(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	document, _, _, _ := seedSyncedDocument(t, ctx, database, seed, "飞书文档一", "doccnUpdate1")
+	store := NewSourceSyncDBStore(database)
+
+	newRevisionID := uuid.New()
+	result, err := store.CreateSyncedDocumentRevisionJob(ctx, appservice.UpdateDocumentRequest{
+		WorkspaceID:     seed.workspaceID,
+		KnowledgeBaseID: seed.kbID,
+		ExternalID:      "doccnUpdate1",
+		DocumentID:      document.ID,
+		RevisionID:      newRevisionID,
+		Title:           "飞书文档一（已更新）",
+		ParentNodeID:    seed.rootID,
+		RawStorageKey:   "raw/doccnUpdate1-v2.md",
+		SHA256:          "newhash-v2",
+		SizeBytes:       11,
+		ContentType:     "text/markdown",
+		FileType:        "markdown",
+		Reason:          value.DocumentRevisionReasonCrawl,
+	})
+	if err != nil {
+		t.Fatalf("CreateSyncedDocumentRevisionJob: %v", err)
+	}
+	if result.DocumentID != document.ID {
+		t.Fatalf("result DocumentID = %s, want 复用 %s", result.DocumentID, document.ID)
+	}
+	if result.RevisionID != newRevisionID {
+		t.Fatalf("result RevisionID = %s, want %s", result.RevisionID, newRevisionID)
+	}
+	if result.RevisionNo != 2 {
+		t.Fatalf("result RevisionNo = %d, want 2", result.RevisionNo)
+	}
+
+	// 断言 Document content_hash 更新、status=pending、未软删，active_revision_id 未切换。
+	var docRow DocumentRow
+	if err := database.WithContext(ctx).
+		First(&docRow, "workspace_id = ? AND id = ?", seed.workspaceID, document.ID).Error; err != nil {
+		t.Fatalf("read back document: %v", err)
+	}
+	if docRow.ContentHash == nil || *docRow.ContentHash != "newhash-v2" {
+		t.Fatalf("document content_hash = %#v, want newhash-v2", docRow.ContentHash)
+	}
+	if docRow.Status != string(value.DocumentStatusPending) {
+		t.Fatalf("document status = %q, want pending", docRow.Status)
+	}
+	if docRow.DeletedAt != nil {
+		t.Fatalf("document deleted_at should be nil after update, got %v", docRow.DeletedAt)
+	}
+	if docRow.ActiveRevisionID != nil {
+		t.Fatalf("active_revision_id should NOT switch in source tx, got %v", docRow.ActiveRevisionID)
+	}
+
+	// 断言新 revision 落库 revision_no=2。
+	var revRow DocumentRevisionRow
+	if err := database.WithContext(ctx).
+		First(&revRow, "workspace_id = ? AND id = ?", seed.workspaceID, newRevisionID).Error; err != nil {
+		t.Fatalf("read back new revision: %v", err)
+	}
+	if revRow.RevisionNo != 2 {
+		t.Fatalf("revision_no = %d, want 2", revRow.RevisionNo)
+	}
+	if revRow.RevisionReason != string(value.DocumentRevisionReasonCrawl) {
+		t.Fatalf("revision reason = %q, want crawl", revRow.RevisionReason)
+	}
+
+	// 断言 parse Job 落库。
+	var jobRow JobRow
+	if err := database.WithContext(ctx).
+		First(&jobRow, "workspace_id = ? AND id = ?", seed.workspaceID, result.JobID).Error; err != nil {
+		t.Fatalf("read back parse job: %v", err)
+	}
+	if jobRow.Type != "document_parse_start" {
+		t.Fatalf("job type = %q, want document_parse_start", jobRow.Type)
+	}
+}
+
+// TestSourceSyncStoreCreateRevisionRejectsMismatchedExternalID 验证 external_id 对应 Document
+// 与请求 DocumentID 不一致时返回 Conflict（绝不静默复用错误文档）。
+func TestSourceSyncStoreCreateRevisionRejectsMismatchedExternalID(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	document, _, _, _ := seedSyncedDocument(t, ctx, database, seed, "飞书冲突文档", "doccnConflict")
+	store := NewSourceSyncDBStore(database)
+
+	// 用错误的 DocumentID + 正确 external_id 调用，应拒绝。
+	_, err := store.CreateSyncedDocumentRevisionJob(ctx, appservice.UpdateDocumentRequest{
+		WorkspaceID:     seed.workspaceID,
+		KnowledgeBaseID: seed.kbID,
+		ExternalID:      "doccnConflict",
+		DocumentID:      uuid.New(), // 与 document.ID 不同
+		RevisionID:      uuid.New(),
+		Title:           "飞书冲突文档",
+		ParentNodeID:    seed.rootID,
+		RawStorageKey:   "raw/x.md",
+		SHA256:          "hash",
+		SizeBytes:       1,
+		FileType:        "markdown",
+		Reason:          value.DocumentRevisionReasonCrawl,
+	})
+	if err == nil {
+		t.Fatal("CreateSyncedDocumentRevisionJob accepted mismatched DocumentID; want Conflict")
+	}
+	_ = document
+}
+
+// ---- force latch（spec 8.2）----
+
+// TestConsumeAndFinalizeForceLatchIsAtomic 验证 latch 的请求/消费/完成闭环：
+// RequestSourceSync(force=true) 新建 Job；ConsumeForceLatch 消费 latch；
+// 再次 RequestSourceSync 复用进行中 Job；FinalizeSourceSyncJob 在 latch 被重新置位后返回下一个 Job。
+func TestConsumeAndFinalizeForceLatchIsAtomic(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	current, created, err := store.RequestSourceSync(ctx, seed.workspaceID, seed.kbID, seed.connectionID, true)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+	if !created {
+		t.Fatal("首次 RequestSourceSync 应新建 Job，got created=false")
+	}
+
+	// 消费 latch => true。
+	force, err := store.ConsumeForceLatch(ctx, seed.workspaceID, seed.kbID, current.ID)
+	if err != nil {
+		t.Fatalf("ConsumeForceLatch: %v", err)
+	}
+	if !force {
+		t.Fatal("ConsumeForceLatch 返回 false，want true（latch 已置位）")
+	}
+
+	// 再次消费 => false（已被清空）。
+	force2, err := store.ConsumeForceLatch(ctx, seed.workspaceID, seed.kbID, current.ID)
+	if err != nil {
+		t.Fatalf("ConsumeForceLatch second: %v", err)
+	}
+	if force2 {
+		t.Fatal("第二次 ConsumeForceLatch 应返回 false")
+	}
+
+	// 再次 force=true：应复用进行中的 Job（created=false）并重新置位 latch。
+	same, created, err := store.RequestSourceSync(ctx, seed.workspaceID, seed.kbID, seed.connectionID, true)
+	if err != nil {
+		t.Fatalf("RequestSourceSync reuse: %v", err)
+	}
+	if created {
+		t.Fatal("复用进行中 Job 应 created=false")
+	}
+	if same.ID != current.ID {
+		t.Fatalf("复用 Job id = %s, want %s", same.ID, current.ID)
+	}
+
+	// FinalizeSourceSyncJob(succeeded)：latch 仍为 true => 返回新建的下一个 Job。
+	next, err := store.FinalizeSourceSyncJob(ctx, seed.workspaceID, seed.kbID, current.ID, value.JobStatusCompleted, "")
+	if err != nil {
+		t.Fatalf("FinalizeSourceSyncJob: %v", err)
+	}
+	if next == nil {
+		t.Fatal("FinalizeSourceSyncJob 返回 nil，want 新建的下一个 Job（latch 为 true）")
+	}
+	if next.ID == current.ID {
+		t.Fatal("下一个 Job 不应等于已完成的 Job")
+	}
+
+	// 原 Job 应为 succeeded 终态。
+	var curRow JobRow
+	if err := database.WithContext(ctx).
+		First(&curRow, "workspace_id = ? AND id = ?", seed.workspaceID, current.ID).Error; err != nil {
+		t.Fatalf("read back current job: %v", err)
+	}
+	if curRow.Status != string(value.JobStatusCompleted) {
+		t.Fatalf("current job status = %q, want succeeded", curRow.Status)
+	}
+}
+
+// TestRequestSourceSyncForceFalseDoesNotSetLatch 验证 requestedForce=false 不置位 latch。
+func TestRequestSourceSyncForceFalseDoesNotSetLatch(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	job, created, err := store.RequestSourceSync(ctx, seed.workspaceID, seed.kbID, seed.connectionID, false)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+	if !created {
+		t.Fatal("首次应新建 Job")
+	}
+	force, err := store.ConsumeForceLatch(ctx, seed.workspaceID, seed.kbID, job.ID)
+	if err != nil {
+		t.Fatalf("ConsumeForceLatch: %v", err)
+	}
+	if force {
+		t.Fatal("force=false 时 latch 应保持 false")
+	}
+	// finalize 时 latch=false => 不应产生下一个 Job。
+	next, err := store.FinalizeSourceSyncJob(ctx, seed.workspaceID, seed.kbID, job.ID, value.JobStatusCompleted, "")
+	if err != nil {
+		t.Fatalf("FinalizeSourceSyncJob: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("latch=false 时不应创建下一个 Job，got %s", next.ID)
+	}
+}
+
+// ---- UpdateSyncResult（spec：保留其它 jsonb key）----
+
+// TestUpdateSyncResultPreservesOtherKeys 验证 jsonb_set 只改 sync_last_result，保留 latch/cursor/root。
+func TestUpdateSyncResultPreservesOtherKeys(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	// 给 KB 设置 source_config（含 root_token + latch + cursor）。
+	if err := database.WithContext(ctx).Exec(
+		"UPDATE knowledge_bases SET source_type = 'feishu_wiki', "+
+			"source_config = '{\"root_token\":\"wikcnRoot\",\"sync_requested_force\":true,\"sync_cursor\":\"2026-01-01T00:00:00Z\"}'::jsonb "+
+			"WHERE workspace_id = ? AND id = ?",
+		seed.workspaceID, seed.kbID,
+	).Error; err != nil {
+		t.Fatalf("set kb source_config: %v", err)
+	}
+
+	result := appservice.SyncResult{
+		Status:           "succeeded",
+		Complete:         true,
+		SyncedDocuments:  3,
+		SkippedDocuments: 1,
+		FinishedAt:       time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC),
+	}
+	if err := store.UpdateSyncResult(ctx, seed.workspaceID, seed.kbID, result); err != nil {
+		t.Fatalf("UpdateSyncResult: %v", err)
+	}
+
+	// sync_last_result 应可读回。
+	var lastResult string
+	if err := database.WithContext(ctx).
+		Raw("SELECT source_config->>'sync_last_result' FROM knowledge_bases WHERE workspace_id = ? AND id = ?",
+			seed.workspaceID, seed.kbID).
+		Scan(&lastResult).Error; err != nil {
+		t.Fatalf("read back sync_last_result: %v", err)
+	}
+	if !strings.Contains(lastResult, "\"synced_documents\": 3") {
+		t.Fatalf("sync_last_result = %s, want 含 synced_documents: 3", lastResult)
+	}
+
+	// 其它 key 应保留。
+	var rootToken, latch, cursor string
+	database.WithContext(ctx).
+		Raw("SELECT source_config->>'root_token' FROM knowledge_bases WHERE id = ?", seed.kbID).Scan(&rootToken)
+	database.WithContext(ctx).
+		Raw("SELECT source_config->>'sync_requested_force' FROM knowledge_bases WHERE id = ?", seed.kbID).Scan(&latch)
+	database.WithContext(ctx).
+		Raw("SELECT source_config->>'sync_cursor' FROM knowledge_bases WHERE id = ?", seed.kbID).Scan(&cursor)
+	if rootToken != "wikcnRoot" {
+		t.Fatalf("root_token = %q, want wikcnRoot（jsonb_set 应保留其它 key）", rootToken)
+	}
+	if latch != "true" {
+		t.Fatalf("sync_requested_force = %q, want true（不应被 UpdateSyncResult 清空）", latch)
+	}
+	if cursor == "" {
+		t.Fatal("sync_cursor 被错误清除")
+	}
+}
+
+// ---- ListSourceDocuments + RetryRequired ----
+
+// TestListSourceDocumentsRetryRequiredForFailedDoc 验证：
+//   - status=failed 的文档 RetryRequired=true；
+//   - 最新 source revision 未 ready（pending）的文档 RetryRequired=true；
+//   - 已 ready 且无失败 Job 的文档 RetryRequired=false。
+func TestListSourceDocumentsRetryRequiredForFailedDoc(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	// 文档 A：文档 status=failed。
+	docA, _, _, _ := seedSyncedDocument(t, ctx, database, seed, "失败文档A", "doccnFailA")
+	if err := database.WithContext(ctx).Model(&DocumentRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, docA.ID).
+		Update("status", string(value.DocumentStatusFailed)).Error; err != nil {
+		t.Fatalf("mark docA failed: %v", err)
+	}
+
+	// 文档 B：revision 仍 pending（未完成）。
+	seedSyncedDocument(t, ctx, database, seed, "未完成文档B", "doccnPendingB")
+
+	// 文档 C：revision 置 ready + parse job 置 succeeded（RetryRequired=false）。
+	_, revC, _, jobC := seedSyncedDocument(t, ctx, database, seed, "就绪文档C", "doccnReadyC")
+	now := time.Now().UTC()
+	if err := database.WithContext(ctx).Model(&DocumentRevisionRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, revC.ID).
+		Updates(map[string]any{"status": string(value.DocumentRevisionReady), "completed_at": now}).Error; err != nil {
+		t.Fatalf("mark revC ready: %v", err)
+	}
+	if err := database.WithContext(ctx).Model(&JobRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, jobC.ID).
+		Update("status", string(value.JobStatusCompleted)).Error; err != nil {
+		t.Fatalf("mark jobC succeeded: %v", err)
+	}
+
+	views, err := store.ListSourceDocuments(ctx, seed.kbID)
+	if err != nil {
+		t.Fatalf("ListSourceDocuments: %v", err)
+	}
+	byExternal := make(map[string]appservice.LocalDocView, len(views))
+	for _, v := range views {
+		byExternal[v.ExternalID] = v
+	}
+
+	if a, ok := byExternal["doccnFailA"]; !ok {
+		t.Fatal("缺少 doccnFailA")
+	} else if !a.RetryRequired {
+		t.Fatal("status=failed 的文档应 RetryRequired=true")
+	}
+
+	if b, ok := byExternal["doccnPendingB"]; !ok {
+		t.Fatal("缺少 doccnPendingB")
+	} else if !b.RetryRequired {
+		t.Fatal("revision 未 ready 的文档应 RetryRequired=true")
+	}
+
+	if c, ok := byExternal["doccnReadyC"]; !ok {
+		t.Fatal("缺少 doccnReadyC")
+	} else if c.RetryRequired {
+		t.Fatal("revision ready 且 job succeeded 的文档应 RetryRequired=false")
+	} else if c.RevisionNo != 1 {
+		t.Fatalf("doccnReadyC RevisionNo = %d, want 1", c.RevisionNo)
+	}
+}
+
+// ---- DeleteSourceDocument（keep / remove）----
+
+// TestDeleteSourceDocumentKeepSoftDeletes 验证 keep 策略软删、保留对象，返回空清理列表。
+func TestDeleteSourceDocumentKeepSoftDeletes(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	document, rev, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档keep", "doccnDelKeep")
+	store := NewSourceSyncDBStore(database)
+
+	objects, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteKeep)
+	if err != nil {
+		t.Fatalf("DeleteSourceDocument keep: %v", err)
+	}
+	if len(objects) != 0 {
+		t.Fatalf("keep 策略应返回空清理列表，got %d", len(objects))
+	}
+
+	var docRow DocumentRow
+	if err := database.WithContext(ctx).
+		First(&docRow, "workspace_id = ? AND id = ?", seed.workspaceID, document.ID).Error; err != nil {
+		t.Fatalf("read back document: %v", err)
+	}
+	if docRow.DeletedAt == nil {
+		t.Fatal("keep 策略应软删（deleted_at 非空）")
+	}
+	if docRow.Status != string(value.DocumentStatusDeleted) {
+		t.Fatalf("status = %q, want deleted", docRow.Status)
+	}
+	// revision 应仍存在。
+	var revCount int64
+	database.WithContext(ctx).Model(&DocumentRevisionRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, rev.ID).Count(&revCount)
+	if revCount != 1 {
+		t.Fatalf("keep 策略应保留 revision，got count=%d", revCount)
+	}
+}
+
+// TestDeleteSourceDocumentRemoveCollectsKeysAndCascades 验证 remove 策略：
+// 收集 raw key、建立 KB 级 source_cleanup Job、硬删 Document（级联清掉 revision）。
+func TestDeleteSourceDocumentRemoveCollectsKeysAndCascades(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	document, rev, _, _ := seedSyncedDocument(t, ctx, database, seed, "待删文档remove", "doccnDelRemove")
+	store := NewSourceSyncDBStore(database)
+
+	objects, err := store.DeleteSourceDocument(ctx, document.ID, value.SourceDeleteRemove)
+	if err != nil {
+		t.Fatalf("DeleteSourceDocument remove: %v", err)
+	}
+	if len(objects) == 0 {
+		t.Fatal("remove 策略应收集清理对象")
+	}
+	// 应包含该 revision 的 raw key。
+	wantRaw := "raw/doccnDelRemove.md"
+	foundRaw := false
+	for _, o := range objects {
+		if o.Key == wantRaw && o.Store == "raw" {
+			foundRaw = true
+		}
+	}
+	if !foundRaw {
+		t.Fatalf("清理对象未包含 raw key %q, got %+v", wantRaw, objects)
+	}
+
+	// Document 应被硬删。
+	var docCount int64
+	database.WithContext(ctx).Model(&DocumentRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, document.ID).Count(&docCount)
+	if docCount != 0 {
+		t.Fatalf("remove 策略应硬删 Document，仍剩 %d 行", docCount)
+	}
+	// revision 应被 FK 级联删除。
+	var revCount int64
+	database.WithContext(ctx).Model(&DocumentRevisionRow{}).
+		Where("workspace_id = ? AND id = ?", seed.workspaceID, rev.ID).Count(&revCount)
+	if revCount != 0 {
+		t.Fatalf("revision 应被级联删除，仍剩 %d 行", revCount)
+	}
+
+	// 应建立 KB 级 source_cleanup Job（无 document_id），payload 含 key 列表。
+	var cleanupJob JobRow
+	if err := database.WithContext(ctx).
+		Where("workspace_id = ? AND knowledge_base_id = ? AND type = ?",
+			seed.workspaceID, seed.kbID, model.SourceCleanupJobType).
+		First(&cleanupJob).Error; err != nil {
+		t.Fatalf("read back source_cleanup job: %v", err)
+	}
+	if cleanupJob.DocumentID != nil {
+		t.Fatalf("source_cleanup Job 应无 document_id，got %v", cleanupJob.DocumentID)
+	}
+	payloadObjs, _ := cleanupJob.Payload["objects"].([]any)
+	if len(payloadObjs) == 0 {
+		t.Fatalf("source_cleanup Job payload.objects 为空，应包含清理 key")
+	}
+}
+
+// ---- UpsertSourceFolder ----
+
+// TestUpsertSourceFolderInsertsThenUpdates 验证先插入、再按 external_id upsert 更新。
+func TestUpsertSourceFolderInsertsThenUpdates(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	// 第一次：插入 folder。
+	parentID := seed.rootID
+	folder1, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID, ParentID: &parentID,
+		NodeType: value.FileTreeNodeFolder, Name: "飞书文件夹",
+		ExternalID: "foldercnRoot1",
+	})
+	if err != nil {
+		t.Fatalf("new folder1: %v", err)
+	}
+	if err := store.UpsertSourceFolder(ctx, folder1); err != nil {
+		t.Fatalf("UpsertSourceFolder insert: %v", err)
+	}
+
+	// 第二次：同 external_id、不同 parent/name => upsert 更新既有行。
+	otherParent := uuid.New()
+	// 先插入一个二级父 folder 供 reparent。
+	secondParent, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID, ParentID: &parentID,
+		NodeType: value.FileTreeNodeFolder, Name: "父文件夹2",
+		ExternalID: "foldercnParent2",
+	})
+	if err != nil {
+		t.Fatalf("new second parent: %v", err)
+	}
+	if err := store.UpsertSourceFolder(ctx, secondParent); err != nil {
+		t.Fatalf("UpsertSourceFolder second parent: %v", err)
+	}
+	otherParent = secondParent.ID
+
+	folder2, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID, ParentID: &otherParent,
+		NodeType: value.FileTreeNodeFolder, Name: "飞书文件夹（改名）",
+		ExternalID: "foldercnRoot1", // 同 external_id
+	})
+	if err != nil {
+		t.Fatalf("new folder2: %v", err)
+	}
+	if err := store.UpsertSourceFolder(ctx, folder2); err != nil {
+		t.Fatalf("UpsertSourceFolder update: %v", err)
+	}
+
+	// 应只有一行 external_id=foldercnRoot1，且 parent/name 已更新为新值。
+	var rows []FileTreeNodeRow
+	if err := database.WithContext(ctx).
+		Where("workspace_id = ? AND knowledge_base_id = ? AND external_id = ?",
+			seed.workspaceID, seed.kbID, "foldercnRoot1").
+		Find(&rows).Error; err != nil {
+		t.Fatalf("read back folder: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("应有 1 行 folder，got %d", len(rows))
+	}
+	if rows[0].Name != "飞书文件夹（改名）" {
+		t.Fatalf("folder name = %q, want 改名后的值", rows[0].Name)
+	}
+	if rows[0].ParentID == nil || *rows[0].ParentID != otherParent {
+		t.Fatalf("folder parent_id = %#v, want %s", rows[0].ParentID, otherParent)
 	}
 }

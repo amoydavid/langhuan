@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/domain/model"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // DueKnowledgeBase 描述一个到期需要同步的飞书知识库的最小 lineage。
@@ -53,6 +54,67 @@ type SourceSyncTx interface {
 	SoftDeleteDocument(ctx context.Context, documentID uuid.UUID) error
 }
 
+// SyncResult 是单次同步的结果摘要，写入 source_config.sync_last_result。
+// UpdateSyncResult 用 jsonb_set 仅替换 sync_last_result 这一个 key，保留其它键。
+type SyncResult struct {
+	Status            string    `json:"status"` // succeeded|partial|failed
+	Complete          bool      `json:"complete"`
+	SyncedDocuments   int       `json:"synced_documents"`
+	SkippedDocuments  int       `json:"skipped_documents"`
+	FailedDocuments   int       `json:"failed_documents"`
+	OversizeDocuments int       `json:"oversize_documents"`
+	UnsupportedNodes  int       `json:"unsupported_nodes"`
+	DeletedDocuments  int       `json:"deleted_documents"`
+	CleanupPending    int       `json:"cleanup_pending"`
+	FinishedAt        time.Time `json:"finished_at"`
+}
+
+// UpdateDocumentRequest 描述一次稳定文档更新（spec 6.3 更新路径）的输入。
+// 通过 external_id 复用既有 Document、递增 revision_no、写入新 Revision+Job。
+type UpdateDocumentRequest struct {
+	WorkspaceID     uuid.UUID
+	KnowledgeBaseID uuid.UUID
+	ExternalID      string
+	DocumentID      uuid.UUID
+	RevisionID      uuid.UUID
+	Title           string
+	ParentNodeID    uuid.UUID
+	RawStorageKey   string
+	SHA256          string
+	SizeBytes       int64
+	ContentType     string
+	FileType        string
+	Reason          value.DocumentRevisionReason
+}
+
+// RetryDocumentRequest 描述一次重试：复用最新未完成/失败的 revision，
+// 不创建相同 hash 的新 revision；创建/重置幂等的 parse Job。
+type RetryDocumentRequest struct {
+	WorkspaceID     uuid.UUID
+	KnowledgeBaseID uuid.UUID
+	DocumentID      uuid.UUID
+	RevisionID      uuid.UUID
+	SHA256          string
+	Title           string
+	ParentNodeID    uuid.UUID
+}
+
+// SyncWriteResult 是一次稳定写入（更新/重试）返回给服务层的结果。
+type SyncWriteResult struct {
+	DocumentID uuid.UUID
+	RevisionID uuid.UUID
+	RevisionNo int64
+	JobID      uuid.UUID
+	RawKey     string
+}
+
+// CleanupObject 是删除 remove 策略下需要清理的外部对象 key。
+// 调用方（Task 8）在事务提交后据 Store 值归类删除（Task 6 仅负责收集 + 建清理 Job）。
+type CleanupObject struct {
+	Key   string
+	Store string // raw|parser|asset
+}
+
 // SourceSyncStore 进入一个 Workspace 级别的来源同步事务。
 type SourceSyncStore interface {
 	WithinWorkspace(ctx context.Context, workspaceID uuid.UUID, fn func(ctx context.Context, tx SourceSyncTx) error) error
@@ -67,4 +129,33 @@ type SourceSyncStore interface {
 	// CountActiveByConnection 统计某 connection 下进行中的 source_sync 任务数（pending/running）。
 	// 供 Meta Scheduler 按应用限流使用。
 	CountActiveByConnection(ctx context.Context, workspaceID, connectionID uuid.UUID) (int, error)
+
+	// ListSourceDocuments 返回该 KB 下所有 external_id 非空的文档（含已软删的），
+	// 并聚合最新 source revision 与失败/重试信号，供 diff 计算使用。
+	ListSourceDocuments(ctx context.Context, kbID uuid.UUID) ([]LocalDocView, error)
+	// UpsertSourceFolder 锁定 workspace/KB/external_id 更新 parent/name；缺失则插入。
+	UpsertSourceFolder(ctx context.Context, folder *model.FileTreeNode) error
+	// CreateSyncedDocumentRevisionJob 在单个 workspace 事务内：锁定既有 Document
+	// （按 workspace/kb/external_id FOR UPDATE），revision_no=max+1，写 Revision+Job，
+	// 更新 Document content_hash/status/title，更新 FileTreeNode。
+	CreateSyncedDocumentRevisionJob(ctx context.Context, request UpdateDocumentRequest) (*SyncWriteResult, error)
+	// RetrySourceRevision 复用最新未完成/失败的 revision（不创建相同 hash 的新 revision），
+	// 创建/重置幂等的 parse Job。
+	RetrySourceRevision(ctx context.Context, request RetryDocumentRequest) (*SyncWriteResult, error)
+	// DeleteSourceDocument 按策略删除文档：keep 仅软删；remove 先收集 raw/parser/asset key、
+	// 建立 KB 级清理 Job、再删除 Document（外键级联）。返回收集到的清理对象供调用方入队。
+	DeleteSourceDocument(ctx context.Context, documentID uuid.UUID, policy value.SourceDeletePolicy) ([]CleanupObject, error)
+	// RequestSourceSync 在 KB 锁定事务内：latch = old OR requestedForce；
+	// 存在 pending/running 的 source_sync Job 则复用（created=false），否则新建（created=true）。
+	RequestSourceSync(ctx context.Context, workspaceID, kbID, connectionID uuid.UUID, requestedForce bool) (job *model.Job, created bool, err error)
+	// ConsumeForceLatch 原子读取并清空 force latch，返回读到的值。
+	ConsumeForceLatch(ctx context.Context, workspaceID, kbID, jobID uuid.UUID) (bool, error)
+	// FinalizeSourceSyncJob 在同一个 KB 锁定事务内：标记 Job 终态，读取 latch，
+	// 若为 true 则新建并返回下一个 source_sync Job（调用方入队）；否则返回 nil。
+	FinalizeSourceSyncJob(ctx context.Context, workspaceID, kbID, jobID uuid.UUID, status value.JobStatus, errorMessage string) (*model.Job, error)
+	// FailSourceSyncEnqueue 标记首次入队失败，但保留 force latch 供调度器恢复。
+	FailSourceSyncEnqueue(ctx context.Context, workspaceID, kbID, jobID uuid.UUID, message string) error
+	// UpdateSyncResult 用 jsonb_set 把 SyncResult 写入 source_config.sync_last_result，
+	// 保留其它 root/cursor/cron/latch 键。
+	UpdateSyncResult(ctx context.Context, workspaceID, kbID uuid.UUID, result SyncResult) error
 }
