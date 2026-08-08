@@ -22,10 +22,11 @@ type fakeKBSyncEnqueuer struct {
 type kbEnqueueCall struct {
 	WorkspaceID uuid.UUID
 	KBID        uuid.UUID
+	Force       bool
 }
 
-func (e *fakeKBSyncEnqueuer) EnqueueSync(_ context.Context, workspaceID, kbID uuid.UUID) (*model.Job, error) {
-	e.calls = append(e.calls, kbEnqueueCall{WorkspaceID: workspaceID, KBID: kbID})
+func (e *fakeKBSyncEnqueuer) EnqueueSync(_ context.Context, workspaceID, kbID uuid.UUID, options SyncOptions) (*model.Job, error) {
+	e.calls = append(e.calls, kbEnqueueCall{WorkspaceID: workspaceID, KBID: kbID, Force: options.Force})
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -64,6 +65,10 @@ func TestCreateFeishuKnowledgeBaseEnqueuesFirstSync(t *testing.T) {
 	}
 	if enqueuer.calls[0].WorkspaceID != workspaceID || enqueuer.calls[0].KBID != created.ID {
 		t.Fatalf("enqueue call = %+v", enqueuer.calls[0])
+	}
+	// 首次同步应显式传 Force=false（不强制全量，复用 hash 去重）。
+	if enqueuer.calls[0].Force {
+		t.Fatalf("首次同步 Force = true, want false; call = %+v", enqueuer.calls[0])
 	}
 	// 落库的 KB 应携带来源信息。
 	persisted := repository.items[created.ID]

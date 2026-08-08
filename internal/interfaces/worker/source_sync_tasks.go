@@ -26,8 +26,10 @@ type SourceSyncTaskPayload struct {
 }
 
 // SourceSyncRunner 是 worker 适配的应用层用例（由 *SourceSyncService 实现）。
+// RunSourceSyncJob 在一次调用内完成 spec 8.2 的 latch 流程：
+// ConsumeForceLatch → syncKnowledgeBase(force) → FinalizeSourceSyncJob（含后续 Job 派发）。
 type SourceSyncRunner interface {
-	SyncKnowledgeBase(ctx context.Context, workspaceID, kbID uuid.UUID) error
+	RunSourceSyncJob(ctx context.Context, workspaceID, kbID, jobID uuid.UUID) error
 }
 
 // SourceSyncDispatcher 在 source_sync 任务完成后触发同 connection 的续跑（避免空等）。
@@ -64,8 +66,12 @@ func (h SourceSyncHandler) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// Handle 解码 payload 并校验 lineage → MarkRunning → 调 Runner.SyncKnowledgeBase → 成功 MarkSucceeded，
-// 失败 MarkFailed 并按错误类型决定是否 SkipRetry（validation/notfound 类永久错误立即终止，其它可重试）。
+// Handle 解码 payload 并校验 lineage → MarkRunning → 调 Runner.RunSourceSyncJob
+// （内部完成 latch 消费、同步、FinalizeSourceSyncJob 终态化与后续 Job 派发）。
+//
+// 终态标记由服务的 FinalizeSourceSyncJob 完成，worker 不再调用 MarkSucceeded/MarkFailed。
+// 返回的 error 用于 asynq 重试语义：永久错误（validation/notfound）SkipRetry 并触发续跑，
+// 其它可重试错误返回让 asynq 重试（重试时服务的 RunSourceSyncJob 对已终结 Job 幂等跳过）。
 func (h SourceSyncHandler) Handle(ctx context.Context, task *asynq.Task) error {
 	if h.Runner == nil {
 		return fmt.Errorf("source_sync runner 不能为空")
@@ -94,17 +100,7 @@ func (h SourceSyncHandler) Handle(ctx context.Context, task *asynq.Task) error {
 		}
 	}
 
-	if err := h.Runner.SyncKnowledgeBase(ctx, payload.WorkspaceID, payload.KnowledgeBaseID); err != nil {
-		if h.Store != nil {
-			if markErr := h.Store.MarkFailed(ctx, payload.WorkspaceID, payload.JobID, err.Error()); markErr != nil {
-				h.logger().LogAttrs(ctx, slog.LevelError, "标记 source_sync 失败状态失败",
-					slog.String("workspace_id", payload.WorkspaceID.String()),
-					slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
-					slog.String("job_id", payload.JobID.String()),
-					slog.String("error", markErr.Error()),
-				)
-			}
-		}
+	if err := h.Runner.RunSourceSyncJob(ctx, payload.WorkspaceID, payload.KnowledgeBaseID, payload.JobID); err != nil {
 		h.logger().LogAttrs(ctx, slog.LevelError, "source_sync 同步失败",
 			slog.String("workspace_id", payload.WorkspaceID.String()),
 			slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
@@ -119,16 +115,6 @@ func (h SourceSyncHandler) Handle(ctx context.Context, task *asynq.Task) error {
 		return err
 	}
 
-	if h.Store != nil {
-		if err := h.Store.MarkSucceeded(ctx, payload.WorkspaceID, payload.JobID); err != nil {
-			h.logger().LogAttrs(ctx, slog.LevelError, "标记 source_sync 成功状态失败",
-				slog.String("workspace_id", payload.WorkspaceID.String()),
-				slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
-				slog.String("job_id", payload.JobID.String()),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
 	h.logger().LogAttrs(ctx, slog.LevelInfo, "source_sync 同步完成",
 		slog.String("workspace_id", payload.WorkspaceID.String()),
 		slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),

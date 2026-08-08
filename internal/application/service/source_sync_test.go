@@ -33,6 +33,9 @@ type fakeSourceConnector struct {
 	complete      bool     // 控制 snapshot.Complete；默认 true。
 	warnings      []string // 附加到 snapshot.Warnings。
 	maxEditTime   time.Time
+	// listTreeHook 在 ListTree 返回前调用，用于模拟"同步运行期间触发的并发 force 请求"
+	// 等副作用（例如重新置位 force latch，供 FinalizeSourceSyncJob 观察到）。
+	listTreeHook func()
 	// failOnce 控制"只失败一次"的 Fetch：externalID -> 互斥+计数。
 	failOnceMu      sync.Mutex
 	failOnceTokens  map[string]int // externalID -> 剩余失败次数
@@ -42,6 +45,9 @@ type fakeSourceConnector struct {
 func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnection, _ model.SyncRoot) (sourceport.TreeSnapshot, error) {
 	if c.listErr != nil {
 		return sourceport.TreeSnapshot{}, c.listErr
+	}
+	if c.listTreeHook != nil {
+		c.listTreeHook()
 	}
 	complete := true
 	if c.complete {
@@ -550,18 +556,21 @@ func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID
 	return nil, nil, nil
 }
 
-func (s *fakeSourceSyncStore) RequestSourceSync(_ context.Context, _, _, _ uuid.UUID, _ bool) (*model.Job, bool, error) {
+func (s *fakeSourceSyncStore) RequestSourceSync(_ context.Context, _, _, connectionID uuid.UUID, requestedForce bool) (*model.Job, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.requestSyncErr != nil {
 		return nil, false, s.requestSyncErr
 	}
+	// latch = old OR requestedForce（与生产语义一致，spec 8.2）。
+	s.forceLatch = s.forceLatch || requestedForce
 	if s.activeSyncJob != nil {
 		return s.activeSyncJob, false, nil
 	}
 	job, err := model.NewJob(model.NewJobInput{
 		WorkspaceID: s.kb.WorkspaceID, KnowledgeBaseID: s.kb.ID,
-		Type: model.SourceSyncJobType, Status: value.JobStatusPending,
+		SourceConnectionID: connectionID,
+		Type:               model.SourceSyncJobType, Status: value.JobStatusPending,
 	})
 	if err != nil {
 		return nil, false, err
@@ -1225,7 +1234,7 @@ func TestEnqueueSyncPersistsJobAndEnqueuesDedupedTask(t *testing.T) {
 		Logger:                  &recordingLogger{},
 	})
 
-	job, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID)
+	job, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID, SyncOptions{Force: false})
 	if err != nil {
 		t.Fatalf("EnqueueSync err = %v", err)
 	}
@@ -1248,6 +1257,91 @@ func TestEnqueueSyncPersistsJobAndEnqueuesDedupedTask(t *testing.T) {
 	if req.TaskID != queue.SourceSyncTaskID(workspaceID, kb.ID) {
 		t.Fatalf("TaskID = %s, want stable dedup id", req.TaskID)
 	}
+	// Force=false 不应置位 latch。
+	if store.forceLatch {
+		t.Fatalf("Force=false 不应置位 force latch")
+	}
+}
+
+// TestEnqueueSyncForceSetsLatchAndReuseActiveJob 验证 spec 8.2：
+// 第一次 Force=true 请求创建 Job 并置位 latch；第二次请求（无论 force 与否）
+// 复用进行中 Job（不重复入队），但 latch = old OR requested。
+func TestEnqueueSyncForceSetsLatchAndReuseActiveJob(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	q := &fakeSyncQueue{}
+	svc := NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: &fakeKBSyncRepo{kb: kb},
+		Selector:                NewSourceConnectionSelector(&fakeSyncConnRepo{}, passthroughCipher{}),
+		Connector:               &fakeSourceConnector{},
+		RawStore:                &fakeSyncRawStore{},
+		Store:                   store,
+		Queue:                   q,
+		Logger:                  &recordingLogger{},
+	})
+
+	first, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID, SyncOptions{Force: true})
+	if err != nil {
+		t.Fatalf("first EnqueueSync err = %v", err)
+	}
+	if first == nil || first.Type != model.SourceSyncJobType {
+		t.Fatalf("first job = %#v", first)
+	}
+	if !store.forceLatch {
+		t.Fatalf("Force=true 应置位 force latch")
+	}
+	if len(q.requests) != 1 {
+		t.Fatalf("first enqueue requests = %d, want 1", len(q.requests))
+	}
+
+	// 第二次请求：复用进行中 Job，不重复入队；latch 保持 true。
+	second, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID, SyncOptions{Force: false})
+	if err != nil {
+		t.Fatalf("second EnqueueSync err = %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("second job = %s, want reuse %s", second.ID, first.ID)
+	}
+	if !store.forceLatch {
+		t.Fatalf("复用进行中 Job 时 latch 应保持 true")
+	}
+	if len(q.requests) != 1 {
+		t.Fatalf("reuse should not enqueue again; requests = %d, want 1", len(q.requests))
+	}
+}
+
+// TestEnqueueSyncForceFailedEnqueuePreservesLatch 验证入队失败时 FailSourceSyncEnqueue
+// 被调用且 latch 保留（spec 8.2，由 scheduler 恢复）。
+func TestEnqueueSyncForceFailedEnqueuePreservesLatch(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	q := &fakeSyncQueue{err: errors.New("redis down")}
+	svc := NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: &fakeKBSyncRepo{kb: kb},
+		Selector:                NewSourceConnectionSelector(&fakeSyncConnRepo{}, passthroughCipher{}),
+		Connector:               &fakeSourceConnector{},
+		RawStore:                &fakeSyncRawStore{},
+		Store:                   store,
+		Queue:                   q,
+		Logger:                  &recordingLogger{},
+	})
+
+	_, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID, SyncOptions{Force: true})
+	if err == nil {
+		t.Fatal("EnqueueSync err = nil, want enqueue failure")
+	}
+	// latch 应保留（RequestSourceSync 已置位 true，FailSourceSyncEnqueue 不清 latch）。
+	if !store.forceLatch {
+		t.Fatalf("入队失败应保留 force latch 供 scheduler 恢复")
+	}
+	// 失败的 Job 应被标记为 failed（FailSourceSyncEnqueue 写入终态）。
+	for _, job := range store.jobs {
+		if job.Status != value.JobStatusFailed {
+			t.Fatalf("入队失败的 Job 应为 failed 状态; got %s", job.Status)
+		}
+	}
 }
 
 // TestEnqueueSyncRejectsNonFeishuKB 验证非飞书 KB 不能入队 source_sync。
@@ -1265,8 +1359,163 @@ func TestEnqueueSyncRejectsNonFeishuKB(t *testing.T) {
 		Logger:                  &recordingLogger{},
 	})
 
-	if _, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID); !errors.Is(err, domainerrors.ErrValidation) {
+	if _, err := svc.EnqueueSync(context.Background(), workspaceID, kb.ID, SyncOptions{Force: false}); !errors.Is(err, domainerrors.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+// --- RunSourceSyncJob（worker latch 流程，spec 8.2）---
+
+// newRunSourceSyncJobSvc 构造一个带空快照 connector 的服务，用于测试 RunSourceSyncJob 的 latch 流程。
+func newRunSourceSyncJobSvc(t *testing.T, kb *model.KnowledgeBase, store *fakeSourceSyncStore, connector *fakeSourceConnector) *SourceSyncService {
+	t.Helper()
+	connID := uuid.Nil
+	if kb.SourceConnectionID != nil {
+		connID = *kb.SourceConnectionID
+	}
+	return NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: &fakeKBSyncRepo{kb: kb},
+		Selector:                NewSourceConnectionSelector(&fakeSyncConnRepo{conn: buildSelectedConn(kb.WorkspaceID, connID)}, passthroughCipher{}),
+		Connector:               connector,
+		RawStore:                &fakeSyncRawStore{},
+		Store:                   store,
+		Queue:                   &fakeSyncQueue{},
+		Logger:                  &recordingLogger{},
+	})
+}
+
+// TestRunSourceSyncJobConsumesForceLatchAndRunsForcedSync 验证 RunSourceSyncJob：
+//   - ConsumeForceLatch 读取 latch=true，syncKnowledgeBase 以 force=true 执行。
+//   - FinalizeSourceSyncJob 标记 Job 为 completed。
+//   - latch 未在运行期间重置位时，不创建下一个 Job。
+func TestRunSourceSyncJobConsumesForceLatchAndRunsForcedSync(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	connector := &fakeSourceConnector{} // 空快照，sync 不处理文档。
+	svc := newRunSourceSyncJobSvc(t, kb, store, connector)
+
+	// 预置一个 active Job 与已置位的 latch（模拟 EnqueueSync(force=true) 后的状态）。
+	job, _, err := store.RequestSourceSync(context.Background(), workspaceID, kb.ID, *kb.SourceConnectionID, true)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+	if !store.forceLatch {
+		t.Fatal("预置 latch 未置位")
+	}
+
+	// 消费 latch 前：force=true。
+	if err := svc.RunSourceSyncJob(context.Background(), workspaceID, kb.ID, job.ID); err != nil {
+		t.Fatalf("RunSourceSyncJob err = %v", err)
+	}
+	// latch 被消费（ConsumeForceLatch 清空）。
+	if store.forceLatch {
+		t.Fatal("ConsumeForceLatch 应清空 latch")
+	}
+	// Job 被终态化为 completed（fake FinalizeSourceSyncJob 把 job.Status 设为传入 status）。
+	if stored, ok := store.jobs[job.ID]; !ok || stored.Status != value.JobStatusCompleted {
+		t.Fatalf("job 应为 completed; got %#v", stored)
+	}
+}
+
+// TestRunSourceSyncJobLatchFalseRunsNonForced 验证 latch=false 时 sync 以 force=false 执行。
+func TestRunSourceSyncJobLatchFalseRunsNonForced(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	connector := &fakeSourceConnector{}
+	svc := newRunSourceSyncJobSvc(t, kb, store, connector)
+
+	job, _, err := store.RequestSourceSync(context.Background(), workspaceID, kb.ID, *kb.SourceConnectionID, false)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+	if store.forceLatch {
+		t.Fatal("force=false 不应置位 latch")
+	}
+
+	if err := svc.RunSourceSyncJob(context.Background(), workspaceID, kb.ID, job.ID); err != nil {
+		t.Fatalf("RunSourceSyncJob err = %v", err)
+	}
+	if stored, ok := store.jobs[job.ID]; !ok || stored.Status != value.JobStatusCompleted {
+		t.Fatalf("job 应为 completed; got %#v", stored)
+	}
+}
+
+// TestRunSourceSyncJobRedispatchesPendingLatch 验证 spec 8.2：
+// 同步运行期间 latch 被重新置位（并发 force 请求），FinalizeSourceSyncJob 返回新建的下一个 Job，
+// RunSourceSyncJob 把它入队（fake queue 记录 1 个请求）。
+func TestRunSourceSyncJobRedispatchesPendingLatch(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	q := &fakeSyncQueue{}
+	connector := &fakeSourceConnector{
+		// ListTree 期间模拟并发 force 请求重新置位 latch。
+		listTreeHook: func() {
+			store.mu.Lock()
+			store.forceLatch = true
+			store.mu.Unlock()
+		},
+	}
+	svc := NewSourceSyncService(SourceSyncServiceDeps{
+		KnowledgeBaseRepository: &fakeKBSyncRepo{kb: kb},
+		Selector:                NewSourceConnectionSelector(&fakeSyncConnRepo{conn: buildSelectedConn(kb.WorkspaceID, *kb.SourceConnectionID)}, passthroughCipher{}),
+		Connector:               connector,
+		RawStore:                &fakeSyncRawStore{},
+		Store:                   store,
+		Queue:                   q,
+		Logger:                  &recordingLogger{},
+	})
+
+	job, _, err := store.RequestSourceSync(context.Background(), workspaceID, kb.ID, *kb.SourceConnectionID, false)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+
+	if err := svc.RunSourceSyncJob(context.Background(), workspaceID, kb.ID, job.ID); err != nil {
+		t.Fatalf("RunSourceSyncJob err = %v", err)
+	}
+	// FinalizeSourceSyncJob 观察到 latch=true（被 listTreeHook 重置），
+	// 创建下一个 Job 并由 RunSourceSyncJob 入队。
+	if len(q.requests) != 1 {
+		t.Fatalf("应入队 1 个后续 source_sync 任务; got %d", len(q.requests))
+	}
+	if q.requests[0].Type != model.SourceSyncJobType {
+		t.Fatalf("后续任务类型 = %s, want %s", q.requests[0].Type, model.SourceSyncJobType)
+	}
+	// 原始 Job 已 completed。
+	if stored, ok := store.jobs[job.ID]; !ok || stored.Status != value.JobStatusCompleted {
+		t.Fatalf("原始 job 应为 completed; got %#v", stored)
+	}
+	// store 中应有 2 个 Job（原始 + 后续）。
+	if len(store.jobs) != 2 {
+		t.Fatalf("store jobs = %d, want 2（原始 + 后续）", len(store.jobs))
+	}
+}
+
+// TestRunSourceSyncJobMarksFailedOnSyncError 验证 sync 失败时 Job 被终态化为 failed，
+// 且返回 sync error（供 worker 决定 asynq 重试语义）。
+func TestRunSourceSyncJobMarksFailedOnSyncError(t *testing.T) {
+	workspaceID := uuid.New()
+	kb := newFeishuKB(t, workspaceID, "root-node-token")
+	store := newFakeSourceSyncStore(kb)
+	// ListTree 返回致命错误。
+	connector := &fakeSourceConnector{listErr: errors.New("feishu 5xx")}
+	svc := newRunSourceSyncJobSvc(t, kb, store, connector)
+
+	job, _, err := store.RequestSourceSync(context.Background(), workspaceID, kb.ID, *kb.SourceConnectionID, false)
+	if err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+
+	runErr := svc.RunSourceSyncJob(context.Background(), workspaceID, kb.ID, job.ID)
+	if runErr == nil {
+		t.Fatal("RunSourceSyncJob err = nil, want sync error")
+	}
+	// Job 被 FinalizeSourceSyncJob 标记为 failed。
+	if stored, ok := store.jobs[job.ID]; !ok || stored.Status != value.JobStatusFailed {
+		t.Fatalf("job 应为 failed; got %#v", stored)
 	}
 }
 

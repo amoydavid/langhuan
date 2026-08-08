@@ -73,6 +73,44 @@ func (s *SourceSyncDBStore) CountActiveByConnection(ctx context.Context, workspa
 	return int(count), nil
 }
 
+// ListFeishuKBsWithForceLatchAndNoActiveJob 列出所有 force latch 已置位
+// (source_config.sync_requested_force = true) 且当前没有 pending/running
+// source_sync Job 的飞书知识库（spec 8.2 latch 恢复）。
+// 这些 KB 的同步因入队失败或 worker 异常退出而滞留，由 Meta Scheduler 恢复派发。
+func (s *SourceSyncDBStore) ListFeishuKBsWithForceLatchAndNoActiveJob(ctx context.Context) ([]service.DueKnowledgeBase, error) {
+	type dueRow struct {
+		WorkspaceID        uuid.UUID `gorm:"column:workspace_id"`
+		ID                 uuid.UUID `gorm:"column:id"`
+		SourceConnectionID uuid.UUID `gorm:"column:source_connection_id"`
+	}
+	var rows []dueRow
+	activeSubquery := s.db.WithContext(ctx).Table("jobs").
+		Select("1").
+		Where("jobs.workspace_id = knowledge_bases.workspace_id").
+		Where("jobs.knowledge_base_id = knowledge_bases.id").
+		Where("jobs.type = ?", model.SourceSyncJobType).
+		Where("jobs.status IN ?", []string{string(value.JobStatusPending), string(value.JobStatusRunning)})
+	err := s.db.WithContext(ctx).Table("knowledge_bases").
+		Select("workspace_id, id, source_connection_id").
+		Where("deleted_at IS NULL").
+		Where("source_type IN ?", []string{string(value.SourceTypeFeishuDrive), string(value.SourceTypeFeishuWiki)}).
+		Where("source_connection_id IS NOT NULL").
+		Where("(source_config->>'sync_requested_force')::boolean = true").
+		Where("NOT EXISTS (?)", activeSubquery).
+		Order("workspace_id, id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, translateDBError(err, "列出 latch 恢复 KB 失败")
+	}
+	result := make([]service.DueKnowledgeBase, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, service.DueKnowledgeBase{
+			WorkspaceID: row.WorkspaceID, ID: row.ID, SourceConnectionID: row.SourceConnectionID,
+		})
+	}
+	return result, nil
+}
+
 // UpdateSyncCursor 写回增量同步游标 source_config.sync_cursor（RFC3339）。
 // 参照 UpdateNextSyncAt 的 jsonb_set 模式。
 func (s *SourceSyncDBStore) UpdateSyncCursor(ctx context.Context, workspaceID, kbID uuid.UUID, cursor time.Time) error {

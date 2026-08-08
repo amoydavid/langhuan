@@ -187,8 +187,8 @@ type httpKnowledgeBaseSyncService struct {
 	sync *service.SourceSyncService
 }
 
-func (s *httpKnowledgeBaseSyncService) EnqueueSync(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) (*dto.Job, error) {
-	job, err := s.sync.EnqueueSync(ctx, workspaceID, knowledgeBaseID)
+func (s *httpKnowledgeBaseSyncService) EnqueueSync(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID, options service.SyncOptions) (*dto.Job, error) {
+	job, err := s.sync.EnqueueSync(ctx, workspaceID, knowledgeBaseID, options)
 	if err != nil {
 		return nil, err
 	}
@@ -584,6 +584,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Queue:                   jobQueue,
 		Logger:                  log,
 		RootResolver:            feishu.ParseURL,
+		MaxContentBytes:         cfg.SourceSync.MaxContentBytes,
 	})
 
 	// Meta Scheduler：周期扫描到期飞书 KB，按来源连接限流入队。

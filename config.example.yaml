@@ -144,3 +144,7 @@ search:
 source_sync:
   scheduler_interval_seconds: 60   # 调度器扫描周期（秒）：每隔多久检查一次有没有飞书知识库到期该同步
   max_concurrent_per_connection: 2 # 每个飞书应用同时最多跑几个同步任务；超额的到期项排队等下一次扫描或 worker 完成后续跑
+  # max_content_bytes 限制单篇飞书文档拉取与落库的字节数上限（默认 50 MiB）。
+  # 超过该上限的文档会被标记为 oversize 并跳过（保留旧版本），避免单篇巨型文档
+  # 拖垮同步或解析流水线。必须 >0。
+  max_content_bytes: 52428800

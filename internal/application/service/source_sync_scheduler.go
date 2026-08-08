@@ -15,12 +15,17 @@ import (
 // SyncEnqueuer 把单个飞书知识库的首次/定时同步入队。
 // 由 *SourceSyncService 实现（EnqueueSync）。
 type SyncEnqueuer interface {
-	EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID) (*model.Job, error)
+	EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID, options SyncOptions) (*model.Job, error)
 }
 
-// SchedulerStore 提供 Meta Scheduler 限流所需的进行中任务计数。
+// SchedulerStore 提供 Meta Scheduler 限流与 latch 恢复所需的进行中任务计数。
 type SchedulerStore interface {
 	CountActiveByConnection(ctx context.Context, workspaceID, connectionID uuid.UUID) (int, error)
+	// ListFeishuKBsWithForceLatchAndNoActiveJob 列出所有 force latch 已置位
+	// (source_config.sync_requested_force = true) 且当前没有 pending/running
+	// source_sync Job 的飞书知识库（spec 8.2 latch 恢复）。
+	// 这些 KB 的同步因入队失败或 worker 异常退出而滞留，由 Meta Scheduler 恢复派发。
+	ListFeishuKBsWithForceLatchAndNoActiveJob(ctx context.Context) ([]DueKnowledgeBase, error)
 }
 
 // SourceSyncSchedulerDeps 注入 Meta Scheduler 的全部依赖。
@@ -105,12 +110,39 @@ func groupDueKBs(due []DueKnowledgeBase) []connectionGroup {
 	return result
 }
 
-// Tick 执行一次调度扫描：列出所有到期飞书 KB → 按 connection 分组 → 限流入队 → 推进 next_sync_at。
+// Tick 执行一次调度扫描：
+//  1. 列出所有到期飞书 KB → 按 connection 分组 → 限流入队 → 推进 next_sync_at。
+//  2. 恢复 latch 已置位但无 active Job 的滞留 KB（spec 8.2 latch 恢复）。
 func (s *SourceSyncScheduler) Tick(ctx context.Context) error {
 	if s.kbRepo == nil || s.store == nil || s.syncService == nil {
 		return fmt.Errorf("%w: Meta Scheduler 依赖未配置", domainerrors.ErrValidation)
 	}
-	return s.dispatch(ctx, uuid.Nil)
+	if err := s.dispatch(ctx, uuid.Nil); err != nil {
+		return err
+	}
+	return s.recoverLatchedSyncs(ctx)
+}
+
+// recoverLatchedSyncs 扫描 force latch=true 且无 active source_sync Job 的飞书 KB，
+// 重新派发它们的同步（spec 8.2）。这些 KB 因入队失败或 worker 异常退出而滞留。
+// RequestSourceSync(force=false) 会保留已置位的 latch 并新建 Job（因为无 active Job）。
+func (s *SourceSyncScheduler) recoverLatchedSyncs(ctx context.Context) error {
+	latched, err := s.store.ListFeishuKBsWithForceLatchAndNoActiveJob(ctx)
+	if err != nil {
+		return fmt.Errorf("列出 latch 恢复 KB 失败: %w", err)
+	}
+	for _, kb := range latched {
+		// RequestSourceSync(force=false)：latch 仍为 true（old || false），且无 active Job => 新建。
+		// 新建的 Job 入队后由 worker 消费 latch。
+		if _, err := s.syncService.EnqueueSync(ctx, kb.WorkspaceID, kb.ID, SyncOptions{Force: false}); err != nil {
+			s.logger.Error("恢复 latch 滞留同步失败",
+				"workspace_id", kb.WorkspaceID.String(),
+				"knowledge_base_id", kb.ID.String(),
+				"error", err.Error(),
+			)
+		}
+	}
+	return nil
 }
 
 // TryDispatchConnection 针对单个 connection 派发到期 KB（worker 完成后调用以续跑，避免空等）。
@@ -166,7 +198,7 @@ func (s *SourceSyncScheduler) dispatchGroup(ctx context.Context, group connectio
 		if enqueued >= available {
 			break
 		}
-		if _, err := s.syncService.EnqueueSync(ctx, group.workspaceID, dueKB.ID); err != nil {
+		if _, err := s.syncService.EnqueueSync(ctx, group.workspaceID, dueKB.ID, SyncOptions{Force: false}); err != nil {
 			s.logger.Error("入队飞书知识库同步失败",
 				"workspace_id", group.workspaceID.String(),
 				"knowledge_base_id", dueKB.ID.String(),

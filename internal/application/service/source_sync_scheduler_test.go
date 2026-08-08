@@ -20,6 +20,10 @@ type fakeSchedulerStore struct {
 	countByConn map[uuid.UUID]int
 	count       int
 	err         error
+	// latchedKBs 模拟 latch 恢复扫描返回的 KB（无 active Job）。
+	latchedKBs []DueKnowledgeBase
+	// latchErr 注入 ListFeishuKBsWithForceLatchAndNoActiveJob 错误。
+	latchErr error
 }
 
 func (s *fakeSchedulerStore) CountActiveByConnection(_ context.Context, _ uuid.UUID, connectionID uuid.UUID) (int, error) {
@@ -30,6 +34,13 @@ func (s *fakeSchedulerStore) CountActiveByConnection(_ context.Context, _ uuid.U
 		return s.countByConn[connectionID], nil
 	}
 	return s.count, nil
+}
+
+func (s *fakeSchedulerStore) ListFeishuKBsWithForceLatchAndNoActiveJob(_ context.Context) ([]DueKnowledgeBase, error) {
+	if s.latchErr != nil {
+		return nil, s.latchErr
+	}
+	return append([]DueKnowledgeBase(nil), s.latchedKBs...), nil
 }
 
 // fakeSyncEnqueuer 记录 EnqueueSync 调用（按 KB id），可注入错误。
@@ -43,10 +54,11 @@ type fakeSyncEnqueuer struct {
 type enqueueSyncCall struct {
 	WorkspaceID uuid.UUID
 	KBID        uuid.UUID
+	Force       bool
 }
 
-func (e *fakeSyncEnqueuer) EnqueueSync(_ context.Context, workspaceID, kbID uuid.UUID) (*model.Job, error) {
-	e.calls = append(e.calls, enqueueSyncCall{WorkspaceID: workspaceID, KBID: kbID})
+func (e *fakeSyncEnqueuer) EnqueueSync(_ context.Context, workspaceID, kbID uuid.UUID, options SyncOptions) (*model.Job, error) {
+	e.calls = append(e.calls, enqueueSyncCall{WorkspaceID: workspaceID, KBID: kbID, Force: options.Force})
 	// errOnKB 命中时对该 KB 返回 err，其它 KB 不受影响（用于"单 KB 失败"场景）。
 	if e.errOnKB != uuid.Nil && e.errOnKB == kbID {
 		return nil, e.err
@@ -356,6 +368,74 @@ func TestSchedulerTickContinuesOnEnqueueError(t *testing.T) {
 	// kb1 入队失败，不应推进其 next_sync_at；kb2 成功应推进。
 	if len(kbRepo.nextSyncAtCalls) != 1 || kbRepo.nextSyncAtCalls[0].KBID != kb2.ID {
 		t.Fatalf("next_sync_at calls = %+v, want only kb2", kbRepo.nextSyncAtCalls)
+	}
+}
+
+// TestSchedulerTickRecoversLatchedKBsWithNoActiveJob 验证 spec 8.2 的 latch 恢复：
+// Tick 在常规到期扫描后，额外把 force latch=true 且无 active Job 的 KB 重新派发
+// （EnqueueSync 以 Force=false；RequestSourceSync 保留 latch 并因无 active Job 而新建）。
+func TestSchedulerTickRecoversLatchedKBsWithNoActiveJob(t *testing.T) {
+	workspaceID := uuid.New()
+	connID := uuid.New()
+	latchedKB := newSchedulerTestKB(workspaceID, connID, "")
+	scheduler, kbRepo, store, enqueuer := newSchedulerHarness(2)
+	kbRepo.items[latchedKB.ID] = latchedKB
+	// 无到期 KB（dueList 空），但有 1 个 latch 滞留 KB。
+	kbRepo.dueList = nil
+	store.count = 0
+	store.latchedKBs = []DueKnowledgeBase{
+		{WorkspaceID: workspaceID, ID: latchedKB.ID, SourceConnectionID: connID},
+	}
+
+	if err := scheduler.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick err = %v", err)
+	}
+	if got := len(enqueuer.calls); got != 1 {
+		t.Fatalf("enqueued = %d, want 1 (latch recovery)", got)
+	}
+	if enqueuer.calls[0].KBID != latchedKB.ID {
+		t.Fatalf("recovered KB = %s, want %s", enqueuer.calls[0].KBID, latchedKB.ID)
+	}
+	// latch 恢复派发固定传 Force=false。
+	if enqueuer.calls[0].Force {
+		t.Fatalf("latch recovery 应以 Force=false 派发; call = %#v", enqueuer.calls[0])
+	}
+}
+
+// TestSchedulerTickLatchRecoveryContinuesOnError 验证单个 latch KB 恢复失败不中断其它。
+func TestSchedulerTickLatchRecoveryContinuesOnError(t *testing.T) {
+	workspaceID := uuid.New()
+	connID := uuid.New()
+	kb1 := newSchedulerTestKB(workspaceID, connID, "")
+	kb2 := newSchedulerTestKB(workspaceID, connID, "")
+	scheduler, kbRepo, store, enqueuer := newSchedulerHarness(2)
+	kbRepo.items[kb1.ID] = kb1
+	kbRepo.items[kb2.ID] = kb2
+	kbRepo.dueList = nil
+	store.count = 0
+	store.latchedKBs = []DueKnowledgeBase{
+		{WorkspaceID: workspaceID, ID: kb1.ID, SourceConnectionID: connID},
+		{WorkspaceID: workspaceID, ID: kb2.ID, SourceConnectionID: connID},
+	}
+	enqueuer.errOnKB = kb1.ID
+	enqueuer.err = domainerrors.ErrValidation
+
+	if err := scheduler.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick err = %v", err)
+	}
+	if got := len(enqueuer.calls); got != 2 {
+		t.Fatalf("enqueue attempts = %d, want 2 (both attempted)", got)
+	}
+}
+
+// TestSchedulerTickLatchRecoveryListErrorPropagates 验证 latch 列表查询错误向上冒泡。
+func TestSchedulerTickLatchRecoveryListErrorPropagates(t *testing.T) {
+	scheduler, kbRepo, store, _ := newSchedulerHarness(2)
+	kbRepo.dueList = nil
+	store.latchErr = errors.New("db down")
+
+	if err := scheduler.Tick(context.Background()); err == nil {
+		t.Fatal("Tick err = nil, want latch list error")
 	}
 }
 

@@ -693,6 +693,71 @@ func TestValidateStorageRejectsInvalidDriver(t *testing.T) {
 	}
 }
 
+// TestSourceSyncMaxContentBytesDefaults 验证 source_sync.max_content_bytes 默认值为 50 MiB，
+// 且 applyDefaults 在 <=0 时回填默认值。
+func TestSourceSyncMaxContentBytesDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.SourceSync.MaxContentBytes != 50*1024*1024 {
+		t.Fatalf("default max_content_bytes = %d, want %d", cfg.SourceSync.MaxContentBytes, 50*1024*1024)
+	}
+
+	// <=0 时 applyDefaults 回填为 50 MiB。
+	cfg = Config{}
+	cfg.applyDefaults()
+	if cfg.SourceSync.MaxContentBytes != 50*1024*1024 {
+		t.Fatalf("applyDefaults max_content_bytes = %d, want %d", cfg.SourceSync.MaxContentBytes, 50*1024*1024)
+	}
+}
+
+// TestSourceSyncMaxContentBytesValidation 验证 validateSourceSync 拒绝 <=0 的 max_content_bytes。
+func TestSourceSyncMaxContentBytesValidation(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Database.DSN = "postgres://localhost:5432/langhuan?sslmode=disable"
+	cfg.SourceSync.MaxContentBytes = 0
+	if err := cfg.validateSourceSync(); err == nil {
+		t.Fatal("expected error for max_content_bytes = 0")
+	}
+
+	cfg.SourceSync.MaxContentBytes = -1
+	if err := cfg.validateSourceSync(); err == nil {
+		t.Fatal("expected error for max_content_bytes < 0")
+	}
+
+	// 正值通过。
+	cfg.SourceSync.MaxContentBytes = 1024
+	if err := cfg.validateSourceSync(); err != nil {
+		t.Fatalf("unexpected error for valid max_content_bytes: %v", err)
+	}
+}
+
+// TestLoadSourceSyncMaxContentBytesFromYAML 验证从 YAML 加载 max_content_bytes。
+func TestLoadSourceSyncMaxContentBytesFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := appendTestCredentials([]byte(`
+database:
+  dsn: "postgres://localhost:5432/langhuan?sslmode=disable"
+source_sync:
+  scheduler_interval_seconds: 30
+  max_concurrent_per_connection: 4
+  max_content_bytes: 1048576
+`))
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load err = %v", err)
+	}
+	if cfg.SourceSync.MaxContentBytes != 1048576 {
+		t.Fatalf("max_content_bytes = %d, want 1048576", cfg.SourceSync.MaxContentBytes)
+	}
+	if cfg.SourceSync.SchedulerIntervalSeconds != 30 {
+		t.Fatalf("scheduler_interval_seconds = %d, want 30", cfg.SourceSync.SchedulerIntervalSeconds)
+	}
+}
+
 func TestValidateStorageS3RequiresCredentials(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Database.DSN = "postgres://localhost:5432/langhuan?sslmode=disable"

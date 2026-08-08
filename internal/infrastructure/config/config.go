@@ -43,6 +43,10 @@ type SourceSyncConfig struct {
 	// 同一应用下的某个同步任务完成后会立即续跑同应用队列里的下一项，
 	// 无需等下一个扫描周期。这是按应用限流、避免单应用并发拉取触发飞书限流的核心旋钮。
 	MaxConcurrentPerConnection int `yaml:"max_concurrent_per_connection"`
+	// MaxContentBytes 限制单篇飞书文档拉取与落库的字节数上限（spec 7.1）。
+	// 超过该上限的文档会被标记为 oversize 并跳过（保留旧版本）。
+	// 默认 50 MiB；必须 >0。
+	MaxContentBytes int64 `yaml:"max_content_bytes"`
 }
 
 type ServerConfig struct {
@@ -279,6 +283,7 @@ func defaultSourceSyncConfig() SourceSyncConfig {
 	return SourceSyncConfig{
 		SchedulerIntervalSeconds:   60,
 		MaxConcurrentPerConnection: 2,
+		MaxContentBytes:            50 * 1024 * 1024, // 50 MiB
 	}
 }
 
@@ -413,6 +418,9 @@ func (c *Config) applyDefaults() {
 	if c.SourceSync.MaxConcurrentPerConnection <= 0 {
 		c.SourceSync.MaxConcurrentPerConnection = 2
 	}
+	if c.SourceSync.MaxContentBytes <= 0 {
+		c.SourceSync.MaxContentBytes = 50 * 1024 * 1024
+	}
 }
 
 // 注：认证默认值在 defaultConfig() 中提供。yaml.Unmarshal 在 auth 块缺失时
@@ -477,6 +485,9 @@ func (c *Config) validateSourceSync() error {
 	}
 	if c.SourceSync.MaxConcurrentPerConnection <= 0 {
 		return errors.New("source_sync.max_concurrent_per_connection 必须大于 0")
+	}
+	if c.SourceSync.MaxContentBytes <= 0 {
+		return errors.New("source_sync.max_content_bytes 必须大于 0")
 	}
 	return nil
 }

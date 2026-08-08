@@ -17,7 +17,7 @@ import (
 // KnowledgeBaseSyncEnqueuer 把飞书知识库的首次同步入队。
 // 由 *SourceSyncService 实现（EnqueueSync）；为 nil 时 KnowledgeBaseService.Create 跳过首次同步。
 type KnowledgeBaseSyncEnqueuer interface {
-	EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID) (*model.Job, error)
+	EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID, options SyncOptions) (*model.Job, error)
 }
 
 // KnowledgeBaseService manages KnowledgeBases.
@@ -153,8 +153,9 @@ func (s *KnowledgeBaseService) Create(ctx context.Context, input CreateKnowledge
 
 	// 事务提交后触发首次同步（仅飞书来源且注入了 enqueuer）。
 	// 入队失败只记日志不回滚：KB 已建好，同步可手动重试。
+	// 首次同步不强制（Force=false）：复用内容 hash 去重语义。
 	if input.SourceType.IsFeishu() && s.syncEnqueuer != nil {
-		if _, err := s.syncEnqueuer.EnqueueSync(ctx, input.WorkspaceID, kb.ID); err != nil {
+		if _, err := s.syncEnqueuer.EnqueueSync(ctx, input.WorkspaceID, kb.ID, SyncOptions{Force: false}); err != nil {
 			if s.syncEnqueuerLogger != nil {
 				s.syncEnqueuerLogger.Error("创建飞书知识库后入队首次同步失败",
 					"workspace_id", input.WorkspaceID.String(),

@@ -87,10 +87,22 @@ func NewSourceSyncService(deps SourceSyncServiceDeps) *SourceSyncService {
 	}
 }
 
-// EnqueueSync 为单个知识库创建一个 source_sync 任务并进入队列，返回创建的 Job。
-// 任务按 KB 幂等去重（queue.SourceSyncTaskID），同一 KB 同时只允许一个同步任务在队列中。
-// KB 的来源连接必须在 EnqueueSync 时已知（已读取 SourceConnectionID），写入 payload 以便 worker 校验。
-func (s *SourceSyncService) EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID) (*model.Job, error) {
+// SyncOptions 携带一次来源同步请求的用户意图（spec 8.1/8.3）。
+// Force=true 表示强制全量同步（忽略内容 hash 去重），并通过 force latch 传递给 worker。
+type SyncOptions struct {
+	Force bool
+}
+
+// EnqueueSync 为单个知识库请求一次 source_sync 同步。
+//
+// 通过 store.RequestSourceSync 在 KB 锁定事务内幂等去重（spec 8.2）：
+//   - latch = old OR options.Force；force 请求会"粘住"，直到 worker 消费。
+//   - 已有 pending/running 的 source_sync Job 时复用（created=false），不重复入队。
+//   - 否则新建 Job（created=true），由本方法入队 asynq（按 (workspace,kb) 幂等 TaskID）。
+//
+// 入队失败时调用 FailSourceSyncEnqueue 把 Job 标记失败但保留 latch，由 Meta Scheduler
+// 在下一个 Tick 周期恢复派发（spec 8.2 latch 恢复）。
+func (s *SourceSyncService) EnqueueSync(ctx context.Context, workspaceID, kbID uuid.UUID, options SyncOptions) (*model.Job, error) {
 	if workspaceID == uuid.Nil || kbID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workspace_id/knowledge_base_id 不能为空", domainerrors.ErrValidation)
 	}
@@ -111,37 +123,32 @@ func (s *SourceSyncService) EnqueueSync(ctx context.Context, workspaceID, kbID u
 		connID = *kb.SourceConnectionID
 	}
 
-	job, err := model.NewJob(model.NewJobInput{
-		WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
-		SourceConnectionID: connID,
-		Type:               model.SourceSyncJobType, Status: value.JobStatusPending,
-		Payload: map[string]any{
-			"workspace_id":      workspaceID.String(),
-			"knowledge_base_id": kbID.String(),
-			"connection_id":     connID.String(),
-		},
-	})
+	job, created, err := s.store.RequestSourceSync(ctx, workspaceID, kbID, connID, options.Force)
 	if err != nil {
-		return nil, fmt.Errorf("构造 source_sync Job 失败: %w", err)
-	}
-	job.Payload["job_id"] = job.ID.String()
-
-	if err := s.store.CreateSourceSyncJob(ctx, job); err != nil {
-		return nil, fmt.Errorf("持久化 source_sync Job 失败: %w", err)
+		return nil, fmt.Errorf("请求来源同步失败: %w", err)
 	}
 
-	payload, err := json.Marshal(sourceSyncTaskPayload{
-		WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
-		JobID: job.ID, ConnectionID: connID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("编码 source_sync payload 失败: %w", err)
+	// 复用进行中 Job：不重复入队（spec 8.2 合并），直接返回。
+	if !created {
+		s.logger.Info("复用进行中的飞书知识库同步任务",
+			"workspace_id", workspaceID.String(),
+			"knowledge_base_id", kbID.String(),
+			"job_id", job.ID.String(),
+			"force", options.Force,
+		)
+		return job, nil
 	}
 
-	if _, err := s.queue.Enqueue(ctx, queue.JobRequest{
-		Type: model.SourceSyncJobType, Payload: payload,
-		TaskID: queue.SourceSyncTaskID(workspaceID, kbID),
-	}); err != nil {
+	if err := s.enqueueSourceSyncTask(ctx, workspaceID, kbID, job.ID, connID); err != nil {
+		// 入队失败：保留 force latch（spec 8.2），交给 scheduler 恢复。
+		if failErr := s.store.FailSourceSyncEnqueue(ctx, workspaceID, kbID, job.ID, err.Error()); failErr != nil {
+			s.logger.Error("标记 source_sync 入队失败状态失败",
+				"workspace_id", workspaceID.String(),
+				"knowledge_base_id", kbID.String(),
+				"job_id", job.ID.String(),
+				"error", failErr.Error(),
+			)
+		}
 		return nil, fmt.Errorf("入队 source_sync 任务失败: %w", err)
 	}
 
@@ -149,8 +156,27 @@ func (s *SourceSyncService) EnqueueSync(ctx context.Context, workspaceID, kbID u
 		"workspace_id", workspaceID.String(),
 		"knowledge_base_id", kbID.String(),
 		"job_id", job.ID.String(),
+		"force", options.Force,
 	)
 	return job, nil
+}
+
+// enqueueSourceSyncTask 把单个 source_sync Job 入队 asynq（按 (workspace,kb) 幂等 TaskID）。
+func (s *SourceSyncService) enqueueSourceSyncTask(ctx context.Context, workspaceID, kbID, jobID, connID uuid.UUID) error {
+	payload, err := json.Marshal(sourceSyncTaskPayload{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID,
+		JobID: jobID, ConnectionID: connID,
+	})
+	if err != nil {
+		return fmt.Errorf("编码 source_sync payload 失败: %w", err)
+	}
+	if _, err := s.queue.Enqueue(ctx, queue.JobRequest{
+		Type: model.SourceSyncJobType, Payload: payload,
+		TaskID: queue.SourceSyncTaskID(workspaceID, kbID),
+	}); err != nil {
+		return fmt.Errorf("入队 source_sync 任务失败: %w", err)
+	}
+	return nil
 }
 
 // sourceSyncTaskPayload 是 source_sync 任务的队列载荷（worker 与 HTTP handler 共用）。
@@ -320,6 +346,78 @@ func (s *SourceSyncService) syncKnowledgeBase(ctx context.Context, workspaceID, 
 		"complete", snapshot.Complete,
 	)
 	return nil
+}
+
+// RunSourceSyncJob 是 worker 的应用层入口（spec 8.2 latch 流程）：
+//
+//  1. ConsumeForceLatch：原子读取并清空 force latch，得到本次同步是否强制。
+//  2. syncKnowledgeBase(ctx, ws, kb, force)：执行真实数据流。
+//  3. FinalizeSourceSyncJob：在 KB 锁定事务内标记 Job 终态；若 latch 在本次运行
+//     期间被重新置位，则返回下一个待入队的 source_sync Job（created=true）。
+//
+// 返回值是 sync 错误（供 worker 决定 asynq 重试语义）。即使 sync 失败，DB Job 也已
+// 被 FinalizeSourceSyncJob 标记终态；asynq 侧若重试，重试会发现 Job 已终结，此时
+// worker 应跳过（幂等）。
+func (s *SourceSyncService) RunSourceSyncJob(ctx context.Context, workspaceID, kbID, jobID uuid.UUID) error {
+	if workspaceID == uuid.Nil || kbID == uuid.Nil || jobID == uuid.Nil {
+		return fmt.Errorf("%w: workspace_id/knowledge_base_id/job_id 不能为空", domainerrors.ErrValidation)
+	}
+	if s.store == nil || s.queue == nil {
+		return fmt.Errorf("%w: 来源同步依赖未配置", domainerrors.ErrValidation)
+	}
+
+	// 1) 消费 force latch（失败时降级为 force=false，不阻断同步）。
+	force, latchErr := s.store.ConsumeForceLatch(ctx, workspaceID, kbID, jobID)
+	if latchErr != nil {
+		s.logger.Warn("消费 force latch 失败，降级为非强制同步",
+			"workspace_id", workspaceID.String(),
+			"knowledge_base_id", kbID.String(),
+			"job_id", jobID.String(),
+			"error", latchErr.Error(),
+		)
+		force = false
+	}
+
+	// 2) 执行同步数据流。
+	syncErr := s.syncKnowledgeBase(ctx, workspaceID, kbID, force)
+
+	// 3) 终态化 Job；latch 在运行期间被重置位时创建下一个 Job 并入队。
+	status := value.JobStatusCompleted
+	errorMessage := ""
+	if syncErr != nil {
+		status = value.JobStatusFailed
+		errorMessage = syncErr.Error()
+	}
+	nextJob, finErr := s.store.FinalizeSourceSyncJob(ctx, workspaceID, kbID, jobID, status, errorMessage)
+	if finErr != nil {
+		s.logger.Error("终态化 source_sync Job 失败",
+			"workspace_id", workspaceID.String(),
+			"knowledge_base_id", kbID.String(),
+			"job_id", jobID.String(),
+			"error", finErr.Error(),
+		)
+		// 终态化失败属持久化层问题：返回 join(sync, fin)，让 asynq 重试整个任务。
+		if syncErr != nil {
+			return errors.Join(syncErr, fmt.Errorf("终态化 Job 失败: %w", finErr))
+		}
+		return fmt.Errorf("终态化 Job 失败: %w", finErr)
+	}
+	if nextJob != nil {
+		var connID uuid.UUID
+		if kb, err := s.kbRepo.Get(ctx, workspaceID, kbID); err == nil && kb.SourceConnectionID != nil {
+			connID = *kb.SourceConnectionID
+		}
+		if err := s.enqueueSourceSyncTask(ctx, workspaceID, kbID, nextJob.ID, connID); err != nil {
+			// 入队失败：Job 已 pending 落库，scheduler 在下一 Tick 恢复（latch 已清，但 Job 存在）。
+			s.logger.Warn("入队后续 source_sync 任务失败，等待 scheduler 恢复",
+				"workspace_id", workspaceID.String(),
+				"knowledge_base_id", kbID.String(),
+				"job_id", nextJob.ID.String(),
+				"error", err.Error(),
+			)
+		}
+	}
+	return syncErr
 }
 
 // syncRunCtx 聚合一次同步内多个节点共享的不可变上下文。

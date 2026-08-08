@@ -738,6 +738,91 @@ func TestRequestSourceSyncForceFalseDoesNotSetLatch(t *testing.T) {
 	}
 }
 
+// TestListFeishuKBsWithForceLatchAndNoActiveJob 验证 spec 8.2 latch 恢复扫描：
+// 返回 latch=true 且无 active source_sync Job 的飞书 KB；存在 active Job 时不返回；
+// latch=false 时不返回。
+func TestListFeishuKBsWithForceLatchAndNoActiveJob(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertSourceSyncSeed(t, ctx, database)
+	store := NewSourceSyncDBStore(database)
+
+	// 给 KB 设置飞书类型 + latch=true + source_connection_id。
+	if err := database.WithContext(ctx).Exec(
+		"UPDATE knowledge_bases SET source_type = 'feishu_wiki', "+
+			"source_config = '{\"root_token\":\"wikcnRoot\",\"sync_requested_force\":true}'::jsonb, "+
+			"source_connection_id = ? WHERE workspace_id = ? AND id = ?",
+		seed.connectionID, seed.workspaceID, seed.kbID,
+	).Error; err != nil {
+		t.Fatalf("set kb source_config: %v", err)
+	}
+
+	// 初始：latch=true，无 active Job => 应被列出。
+	got, err := store.ListFeishuKBsWithForceLatchAndNoActiveJob(ctx)
+	if err != nil {
+		t.Fatalf("ListFeishuKBsWithForceLatchAndNoActiveJob: %v", err)
+	}
+	found := false
+	for _, kb := range got {
+		if kb.ID == seed.kbID {
+			found = true
+			if kb.WorkspaceID != seed.workspaceID || kb.SourceConnectionID != seed.connectionID {
+				t.Fatalf("lineage = %+v, want ws=%s conn=%s", kb, seed.workspaceID, seed.connectionID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("latch=true 且无 active Job 的 KB 应被列出")
+	}
+
+	// 创建一个 pending source_sync Job => 不应再被列出（有 active Job）。
+	if _, _, err := store.RequestSourceSync(ctx, seed.workspaceID, seed.kbID, seed.connectionID, false); err != nil {
+		t.Fatalf("RequestSourceSync: %v", err)
+	}
+	got2, err := store.ListFeishuKBsWithForceLatchAndNoActiveJob(ctx)
+	if err != nil {
+		t.Fatalf("ListFeishuKBsWithForceLatchAndNoActiveJob second: %v", err)
+	}
+	for _, kb := range got2 {
+		if kb.ID == seed.kbID {
+			t.Fatal("存在 active Job 时 KB 不应被列出")
+		}
+	}
+
+	// 清掉 latch（ConsumeForceLatch）并终结 Job => 无 active Job 且 latch=false，不应被列出。
+	allJobs := listSourceSyncJobs(t, ctx, database, seed.workspaceID, seed.kbID)
+	if len(allJobs) == 0 {
+		t.Fatal("expected at least one source_sync job")
+	}
+	if _, err := store.ConsumeForceLatch(ctx, seed.workspaceID, seed.kbID, allJobs[0].ID); err != nil {
+		t.Fatalf("ConsumeForceLatch: %v", err)
+	}
+	if _, err := store.FinalizeSourceSyncJob(ctx, seed.workspaceID, seed.kbID, allJobs[0].ID, value.JobStatusCompleted, ""); err != nil {
+		t.Fatalf("FinalizeSourceSyncJob: %v", err)
+	}
+	got3, err := store.ListFeishuKBsWithForceLatchAndNoActiveJob(ctx)
+	if err != nil {
+		t.Fatalf("ListFeishuKBsWithForceLatchAndNoActiveJob third: %v", err)
+	}
+	for _, kb := range got3 {
+		if kb.ID == seed.kbID {
+			t.Fatal("latch=false 且无 active Job 时 KB 不应被列出")
+		}
+	}
+}
+
+// listSourceSyncJobs 读取某 KB 下所有 source_sync Job（按创建时间）。
+func listSourceSyncJobs(t *testing.T, ctx context.Context, tx *gorm.DB, workspaceID, kbID uuid.UUID) []JobRow {
+	t.Helper()
+	var rows []JobRow
+	if err := tx.WithContext(ctx).
+		Where("workspace_id = ? AND knowledge_base_id = ? AND type = ?", workspaceID, kbID, model.SourceSyncJobType).
+		Order("created_at, id").
+		Find(&rows).Error; err != nil {
+		t.Fatalf("list source_sync jobs: %v", err)
+	}
+	return rows
+}
+
 // ---- UpdateSyncResult（spec：保留其它 jsonb key）----
 
 // TestUpdateSyncResultPreservesOtherKeys 验证 jsonb_set 只改 sync_last_result，保留 latch/cursor/root。

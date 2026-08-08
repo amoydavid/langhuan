@@ -29,23 +29,26 @@ func TestSourceSyncHandleForwardsLineageAndMarksRunning(t *testing.T) {
 	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err != nil {
 		t.Fatalf("Handle err = %v", err)
 	}
+	// RunSourceSyncJob 应以完整 lineage（含 job_id）被调用一次。
 	if len(runner.calls) != 1 ||
 		runner.calls[0].WorkspaceID != payload.WorkspaceID ||
-		runner.calls[0].KnowledgeBaseID != payload.KnowledgeBaseID {
+		runner.calls[0].KnowledgeBaseID != payload.KnowledgeBaseID ||
+		runner.calls[0].JobID != payload.JobID {
 		t.Fatalf("runner calls = %#v", runner.calls)
 	}
 	if !store.running[payload.JobID] {
 		t.Fatalf("MarkRunning not called for job %s", payload.JobID)
 	}
-	if !store.succeeded[payload.JobID] {
-		t.Fatalf("MarkSucceeded not called for job %s", payload.JobID)
+	// 终态由服务的 FinalizeSourceSyncJob 标记，worker 不再调用 MarkSucceeded/MarkFailed。
+	if store.succeeded[payload.JobID] {
+		t.Fatalf("worker 不应调用 MarkSucceeded（终态由服务 finalize）")
 	}
 	if store.failed[payload.JobID] != "" {
-		t.Fatalf("MarkFailed should not be called on success; got %q", store.failed[payload.JobID])
+		t.Fatalf("worker 不应调用 MarkFailed（终态由服务 finalize）; got %q", store.failed[payload.JobID])
 	}
 }
 
-func TestSourceSyncHandleMarksFailedAndRetriesOnTransientError(t *testing.T) {
+func TestSourceSyncHandleRetriesOnTransientError(t *testing.T) {
 	runner := &sourceSyncRunnerSpy{err: errors.New("network down")}
 	store := &sourceSyncTaskStoreSpy{}
 	handler := SourceSyncHandler{Runner: runner, Store: store}
@@ -68,11 +71,8 @@ func TestSourceSyncHandleMarksFailedAndRetriesOnTransientError(t *testing.T) {
 	if !store.running[payload.JobID] {
 		t.Fatalf("MarkRunning not called")
 	}
-	if store.succeeded[payload.JobID] {
-		t.Fatalf("MarkSucceeded should not be called on failure")
-	}
-	if store.failed[payload.JobID] != runner.err.Error() {
-		t.Fatalf("MarkFailed message = %q, want %q", store.failed[payload.JobID], runner.err.Error())
+	if len(runner.calls) != 1 || runner.calls[0].JobID != payload.JobID {
+		t.Fatalf("runner calls = %#v", runner.calls)
 	}
 }
 
@@ -97,8 +97,8 @@ func TestSourceSyncHandleSkipRetryOnPermanentError(t *testing.T) {
 	if !errors.Is(err, domainerrors.ErrValidation) {
 		t.Fatalf("permanent error should wrap ErrValidation; got %v", err)
 	}
-	if store.failed[payload.JobID] != perm.Error() {
-		t.Fatalf("MarkFailed message = %q", store.failed[payload.JobID])
+	if len(runner.calls) != 1 || runner.calls[0].JobID != payload.JobID {
+		t.Fatalf("runner calls = %#v", runner.calls)
 	}
 }
 
@@ -235,10 +235,11 @@ type sourceSyncRunnerSpy struct {
 type sourceSyncCall struct {
 	WorkspaceID     uuid.UUID
 	KnowledgeBaseID uuid.UUID
+	JobID           uuid.UUID
 }
 
-func (s *sourceSyncRunnerSpy) SyncKnowledgeBase(_ context.Context, workspaceID, kbID uuid.UUID) error {
-	s.calls = append(s.calls, sourceSyncCall{WorkspaceID: workspaceID, KnowledgeBaseID: kbID})
+func (s *sourceSyncRunnerSpy) RunSourceSyncJob(_ context.Context, workspaceID, kbID, jobID uuid.UUID) error {
+	s.calls = append(s.calls, sourceSyncCall{WorkspaceID: workspaceID, KnowledgeBaseID: kbID, JobID: jobID})
 	return s.err
 }
 
