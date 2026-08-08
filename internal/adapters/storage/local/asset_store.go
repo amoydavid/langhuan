@@ -104,7 +104,7 @@ func (s *AssetStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	if err := os.Remove(path); err != nil {
-		return err
+		return mapMissingObjectError(err)
 	}
 	return ctx.Err()
 }
@@ -123,7 +123,7 @@ func (s *AssetStore) Open(ctx context.Context, key string) (io.ReadCloser, error
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, mapMissingObjectError(err)
 	}
 	if err := ctx.Err(); err != nil {
 		_ = file.Close()

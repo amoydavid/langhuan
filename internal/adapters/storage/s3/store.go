@@ -15,7 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/google/uuid"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
 )
@@ -116,6 +117,9 @@ func (s *Store) deleteObject(ctx context.Context, key string) error {
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		if mappedErr := mapS3MissingObjectError(err); mappedErr != nil {
+			return mappedErr
+		}
 		return fmt.Errorf("从 S3 删除对象失败: %w", err)
 	}
 	return nil
@@ -132,6 +136,27 @@ func (s *Store) composePublicURL(key string) string {
 	return s.publicBaseURL + "/" + strings.Join(parts, "/")
 }
 
+// mapS3MissingObjectError 把 S3 的「对象不存在」错误（types.NoSuchKey 或带 NoSuchKey /
+// NotFound code 的 smithy.APIError）统一映射为 storage.ErrObjectNotFound。
+// 返回 nil 表示该错误不是「对象不存在」，调用方应按普通错误处理。
+//
+// 注意：S3 对不存在对象的 DeleteObject 通常返回成功（幂等删除），此时本函数不会被调用；
+// 只有少数 S3-compatible 服务（或显式开启校验时）才会返回 NoSuchKey/NotFound，这里仍兜底映射。
+func mapS3MissingObjectError(err error) error {
+	var nsk *types.NoSuchKey
+	if errors.As(err, &nsk) {
+		return fmt.Errorf("S3 object not found: %w", portstorage.ErrObjectNotFound)
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		code := apiErr.ErrorCode()
+		if code == "NoSuchKey" || code == "NotFound" {
+			return fmt.Errorf("S3 object not found: %w", portstorage.ErrObjectNotFound)
+		}
+	}
+	return nil
+}
+
 // ---- RawDocumentStore ----
 
 // RawDocumentStore 实现 portstorage.RawDocumentStore。
@@ -143,7 +168,7 @@ func (r *RawDocumentStore) Put(ctx context.Context, input portstorage.RawDocumen
 	if input.Reader == nil {
 		return nil, errors.New("raw document reader is nil")
 	}
-	key := RawDocumentKey(input.WorkspaceID, input.KnowledgeBaseID, input.DocumentID, uuid.Nil, input.FileName)
+	key := RawDocumentKey(input.WorkspaceID, input.KnowledgeBaseID, input.DocumentID, input.RevisionID, input.FileName)
 	hash := sha256.New()
 	tee := io.TeeReader(input.Reader, hash)
 	_, err := r.store.client.PutObject(ctx, &s3.PutObjectInput{
@@ -169,6 +194,9 @@ func (r *RawDocumentStore) Open(ctx context.Context, key string) (io.ReadCloser,
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		if mappedErr := mapS3MissingObjectError(err); mappedErr != nil {
+			return nil, mappedErr
+		}
 		return nil, fmt.Errorf("从 S3 读取对象失败: %w", err)
 	}
 	return out.Body, nil
@@ -218,6 +246,9 @@ func (a *AssetStore) Open(ctx context.Context, key string) (io.ReadCloser, error
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		if mappedErr := mapS3MissingObjectError(err); mappedErr != nil {
+			return nil, mappedErr
+		}
 		return nil, fmt.Errorf("从 S3 读取资产失败: %w", err)
 	}
 	return out.Body, nil

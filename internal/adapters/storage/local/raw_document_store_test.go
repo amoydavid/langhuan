@@ -212,6 +212,125 @@ func TestRawDocumentStoreDeleteRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+// putRawWithRevision 是一个小测试辅助函数：用固定的 workspace/kb/document 上下文写入一份原始内容，
+// 仅替换 RevisionID。这样若无 revision 作用域，两次写入会落在同一个 key 上互相覆盖。
+func putRawWithRevision(t *testing.T, store *RawDocumentStore, ws, kb, doc, rev uuid.UUID, content string) *portstorage.RawDocumentObject {
+	t.Helper()
+	ctx := context.Background()
+	obj, err := store.Put(ctx, portstorage.RawDocumentInput{
+		WorkspaceID:     ws,
+		KnowledgeBaseID: kb,
+		DocumentID:      doc,
+		RevisionID:      rev,
+		FileName:        "doc.md",
+		ContentType:     "text/markdown",
+		Reader:          strings.NewReader(content),
+		SizeBytes:       int64(len(content)),
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	return obj
+}
+
+func TestRawDocumentRevisionKeysDoNotOverwrite(t *testing.T) {
+	t.Parallel()
+	store := NewRawDocumentStore(t.TempDir())
+	ws, kb, doc := uuid.New(), uuid.New(), uuid.New()
+	first := putRawWithRevision(t, store, ws, kb, doc, uuid.New(), "one")
+	second := putRawWithRevision(t, store, ws, kb, doc, uuid.New(), "two")
+	if first.Key == second.Key {
+		t.Fatalf("revision keys collide: %q", first.Key)
+	}
+	assertRawContent(t, store, first.Key, "one")
+	assertRawContent(t, store, second.Key, "two")
+}
+
+func assertRawContent(t *testing.T, store *RawDocumentStore, key, want string) {
+	t.Helper()
+	reader, err := store.Open(context.Background(), key)
+	if err != nil {
+		t.Fatalf("Open(%q) error = %v", key, err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(data) != want {
+		t.Fatalf("content = %q, want %q", string(data), want)
+	}
+}
+
+func TestRawDocumentRevisionKeyShapeContainsRevision(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewRawDocumentStore(t.TempDir())
+	ws := uuid.New()
+	kb := uuid.New()
+	doc := uuid.New()
+	rev := uuid.New()
+
+	obj, err := store.Put(ctx, portstorage.RawDocumentInput{
+		WorkspaceID: ws, KnowledgeBaseID: kb, DocumentID: doc, RevisionID: rev,
+		FileName: "report.pdf", ContentType: "application/pdf",
+		Reader: strings.NewReader("x"), SizeBytes: 1,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	expected := strings.Join([]string{ws.String(), kb.String(), doc.String(), rev.String(), "original.pdf"}, "/")
+	if obj.Key != expected {
+		t.Fatalf("key = %q, want %q", obj.Key, expected)
+	}
+}
+
+// TestRawDocumentPutNilRevisionKeepsLegacyKey 验证当 RevisionID 为 uuid.Nil（未迁移的旧调用方）
+// 时，key 沿用旧格式 {workspace}/{kb}/{doc}/{name}，保证存量 key 仍可寻址。
+func TestRawDocumentPutNilRevisionKeepsLegacyKey(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewRawDocumentStore(t.TempDir())
+	ws := uuid.New()
+	kb := uuid.New()
+	doc := uuid.New()
+
+	obj, err := store.Put(ctx, portstorage.RawDocumentInput{
+		WorkspaceID: ws, KnowledgeBaseID: kb, DocumentID: doc,
+		FileName: "report.pdf", ContentType: "application/pdf",
+		Reader: strings.NewReader("x"), SizeBytes: 1,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	expected := strings.Join([]string{ws.String(), kb.String(), doc.String(), "report.pdf"}, "/")
+	if obj.Key != expected {
+		t.Fatalf("legacy key = %q, want %q", obj.Key, expected)
+	}
+	// Open 必须仍能读取旧 key（Open 始终用完整 key）。
+	assertRawContent(t, store, obj.Key, "x")
+}
+
+func TestLocalOpenMissingRawObjectMapsSentinel(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewRawDocumentStore(t.TempDir())
+	_, err := store.Open(ctx, "missing/object.md")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Open() error = %v, want ErrObjectNotFound", err)
+	}
+}
+
+func TestLocalDeleteMissingRawObjectMapsSentinel(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewRawDocumentStore(t.TempDir())
+	err := store.Delete(ctx, "missing/object.md")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrObjectNotFound", err)
+	}
+}
+
 func TestRawDocumentStoreRejectsInvalidKeys(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

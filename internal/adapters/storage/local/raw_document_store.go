@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/uuid"
+
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
 )
 
@@ -34,12 +36,7 @@ func (s *RawDocumentStore) Put(ctx context.Context, input portstorage.RawDocumen
 	}
 
 	name := safeFileName(input.FileName)
-	key := filepath.ToSlash(filepath.Join(
-		input.WorkspaceID.String(),
-		input.KnowledgeBaseID.String(),
-		input.DocumentID.String(),
-		name,
-	))
+	key := rawDocumentLocalKey(input.WorkspaceID, input.KnowledgeBaseID, input.DocumentID, input.RevisionID, name)
 	targetPath, err := s.pathForKey(key)
 	if err != nil {
 		return nil, err
@@ -108,7 +105,7 @@ func (s *RawDocumentStore) Open(ctx context.Context, key string) (io.ReadCloser,
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, mapMissingObjectError(err)
 	}
 	if err := ctx.Err(); err != nil {
 		_ = file.Close()
@@ -129,7 +126,7 @@ func (s *RawDocumentStore) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	if err := os.Remove(path); err != nil {
-		return err
+		return mapMissingObjectError(err)
 	}
 	return ctx.Err()
 }
@@ -209,6 +206,56 @@ func (s *RawDocumentStore) rejectExistingSymlinkComponents(path string, includeT
 		}
 	}
 	return nil
+}
+
+// rawDocumentLocalKey 生成原始上传文件的本地存储 key。
+//
+// 当 revisionID 非 nil（已迁移调用方）时，key 形如
+// `{workspace}/{kb}/{document}/{revision}/original.{ext}`，从而同一文档的不同 revision
+// 互不覆盖。当 revisionID 为 uuid.Nil（尚未迁移调用方）时，沿用旧格式
+// `{workspace}/{kb}/{document}/{name}`，保证存量 key 仍可寻址。Open/Delete 始终使用
+// 数据库保存的完整 key，因此新旧 key 可以共存。
+func rawDocumentLocalKey(workspaceID, kbID, docID, revisionID uuid.UUID, safeName string) string {
+	if revisionID != uuid.Nil {
+		ext := fileExtension(safeName)
+		return filepath.ToSlash(filepath.Join(
+			workspaceID.String(),
+			kbID.String(),
+			docID.String(),
+			revisionID.String(),
+			"original"+ext,
+		))
+	}
+	return filepath.ToSlash(filepath.Join(
+		workspaceID.String(),
+		kbID.String(),
+		docID.String(),
+		safeName,
+	))
+}
+
+// fileExtension 从 safeFileName 产物中取出扩展名（含点）；没有扩展名时回退到 .bin。
+// safeFileName 已经保证只含安全字符且非空，这里只关心后缀。
+func fileExtension(safeName string) string {
+	dot := strings.LastIndexByte(safeName, '.')
+	if dot < 0 {
+		return ".bin"
+	}
+	ext := safeName[dot:]
+	if ext == "." {
+		return ".bin"
+	}
+	return ext
+}
+
+// mapMissingObjectError 把底层 os 的「文件不存在」错误统一映射为
+// storage.ErrObjectNotFound，使调用方能用 errors.Is 判断对象已不存在（幂等清理场景）。
+// 其它错误原样返回。
+func mapMissingObjectError(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("raw document object not found: %w", portstorage.ErrObjectNotFound)
+	}
+	return err
 }
 
 func safeFileName(name string) string {

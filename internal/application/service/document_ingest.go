@@ -16,6 +16,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+	id "github.com/dajee/langhuan/internal/domain/id"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/ports/queue"
@@ -203,15 +204,19 @@ func (s *DocumentIngestService) ingestV2(
 	if err != nil {
 		return nil, err
 	}
+	// 预分配 revision id，使原始对象 key 与即将创建的 revision 共享同一 id：
+	// 这样同一文档的多个 revision 不会在 raw 存储里互相覆盖，且 raw key 可在 revision
+	// 创建前就稳定下来。Task 7 的来源同步链路也复用同一模式。
+	revisionID := id.New()
 	rawObject, err := s.putRawDocument(ctx, tempPath, storage.RawDocumentInput{
 		WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
-		DocumentID: document.ID, FileName: originalFilename,
+		DocumentID: document.ID, RevisionID: revisionID, FileName: originalFilename,
 		ContentType: strings.TrimSpace(input.ContentType), SizeBytes: actualSize,
 	})
 	if err != nil {
 		return nil, err
 	}
-	revision, err := model.NewDocumentRevision(model.NewDocumentRevisionInput{
+	revision, err := model.NewDocumentRevisionWithID(revisionID, model.NewDocumentRevisionInput{
 		WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
 		DocumentID: document.ID, Kind: value.DocumentKindFile, DocumentKind: value.DocumentKindFile,
 		RevisionNo: 1, Reason: value.DocumentRevisionReasonIngest,

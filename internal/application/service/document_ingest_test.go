@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -78,6 +79,39 @@ func TestIngestCreatesDocumentRevisionAndWorkspaceTask(t *testing.T) {
 		t.Fatalf("queue task id = %q, want %q", h.queue.requests[0].TaskID, wantTaskID)
 	}
 	assertTempDirEmpty(t, h.tempDir)
+}
+
+func TestIngestPreAllocatesRevisionIDIntoRawKeyAndRevision(t *testing.T) {
+	t.Parallel()
+
+	h, store, _ := newV2DocumentIngestHarness(t)
+	_, err := h.service.Ingest(context.Background(), IngestDocumentInput{
+		WorkspaceID: h.workspaceID, KnowledgeBaseID: h.kb.ID,
+		Title: "rev-scoped", FileName: "rev.md", ContentType: "text/markdown", SourceType: "upload",
+		Reader: bytes.NewBufferString("body"), SizeBytes: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.raw.puts) != 1 {
+		t.Fatalf("raw puts = %d, want 1", len(h.raw.puts))
+	}
+	rawInput := h.raw.puts[0]
+	if rawInput.RevisionID == uuid.Nil {
+		t.Fatalf("raw input RevisionID is nil; expected pre-allocated revision id")
+	}
+	if store.revision == nil {
+		t.Fatalf("revision was not persisted")
+	}
+	if rawInput.RevisionID != store.revision.ID {
+		t.Fatalf("raw input RevisionID = %s, revision ID = %s; must match (pre-allocated)",
+			rawInput.RevisionID, store.revision.ID)
+	}
+	// raw key 应包含预分配的 revision id（fake store 把它附加到 key 末尾）。
+	if !strings.Contains(store.revision.RawStorageKey, store.revision.ID.String()) {
+		t.Fatalf("RawStorageKey = %q does not contain revision id %s",
+			store.revision.RawStorageKey, store.revision.ID)
+	}
 }
 
 func TestIngestV2QueueFailureAtomicallyMarksCreatedAggregateFailed(t *testing.T) {
@@ -378,11 +412,18 @@ func (s *fakeRawDocumentStore) Put(_ context.Context, input storage.RawDocumentI
 	}
 	s.puts = append(s.puts, storage.RawDocumentInput{
 		WorkspaceID: input.WorkspaceID, KnowledgeBaseID: input.KnowledgeBaseID,
-		DocumentID: input.DocumentID, FileName: input.FileName, ContentType: input.ContentType,
+		DocumentID: input.DocumentID, RevisionID: input.RevisionID,
+		FileName: input.FileName, ContentType: input.ContentType,
 		Reader: bytes.NewReader(body), SizeBytes: input.SizeBytes,
 	})
+	// 当调用方预分配了 RevisionID 时，raw key 必须带上它，
+	// 这样真实 adapter 才能区分同一文档的不同 revision。
+	key := "raw/" + input.DocumentID.String()
+	if input.RevisionID != uuid.Nil {
+		key = "raw/" + input.DocumentID.String() + "/" + input.RevisionID.String()
+	}
 	return &storage.RawDocumentObject{
-		Key: "raw/" + input.DocumentID.String(), SizeBytes: int64(len(body)),
+		Key: key, SizeBytes: int64(len(body)),
 		SHA256: sha256Hex(string(body)), ContentType: input.ContentType,
 	}, nil
 }

@@ -142,3 +142,25 @@ func TestAssetStoreDeleteRejectsTraversal(t *testing.T) {
 		t.Fatalf("Delete() error = %v, want ErrInvalidRawDocumentKey", err)
 	}
 }
+
+func TestAssetStoreDeleteMissingMapsSentinel(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := NewAssetStore(dir)
+
+	err := store.Delete(ctx, "assets/missing/asset.png")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrObjectNotFound", err)
+	}
+}
+
+func TestAssetStoreOpenMissingMapsSentinel(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := NewAssetStore(dir)
+
+	_, err := store.Open(ctx, "assets/missing/asset.png")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Open() error = %v, want ErrObjectNotFound", err)
+	}
+}

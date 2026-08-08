@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithy "github.com/aws/smithy-go"
 	portstorage "github.com/dajee/langhuan/internal/ports/storage"
 	"github.com/google/uuid"
 )
@@ -246,5 +247,179 @@ func TestS3StorePutError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error from S3 Put failure")
+	}
+}
+
+// putS3RawWithRevision 是一个小测试辅助函数：用固定的 workspace/kb/document 写入一份原始内容，
+// 仅替换 RevisionID。这样若无 revision 作用域，两次写入会落在同一个 key 上互相覆盖。
+func putS3RawWithRevision(t *testing.T, rawStore *RawDocumentStore, ws, kb, doc, rev uuid.UUID, content string) *portstorage.RawDocumentObject {
+	t.Helper()
+	ctx := context.Background()
+	obj, err := rawStore.Put(ctx, portstorage.RawDocumentInput{
+		WorkspaceID:     ws,
+		KnowledgeBaseID: kb,
+		DocumentID:      doc,
+		RevisionID:      rev,
+		FileName:        "doc.md",
+		ContentType:     "text/markdown",
+		Reader:          strings.NewReader(content),
+		SizeBytes:       int64(len(content)),
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	return obj
+}
+
+func TestS3RawDocumentRevisionKeysDoNotOverwrite(t *testing.T) {
+	fake := newFakeS3()
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+	ws, kb, doc := uuid.New(), uuid.New(), uuid.New()
+	first := putS3RawWithRevision(t, rawStore, ws, kb, doc, uuid.New(), "one")
+	second := putS3RawWithRevision(t, rawStore, ws, kb, doc, uuid.New(), "two")
+	if first.Key == second.Key {
+		t.Fatalf("revision keys collide: %q", first.Key)
+	}
+	if !strings.Contains(first.Key, "/original.md") {
+		t.Fatalf("first key = %q, want original.md suffix", first.Key)
+	}
+	// 两个 key 都应写入到 fake S3，互不覆盖。
+	if string(fake.objects[first.Key]) != "one" {
+		t.Fatalf("first content = %q", string(fake.objects[first.Key]))
+	}
+	if string(fake.objects[second.Key]) != "two" {
+		t.Fatalf("second content = %q", string(fake.objects[second.Key]))
+	}
+}
+
+func TestS3RawDocumentPutUsesRevisionIDInKey(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+	ws := uuid.New()
+	kb := uuid.New()
+	doc := uuid.New()
+	rev := uuid.New()
+
+	obj, err := rawStore.Put(ctx, portstorage.RawDocumentInput{
+		WorkspaceID: ws, KnowledgeBaseID: kb, DocumentID: doc, RevisionID: rev,
+		FileName: "report.pdf", ContentType: "application/pdf",
+		Reader: strings.NewReader("x"), SizeBytes: 1,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	expected := "raw-documents/" + strings.Join([]string{
+		ws.String(), kb.String(), doc.String(), rev.String(), "original.pdf",
+	}, "/")
+	if obj.Key != expected {
+		t.Fatalf("key = %q, want %q", obj.Key, expected)
+	}
+}
+
+// TestS3RawDocumentPutNilRevisionUsesZeroUUIDKey 验证当 RevisionID 为 uuid.Nil 时，
+// key 退化为带 zero-UUID 的当前格式（向后兼容存量 S3 调用方）。
+func TestS3RawDocumentPutNilRevisionUsesZeroUUIDKey(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+
+	obj, err := rawStore.Put(ctx, portstorage.RawDocumentInput{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), DocumentID: uuid.New(),
+		FileName: "report.pdf", ContentType: "application/pdf",
+		Reader: strings.NewReader("x"), SizeBytes: 1,
+	})
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	if !strings.Contains(obj.Key, "/"+uuid.Nil.String()+"/original.pdf") {
+		t.Fatalf("key = %q, want zero-UUID revision segment", obj.Key)
+	}
+	// Open 应能用该 key 重新读取（Open 始终用完整 key）。
+	reader, err := rawStore.Open(ctx, obj.Key)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(data) != "x" {
+		t.Fatalf("content = %q", string(data))
+	}
+}
+
+func TestS3RawDocumentOpenMissingMapsSentinel(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	// fake 的 GetObject 对不存在的 key 返回普通 "not found" 字符串错误，
+	// 这里改用带 NoSuchKey code 的 smithy.APIError 以模拟真实 AWS 行为。
+	fake.getErr = &smithy.GenericAPIError{Code: "NoSuchKey", Message: "The specified key does not exist."}
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+
+	_, err := rawStore.Open(ctx, "raw-documents/missing")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Open() error = %v, want ErrObjectNotFound", err)
+	}
+}
+
+func TestS3RawDocumentOpenGenericNotFoundMapsSentinel(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	fake.getErr = &smithy.GenericAPIError{Code: "NotFound", Message: "no such object"}
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+
+	_, err := rawStore.Open(ctx, "raw-documents/missing")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Open() error = %v, want ErrObjectNotFound", err)
+	}
+}
+
+// TestS3RawDocumentDeleteMissingStaysSuccessful 验证 S3-compatible 服务对不存在对象的
+// DeleteObject 返回成功时，adapter 仍保持成功（不映射为 sentinel）。
+func TestS3RawDocumentDeleteMissingStaysSuccessful(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+
+	if err := rawStore.Delete(ctx, "raw-documents/never-existed"); err != nil {
+		t.Fatalf("Delete() error = %v, want nil (S3 idempotent delete)", err)
+	}
+}
+
+// TestS3RawDocumentDeleteNotFoundMapsSentinel 验证当 DeleteObject 真的返回
+// NoSuchKey/NotFound 时，adapter 映射为 ErrObjectNotFound。
+func TestS3RawDocumentDeleteNotFoundMapsSentinel(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	fake.deleteErr = &smithy.GenericAPIError{Code: "NotFound", Message: "not found"}
+	store := newStoreWithClient(fake, "test-bucket", "")
+	rawStore := store.NewRawDocumentStore()
+
+	err := rawStore.Delete(ctx, "raw-documents/missing")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Delete() error = %v, want ErrObjectNotFound", err)
+	}
+}
+
+// TestS3AssetStoreOpenMissingMapsSentinel 验证 S3 AssetStore 的 Open 也把
+// NoSuchKey 映射为 ErrObjectNotFound。
+func TestS3AssetStoreOpenMissingMapsSentinel(t *testing.T) {
+	ctx := context.Background()
+	fake := newFakeS3()
+	fake.getErr = &smithy.GenericAPIError{Code: "NoSuchKey", Message: "missing"}
+	store := newStoreWithClient(fake, "test-bucket", "")
+	assetStore := store.NewAssetStore()
+
+	_, err := assetStore.Open(ctx, "assets/missing/asset.png")
+	if !errors.Is(err, portstorage.ErrObjectNotFound) {
+		t.Fatalf("Open() error = %v, want ErrObjectNotFound", err)
 	}
 }
