@@ -241,6 +241,25 @@ func (r *KnowledgeBaseRepository) UpdateSyncCursor(ctx context.Context, workspac
 	})
 }
 
+// UpdateSourceDeletePolicy 仅更新 source_config.on_delete，保留其余运行期键
+// （root_token/sync_cursor/cron/next_sync_at/latch/sync_last_result）。
+// 使用 jsonb_set(..., true) 在键缺失时自动创建。policy 为归一化后的字符串。
+func (r *KnowledgeBaseRepository) UpdateSourceDeletePolicy(ctx context.Context, workspaceID, kbID uuid.UUID, policy value.SourceDeletePolicy) error {
+	return NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+		now := time.Now().UTC()
+		execSQL := "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{on_delete}', to_jsonb(?::text), true), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		args := []any{policy.String(), now, workspaceID, kbID}
+		result := tx.WithContext(ctx).Exec(execSQL, args...)
+		if result.Error != nil {
+			return translateDBError(result.Error, "更新知识库 on_delete 策略失败")
+		}
+		if result.RowsAffected != 1 {
+			return domainerrors.ErrNotFound
+		}
+		return nil
+	})
+}
+
 func (r *KnowledgeBaseRepository) lockSelectableModel(ctx context.Context, tx *gorm.DB, workspaceID, modelID uuid.UUID, modelType value.ModelType) (*ModelRow, *ModelProviderRow, error) {
 	var item ModelRow
 	err := tx.WithContext(ctx).Table("models").Select("models.*").

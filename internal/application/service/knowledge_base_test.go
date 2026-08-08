@@ -19,6 +19,7 @@ type fakeKnowledgeBaseRepository struct {
 	createdRoot       *model.FileTreeNode
 	createdGeneration *model.IndexGeneration
 	updateInput       UpdateKnowledgeBaseBasicsInput
+	sourcePolicyCalls int
 	boundAPIKeyID     *uuid.UUID
 	failBinding       bool
 }
@@ -35,6 +36,21 @@ func (r *fakeKnowledgeBaseRepository) UpdateBasics(_ context.Context, input Upda
 	if input.Description != nil {
 		kb.Description = *input.Description
 	}
+	return nil
+}
+
+// UpdateSourceDeletePolicy 在测试替身中只改写 source_config.on_delete，保留其余键，
+// 模拟生产 jsonb_set 行为。调用被记录在 sourcePolicyCalls 供断言。
+func (r *fakeKnowledgeBaseRepository) UpdateSourceDeletePolicy(_ context.Context, workspaceID, kbID uuid.UUID, policy value.SourceDeletePolicy) error {
+	r.sourcePolicyCalls++
+	kb := r.items[kbID]
+	if kb == nil || kb.WorkspaceID != workspaceID {
+		return domainerrors.ErrNotFound
+	}
+	if kb.SourceConfig == nil {
+		kb.SourceConfig = map[string]any{}
+	}
+	kb.SourceConfig["on_delete"] = policy.String()
 	return nil
 }
 

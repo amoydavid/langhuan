@@ -338,6 +338,8 @@ func (b *specBuilder) knowledgeBaseOps() []op {
 			respBody: dto.KnowledgeBase{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
 		{method: http.MethodPatch, path: wsBase + "/knowledge-bases/:id", tag: "知识库", summary: "更新知识库名称与描述",
 			reqBody: updateKnowledgeBaseBasicsRequest{}, respBody: dto.KnowledgeBase{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}},
+		{method: http.MethodPatch, path: wsBase + "/knowledge-bases/:id/source-policy", tag: "知识库", summary: "更新来源删除策略",
+			reqBody: sourcePolicyRequest{}, respBody: sourcePolicyResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite}, description: "仅更新 source_config.on_delete（keep|remove），保留其余来源运行期字段；仅飞书来源知识库可用。"},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/summary", tag: "知识库", summary: "查询知识库汇总",
 			respBody: dto.KnowledgeBaseSummary{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
 		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/jobs", tag: "知识库", summary: "查询知识库任务列表",

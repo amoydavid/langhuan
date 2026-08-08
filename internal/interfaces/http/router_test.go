@@ -510,20 +510,21 @@ func TestLegacyKnowledgeBaseRoutesAreNotRegistered(t *testing.T) {
 // workspace with a given role, with resource services (KB/doc/job) configured
 // by the caller via the returned fakes.
 type slugResourceFixtures struct {
-	router     *gin.Engine
-	wsID       uuid.UUID
-	userID     uuid.UUID
-	sessionID  uuid.UUID
-	auth       *fakeAuthService
-	mbs        *fakeMembershipService
-	wsSvc      *fakeWorkspaceService
-	kbSvc      *fakeKnowledgeBaseService
-	syncSvc    *fakeKnowledgeBaseSyncService
-	docSvc     *fakeDocumentQueryService
-	jobSvc     *fakeJobQueryService
-	summarySvc *fakeKnowledgeBaseSummaryHTTPService
-	ingest     *fakeDocumentIngestService
-	faq        *fakeFAQDocumentHTTPService
+	router          *gin.Engine
+	wsID            uuid.UUID
+	userID          uuid.UUID
+	sessionID       uuid.UUID
+	auth            *fakeAuthService
+	mbs             *fakeMembershipService
+	wsSvc           *fakeWorkspaceService
+	kbSvc           *fakeKnowledgeBaseService
+	syncSvc         *fakeKnowledgeBaseSyncService
+	sourcePolicySvc *fakeKnowledgeBaseSourcePolicyService
+	docSvc          *fakeDocumentQueryService
+	jobSvc          *fakeJobQueryService
+	summarySvc      *fakeKnowledgeBaseSummaryHTTPService
+	ingest          *fakeDocumentIngestService
+	faq             *fakeFAQDocumentHTTPService
 }
 
 func newSlugResourceFixtures(t *testing.T, role value.WorkspaceRole, isPlatformAdmin bool) *slugResourceFixtures {
@@ -553,6 +554,9 @@ func newSlugResourceFixtures(t *testing.T, role value.WorkspaceRole, isPlatformA
 	syncSvc := &fakeKnowledgeBaseSyncService{}
 	deps.KnowledgeBaseSync = syncSvc
 
+	sourcePolicySvc := &fakeKnowledgeBaseSourcePolicyService{}
+	deps.KnowledgeBaseSourcePolicy = sourcePolicySvc
+
 	docSvc := newFakeDocumentQueryService()
 	deps.Documents = docSvc
 
@@ -573,20 +577,21 @@ func newSlugResourceFixtures(t *testing.T, role value.WorkspaceRole, isPlatformA
 	deps.Models = &fakeModelHTTPService{}
 
 	return &slugResourceFixtures{
-		router:     NewRouter(deps),
-		wsID:       wsID,
-		userID:     userID,
-		sessionID:  sessionID,
-		auth:       auth,
-		mbs:        mbs,
-		wsSvc:      wsSvc,
-		kbSvc:      kbSvc,
-		syncSvc:    syncSvc,
-		docSvc:     docSvc,
-		jobSvc:     jobSvc,
-		summarySvc: summarySvc,
-		ingest:     ingest,
-		faq:        faq,
+		router:          NewRouter(deps),
+		wsID:            wsID,
+		userID:          userID,
+		sessionID:       sessionID,
+		auth:            auth,
+		mbs:             mbs,
+		wsSvc:           wsSvc,
+		kbSvc:           kbSvc,
+		syncSvc:         syncSvc,
+		sourcePolicySvc: sourcePolicySvc,
+		docSvc:          docSvc,
+		jobSvc:          jobSvc,
+		summarySvc:      summarySvc,
+		ingest:          ingest,
+		faq:             faq,
 	}
 }
 

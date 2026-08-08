@@ -25,6 +25,7 @@ type KnowledgeBaseService struct {
 	binder             KnowledgeBaseModelBinder
 	store              KnowledgeBaseCreateStore
 	updater            KnowledgeBaseBasicsUpdater
+	policyUpdater      KnowledgeBaseSourcePolicyUpdater
 	syncEnqueuer       KnowledgeBaseSyncEnqueuer
 	syncEnqueuerLogger *slog.Logger
 }
@@ -61,6 +62,12 @@ type KnowledgeBaseBasicsUpdater interface {
 	UpdateBasics(context.Context, UpdateKnowledgeBaseBasicsInput) error
 }
 
+// KnowledgeBaseSourcePolicyUpdater persists a typed source delete-policy patch.
+// 只更新 source_config.on_delete，保留其它运行期键（root_token/cursor 等）。
+type KnowledgeBaseSourcePolicyUpdater interface {
+	UpdateSourceDeletePolicy(context.Context, uuid.UUID, uuid.UUID, value.SourceDeletePolicy) error
+}
+
 // NewKnowledgeBaseService creates a KnowledgeBase service.
 // 可选的 enqueuer 在飞书知识库创建成功后触发首次同步；为 nil 时跳过。
 func NewKnowledgeBaseService(binder KnowledgeBaseModelBinder, stores ...KnowledgeBaseCreateStore) *KnowledgeBaseService {
@@ -71,7 +78,8 @@ func NewKnowledgeBaseService(binder KnowledgeBaseModelBinder, stores ...Knowledg
 		store = candidate
 	}
 	updater, _ := binder.(KnowledgeBaseBasicsUpdater)
-	return &KnowledgeBaseService{binder: binder, store: store, updater: updater}
+	policyUpdater, _ := binder.(KnowledgeBaseSourcePolicyUpdater)
+	return &KnowledgeBaseService{binder: binder, store: store, updater: updater, policyUpdater: policyUpdater}
 }
 
 // WithSyncEnqueuer 注入可选的首次同步入队器（飞书 KB 创建后触发）。
@@ -172,20 +180,67 @@ func (s *KnowledgeBaseService) Create(ctx context.Context, input CreateKnowledge
 	}), nil
 }
 
+// UpdateSourceDeletePolicy 仅更新 source_config.on_delete，保留其余运行期键。
+//
+// 仅对飞书来源（feishu_drive/feishu_wiki）知识库生效：on_delete 只在来源同步清理
+// 流程中有意义。其它来源返回 ErrValidation。调用方须已通过鉴权（admin/owner）。
+func (s *KnowledgeBaseService) UpdateSourceDeletePolicy(ctx context.Context, workspaceID, kbID uuid.UUID, policy value.SourceDeletePolicy) error {
+	if workspaceID == uuid.Nil || kbID == uuid.Nil {
+		return fmt.Errorf("%w: KnowledgeBase lineage 无效", domainerrors.ErrValidation)
+	}
+	if s.policyUpdater == nil {
+		return fmt.Errorf("%w: KnowledgeBase source policy updater 不能为空", domainerrors.ErrValidation)
+	}
+	resolved, err := s.binder.GetResolved(ctx, workspaceID, kbID)
+	if err != nil {
+		return err
+	}
+	if !resolved.KnowledgeBase.SourceType.IsFeishu() {
+		return fmt.Errorf("%w: 仅飞书来源知识库支持删除策略配置", domainerrors.ErrValidation)
+	}
+	return s.policyUpdater.UpdateSourceDeletePolicy(ctx, workspaceID, kbID, policy)
+}
+
 // buildKnowledgeBase 根据来源类型构造知识库聚合。
 // 飞书来源用 NewKnowledgeBaseWithSource（校验 connection 与 config）；其它/缺省用 NewKnowledgeBase。
+// 飞书来源在创建时严格校验 on_delete（缺失补 keep，非法返回 ErrValidation）。
 func (s *KnowledgeBaseService) buildKnowledgeBase(input CreateKnowledgeBaseInput) (*model.KnowledgeBase, error) {
 	sourceConfig := input.SourceConfig
 	if sourceConfig == nil {
 		sourceConfig = map[string]any{}
 	}
 	if input.SourceType.IsFeishu() {
+		// 显式 on_delete 走严格解析（非法即拒绝）；缺失则补默认 keep。
+		// 历史回读统一用 value.SourceDeletePolicyFromConfig（宽容）。
+		resolved := make(map[string]any, len(sourceConfig))
+		for k, v := range sourceConfig {
+			resolved[k] = v
+		}
+		if raw, present := resolved["on_delete"]; present {
+			policy, err := parseOnDeleteValue(raw)
+			if err != nil {
+				return nil, err
+			}
+			resolved["on_delete"] = policy.String()
+		} else {
+			resolved["on_delete"] = value.SourceDeleteKeep.String()
+		}
 		return model.NewKnowledgeBaseWithSource(
 			input.WorkspaceID, input.Name, input.Description, input.EmbeddingModelID,
-			input.ChunkingConfig, map[string]any{}, input.SourceType, sourceConfig, input.SourceConnectionID,
+			input.ChunkingConfig, map[string]any{}, input.SourceType, resolved, input.SourceConnectionID,
 		)
 	}
 	return model.NewKnowledgeBase(input.WorkspaceID, input.Name, input.Description, input.EmbeddingModelID, input.ChunkingConfig, map[string]any{})
+}
+
+// parseOnDeleteValue 把 source_config["on_delete"]（任意类型）归一为字符串后
+// 走严格解析。仅当值为字符串且合法时通过；非字符串或非法值返回 ErrValidation。
+func parseOnDeleteValue(raw any) (value.SourceDeletePolicy, error) {
+	s, ok := raw.(string)
+	if !ok {
+		return value.SourceDeleteKeep, fmt.Errorf("%w: on_delete 必须是字符串", domainerrors.ErrValidation)
+	}
+	return value.ParseSourceDeletePolicy(s)
 }
 
 // Get gets a KnowledgeBase with its bound model summary.

@@ -31,32 +31,33 @@ type Dependencies struct {
 	PasswordEnabled bool                      // bootstrap-status 返回，控制前端密码表单显示
 
 	// resource (workspace-scoped)
-	Workspaces              WorkspaceService
-	WorkspaceReadiness      WorkspaceReadinessHTTPService
-	WorkspaceSearchSettings WorkspaceSearchSettingsHTTPService
-	KnowledgeBases          KnowledgeBaseService
-	KnowledgeBaseSync       KnowledgeBaseSyncService
-	KnowledgeBaseSummary    KnowledgeBaseSummaryHTTPService
-	DocumentChunks          DocumentChunksHTTPService
-	ModelProviders          ModelProviderHTTPService
-	Models                  ModelHTTPService
-	ModelConnectionTests    ModelConnectionTestHTTPService
-	DocumentIngest          DocumentIngestService
-	Documents               DocumentQueryService
-	DocumentAssets          DocumentAssetListService
-	AssetGetter             DocumentAssetGetter
-	AssetContentStore       AssetContentStore
-	FAQDocuments            FAQDocumentHTTPService
-	FileTree                FileTreeHTTPService
-	ChunkRevisions          ChunkRevisionHTTPService
-	IndexGenerations        IndexGenerationHTTPService
-	Search                  SearchHTTPService
-	MultiSearch             MultiSearchHTTPService
-	Jobs                    JobQueryService
-	SourceConnections       SourceConnectionService
-	MCPHandler              stdhttp.Handler
-	SPA                     fs.FS
-	MaxFileSizeBytes        int64
+	Workspaces                WorkspaceService
+	WorkspaceReadiness        WorkspaceReadinessHTTPService
+	WorkspaceSearchSettings   WorkspaceSearchSettingsHTTPService
+	KnowledgeBases            KnowledgeBaseService
+	KnowledgeBaseSync         KnowledgeBaseSyncService
+	KnowledgeBaseSourcePolicy KnowledgeBaseSourcePolicyService
+	KnowledgeBaseSummary      KnowledgeBaseSummaryHTTPService
+	DocumentChunks            DocumentChunksHTTPService
+	ModelProviders            ModelProviderHTTPService
+	Models                    ModelHTTPService
+	ModelConnectionTests      ModelConnectionTestHTTPService
+	DocumentIngest            DocumentIngestService
+	Documents                 DocumentQueryService
+	DocumentAssets            DocumentAssetListService
+	AssetGetter               DocumentAssetGetter
+	AssetContentStore         AssetContentStore
+	FAQDocuments              FAQDocumentHTTPService
+	FileTree                  FileTreeHTTPService
+	ChunkRevisions            ChunkRevisionHTTPService
+	IndexGenerations          IndexGenerationHTTPService
+	Search                    SearchHTTPService
+	MultiSearch               MultiSearchHTTPService
+	Jobs                      JobQueryService
+	SourceConnections         SourceConnectionService
+	MCPHandler                stdhttp.Handler
+	SPA                       fs.FS
+	MaxFileSizeBytes          int64
 }
 
 // NewRouter builds the gin engine wiring:
@@ -310,6 +311,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			if deps.KnowledgeBaseSync != nil {
 				sync := knowledgeBaseSyncHandler{service: deps.KnowledgeBaseSync}
 				write.POST("/sync", sync.sync)
+			}
+			if deps.KnowledgeBaseSourcePolicy != nil {
+				sourcePolicy := knowledgeBaseSourcePolicyHandler{service: deps.KnowledgeBaseSourcePolicy}
+				write.PATCH("/source-policy", sourcePolicy.update)
 			}
 		} else if deps.KnowledgeBaseSummary != nil {
 			readSummary := progGroup.Group("/knowledge-bases/:id", RequireScopeForAPIKey(value.ScopeKnowledgeBasesRead), RequireKnowledgeBaseForAPIKey("id"))
