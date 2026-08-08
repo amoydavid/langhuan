@@ -138,6 +138,69 @@ func TestSourceSyncHandleHandlesNilStoreGracefully(t *testing.T) {
 	}
 }
 
+// TestSourceSyncHandlePartialRunMarkedSucceeded（spec 12.3）验证：source sync 产生
+// partial 结果时 RunSourceSyncJob 返回 nil（partial 不算任务失败），worker 因此把通用 Job
+// 标记为 succeeded（终态由服务的 FinalizeSourceSyncJob 写入 completed），绝不调用 MarkFailed。
+// 只有 fatal error 才会让 worker 走失败/重试路径（覆盖见 TestSourceSyncHandleSkipRetryOnPermanentError）。
+func TestSourceSyncHandlePartialRunMarkedSucceeded(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{} // err=nil 模拟 partial/成功：service 对 partial 返回 nil
+	store := &sourceSyncTaskStoreSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store}
+	payload := SourceSyncTaskPayload{
+		WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), JobID: uuid.New(),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, encoded)); err != nil {
+		t.Fatalf("partial sync 应返回 nil（标记 succeeded），got err = %v", err)
+	}
+	if store.failed[payload.JobID] != "" {
+		t.Fatalf("partial sync 不应调用 MarkFailed; got %q", store.failed[payload.JobID])
+	}
+	// worker 不直接 MarkSucceeded：终态由 service FinalizeSourceSyncJob 写 completed。
+	// 这里仅断言未标 failed；succeeded map 也不应有 entry（worker 不调用 MarkSucceeded）。
+	if store.succeeded[payload.JobID] {
+		t.Fatalf("worker 不应调用 MarkSucceeded（终态由服务 finalize）")
+	}
+	if len(runner.calls) != 1 || runner.calls[0].JobID != payload.JobID {
+		t.Fatalf("runner calls = %#v", runner.calls)
+	}
+}
+
+// TestSourceSyncHandleDecodesLegacyPayloadWithoutForce（spec 12.3）验证：旧 source_sync
+// payload（仅 lineage/job 字段、缺失任何 force 字段）仍可正常解码并以完整 lineage 调 runner。
+// force 的真实值由 worker→service 从 DB latch 原子消费（service 层覆盖见
+// TestRunSourceSyncJobLatchFalseRunsNonForced / TestRunSourceSyncJobConsumesForceLatchAndRunsForcedSync）。
+func TestSourceSyncHandleDecodesLegacyPayloadWithoutForce(t *testing.T) {
+	runner := &sourceSyncRunnerSpy{}
+	store := &sourceSyncTaskStoreSpy{}
+	handler := SourceSyncHandler{Runner: runner, Store: store}
+	ws, kb, job := uuid.New(), uuid.New(), uuid.New()
+	// 手工构造一个不含 force 键的旧式 payload（与 SourceSyncTaskPayload 当前形状一致，
+	// 但显式用 map 强调"无 force 字段"的兼容语义）。
+	legacy, err := json.Marshal(map[string]any{
+		"workspace_id":      ws,
+		"knowledge_base_id": kb,
+		"job_id":            job,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := handler.Handle(context.Background(), asynq.NewTask(TaskSourceSync, legacy)); err != nil {
+		t.Fatalf("legacy payload Handle err = %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner calls = %d, want 1", len(runner.calls))
+	}
+	if runner.calls[0].WorkspaceID != ws || runner.calls[0].KnowledgeBaseID != kb || runner.calls[0].JobID != job {
+		t.Fatalf("lineage = %#v, want ws=%s kb=%s job=%s", runner.calls[0], ws, kb, job)
+	}
+}
+
 // TestSourceSyncHandleDispatchesNextOnSuccess 验证任务成功后若 payload 带 connection_id，
 // 则触发 Dispatcher.TryDispatchConnection 续跑同 connection 的到期 KB。
 func TestSourceSyncHandleDispatchesNextOnSuccess(t *testing.T) {

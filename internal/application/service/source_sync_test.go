@@ -136,14 +136,18 @@ type fakeSourceSyncStore struct {
 	softDeleted       []uuid.UUID // 记录被 SoftDeleteDocument 调用的 document id
 	softDeleteErr     error
 	// Task 6 新增方法的最小可注入状态
-	upsertFolderCalls   int
-	upsertFolderErr     error
-	createRevCalls      int
-	createRevErr        error
-	retryCalls          int
-	retryErr            error
-	deleteCalls         []deleteCall
-	deleteErr           error
+	upsertFolderCalls int
+	upsertFolderErr   error
+	createRevCalls    int
+	createRevErr      error
+	retryCalls        int
+	retryErr          error
+	deleteCalls       []deleteCall
+	deleteErr         error
+	// deleteReturnObjects/deleteReturnJobs 让 fake DeleteSourceDocument 返回可注入的
+	// 清理对象/Job（用于断言 SyncResult.CleanupPending 与 remove 策略入队）。
+	deleteReturnObjects []CleanupObject
+	deleteReturnJobs    []*model.Job
 	activeSyncJob       *model.Job
 	forceLatch          bool
 	requestSyncErr      error
@@ -553,7 +557,13 @@ func (s *fakeSourceSyncStore) DeleteSourceDocument(_ context.Context, documentID
 		doc.DeletedAt = &now
 		doc.Status = value.DocumentStatusDeleted
 	}
-	return nil, nil, nil
+	// 返回可注入的清理对象/Job（默认空，保持既有测试语义）。
+	objs := append([]CleanupObject(nil), s.deleteReturnObjects...)
+	jobs := append([]*model.Job(nil), s.deleteReturnJobs...)
+	for _, job := range jobs {
+		s.jobs[job.ID] = job
+	}
+	return objs, jobs, nil
 }
 
 func (s *fakeSourceSyncStore) RequestSourceSync(_ context.Context, _, _, connectionID uuid.UUID, requestedForce bool) (*model.Job, bool, error) {
@@ -1933,6 +1943,20 @@ func (e *sourceSyncTestEnv) markDocumentReady(externalID string) {
 		now := time.Now().UTC()
 		rev.CompletedAt = &now
 	}
+}
+
+// syncResult 返回最近一次 UpdateSyncResult 写入的 SyncResult（可能为 nil）。
+func (e *sourceSyncTestEnv) syncResult() *SyncResult { return e.store.lastSyncResult }
+
+// syncOnceErr 执行一次同步并返回底层 error（不 t.Fatalf），用于断言 fatal 路径。
+func (e *sourceSyncTestEnv) syncOnceErr(t *testing.T) error {
+	t.Helper()
+	return e.svc.SyncKnowledgeBase(context.Background(), e.workspaceID, e.kb.ID)
+}
+
+// fetchedTokenCount 返回 connector 记录的所有 Fetch 调用按 externalID 计数。
+func (e *sourceSyncTestEnv) fetchedTokenCount() map[string]int {
+	return e.connector.fetchedTokenCount()
 }
 
 // TestSyncReusesExternalDocumentAndSkipsUnchangedContent（spec 12.2 #1/#2）：
