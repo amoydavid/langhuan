@@ -58,6 +58,30 @@ func TestScopeToolFilterReturnsAllForSession(t *testing.T) {
 	require.Len(t, filtered, 2)
 }
 
+func TestKnowledgeSearchToolIsReadOnly(t *testing.T) {
+	srv := NewServer(minimalDeps())
+	resp := srv.MCP().HandleMessage(context.Background(), json.RawMessage(`{
+		"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}
+	}`))
+	jsonResp, ok := resp.(mcplib.JSONRPCResponse)
+	require.True(t, ok)
+	result, ok := jsonResp.Result.(mcplib.ListToolsResult)
+	require.True(t, ok)
+
+	var knowledgeSearch *mcplib.Tool
+	for i := range result.Tools {
+		if result.Tools[i].Name == "knowledge_search" {
+			knowledgeSearch = &result.Tools[i]
+			break
+		}
+	}
+	require.NotNil(t, knowledgeSearch, "knowledge_search 工具未注册")
+	require.NotNil(t, knowledgeSearch.Annotations.ReadOnlyHint)
+	require.True(t, *knowledgeSearch.Annotations.ReadOnlyHint)
+	require.NotNil(t, knowledgeSearch.Annotations.DestructiveHint)
+	require.False(t, *knowledgeSearch.Annotations.DestructiveHint)
+}
+
 func toolNames(tools []mcplib.Tool) []string {
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
