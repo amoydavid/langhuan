@@ -1,8 +1,10 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -58,10 +60,16 @@ type fakeAPI struct {
 
 	// 注入错误：按 token / documentID 返回特定 error，命中即短路返回。
 	getNodeErr      map[string]error // by node token
-	listChildrenErr map[string]error // by parent token
-	driveListErr    map[string]error // by folder token
+	listChildrenErr map[string]error // by parent token (任意页命中)
+	driveListErr    map[string]error // by folder token (任意页命中)
 	docxContentErr  map[string]error // by document id
 	docxTitleErr    map[string]error // by document id
+
+	// 分页级别的错误注入：用于测试「第一页成功、第二页可恢复失败」之类的场景。
+	// wikiChildrenPagedErr[wikiChildKey][pageToken] 命中时返回该 error，否则按分页表返回数据。
+	wikiChildrenPagedErr map[wikiChildKey]map[string]error
+	// driveListPagedErr[drivePageKey] 命中时返回该 error，否则按分页表/单页表返回数据。
+	driveListPagedErr map[drivePageKey]error
 
 	// 计数器：校验调用次数。
 	getNodeCalls      int
@@ -73,22 +81,24 @@ type fakeAPI struct {
 
 func newFakeAPI() *fakeAPI {
 	return &fakeAPI{
-		wikiNodes:         map[string]*larkwiki.Node{},
-		wikiChildren:      map[wikiChildKey][]*larkwiki.Node{},
-		wikiChildrenPaged: map[wikiChildKey]map[string][]*larkwiki.Node{},
-		wikiNextPage:      map[wikiChildKey]map[string]string{},
-		wikiHasMore:       map[wikiChildKey]map[string]bool{},
-		driveFiles:        map[string][]*larkdrive.File{},
-		drivePages:        map[drivePageKey][]*larkdrive.File{},
-		driveNext:         map[drivePageKey]string{},
-		driveHasMore:      map[drivePageKey]bool{},
-		docxContent:       map[string]string{},
-		docxTitle:         map[string]string{},
-		getNodeErr:        map[string]error{},
-		listChildrenErr:   map[string]error{},
-		driveListErr:      map[string]error{},
-		docxContentErr:    map[string]error{},
-		docxTitleErr:      map[string]error{},
+		wikiNodes:            map[string]*larkwiki.Node{},
+		wikiChildren:         map[wikiChildKey][]*larkwiki.Node{},
+		wikiChildrenPaged:    map[wikiChildKey]map[string][]*larkwiki.Node{},
+		wikiNextPage:         map[wikiChildKey]map[string]string{},
+		wikiHasMore:          map[wikiChildKey]map[string]bool{},
+		driveFiles:           map[string][]*larkdrive.File{},
+		drivePages:           map[drivePageKey][]*larkdrive.File{},
+		driveNext:            map[drivePageKey]string{},
+		driveHasMore:         map[drivePageKey]bool{},
+		docxContent:          map[string]string{},
+		docxTitle:            map[string]string{},
+		getNodeErr:           map[string]error{},
+		listChildrenErr:      map[string]error{},
+		driveListErr:         map[string]error{},
+		docxContentErr:       map[string]error{},
+		docxTitleErr:         map[string]error{},
+		wikiChildrenPagedErr: map[wikiChildKey]map[string]error{},
+		driveListPagedErr:    map[drivePageKey]error{},
 	}
 }
 
@@ -110,6 +120,12 @@ func (f *fakeAPI) WikiListChildren(_ context.Context, spaceID, parentToken, page
 		return nil, "", false, err
 	}
 	key := wikiChildKey{spaceID: spaceID, parentToken: parentToken}
+	// 分页级别的错误注入（按 pageToken）。
+	if pageErrs, ok := f.wikiChildrenPagedErr[key]; ok {
+		if err, hit := pageErrs[pageToken]; hit {
+			return nil, "", false, err
+		}
+	}
 	// 优先走分页表。
 	if pages, ok := f.wikiChildrenPaged[key]; ok {
 		items := pages[pageToken]
@@ -128,6 +144,10 @@ func (f *fakeAPI) DriveList(_ context.Context, folderToken, pageToken string) ([
 		return nil, "", false, err
 	}
 	key := drivePageKey{folderToken: folderToken, pageToken: pageToken}
+	// 分页级别的错误注入。
+	if err, hit := f.driveListPagedErr[key]; hit {
+		return nil, "", false, err
+	}
 	if items, ok := f.drivePages[key]; ok {
 		next := f.driveNext[key]
 		more := f.driveHasMore[key]
@@ -186,6 +206,13 @@ func wikiNode(token, objToken, objType, parent, title string, hasChild bool) *la
 		Title:           strPtr(title),
 		HasChild:        boolPtr(hasChild),
 	}
+}
+
+// wikiNodeWithEdit 是 wikiNode 的扩展版，额外设置 ObjEditTime（毫秒 unix 字符串）。
+func wikiNodeWithEdit(token, objToken, objType, parent, title, editTime string, hasChild bool) *larkwiki.Node {
+	n := wikiNode(token, objToken, objType, parent, title, hasChild)
+	n.ObjEditTime = strPtr(editTime)
+	return n
 }
 
 // ---- 测试用例 ----
@@ -353,7 +380,8 @@ func TestListTreeWikiPropagatesGetNodeError(t *testing.T) {
 		"应传播 ErrSourceNotFound，got %v", err)
 }
 
-// TestListTreeWikiPropagatesListChildrenError 验证 WikiListChildren 返回错误时被传播。
+// TestListTreeWikiPropagatesListChildrenError 验证 WikiListChildren 返回致命错误（鉴权失败）时，
+// ListTree 通过 errors.Is 暴露 ErrSourceUnavailable，且不返回可应用 snapshot。
 func TestListTreeWikiPropagatesListChildrenError(t *testing.T) {
 	const (
 		spaceID   = "spcErr"
@@ -364,13 +392,15 @@ func TestListTreeWikiPropagatesListChildrenError(t *testing.T) {
 		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnErr"),
 		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
 	}
-	api.listChildrenErr[rootToken] = errors.New("list children 500")
+	// 注入致命错误（鉴权失败），应作为 fatal 传播而非 partial snapshot。
+	api.listChildrenErr[rootToken] = fmt.Errorf("%w: 鉴权失败", sourceport.ErrSourceUnavailable)
 
-	_, err := testConnector(api).ListTree(context.Background(), testConn(),
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
 		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
 	require.Error(t, err)
-	// list children 的原始错误应能在 err 链中被识别。
-	assert.Contains(t, err.Error(), "list children 500")
+	assert.True(t, errors.Is(err, sourceport.ErrSourceUnavailable),
+		"致命错误应传播 ErrSourceUnavailable，got %v", err)
+	assert.Empty(t, snapshot.Nodes, "致命错误不应返回可应用 snapshot")
 }
 
 // TestListTreeDrivePagination 验证 drive 分页：第一页 hasMore=true + nextPageToken，
@@ -410,4 +440,328 @@ func TestListTreeDrivePagination(t *testing.T) {
 	assert.Contains(t, byToken, "doxcnP1a")
 	assert.Contains(t, byToken, "doxcnP1b")
 	assert.Contains(t, byToken, "doxcnP2a")
+}
+
+// ---- Task 4: 快照完整性与 bounded Fetch ----
+
+// setWikiPagedChildren 设置 wiki 父节点下的分页子节点表。
+// pages: pageToken → 子节点列表；nextPage: 当前页 → 下一页 token；hasMoreMap: 当前页 → hasMore。
+func setWikiPagedChildren(api *fakeAPI, spaceID, parentToken string,
+	pages map[string][]*larkwiki.Node, nextPage map[string]string, hasMoreMap map[string]bool) {
+	key := wikiChildKey{spaceID: spaceID, parentToken: parentToken}
+	api.wikiChildrenPaged[key] = pages
+	api.wikiNextPage[key] = nextPage
+	api.wikiHasMore[key] = hasMoreMap
+}
+
+// TestListTreeWikiIncompleteOnRecoverablePageFailure 验证 wiki 第二页返回可恢复错误时，
+// snapshot 仍包含第一页节点，但 Complete=false 且带 warning。
+func TestListTreeWikiIncompleteOnRecoverablePageFailure(t *testing.T) {
+	const (
+		spaceID   = "spcPart"
+		rootToken = "wikcnPart"
+		page2     = "tok2"
+	)
+	api := newFakeAPI()
+	api.wikiNodes[rootToken] = &larkwiki.Node{
+		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnRoot"),
+		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
+		Title: strPtr("根文档"),
+	}
+	key := wikiChildKey{spaceID: spaceID, parentToken: rootToken}
+	setWikiPagedChildren(api, spaceID, rootToken,
+		map[string][]*larkwiki.Node{
+			"":    {wikiNode("wikcnA", "doxcnA", "docx", "", "文档A", false)},
+			page2: {wikiNode("wikcnB", "doxcnB", "docx", "", "文档B", false)},
+		},
+		map[string]string{"": page2},
+		map[string]bool{"": true},
+	)
+	// 第二页返回可恢复错误（非致命，应为 partial 而非 error）。
+	if api.wikiChildrenPagedErr[key] == nil {
+		api.wikiChildrenPagedErr[key] = map[string]error{}
+	}
+	api.wikiChildrenPagedErr[key][page2] = errors.New("飞书限流，请稍后重试")
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+	require.NoError(t, err, "可恢复错误不应导致 ListTree 返回 error")
+	assert.False(t, snapshot.Complete, "可恢复分页失败必须标记 Complete=false")
+	require.NotEmpty(t, snapshot.Warnings, "partial snapshot 应携带 warning")
+	// 根节点 + 第一页节点应都在结果中（第二页未收集）。
+	require.GreaterOrEqual(t, len(snapshot.Nodes), 2, "第一页节点应被保留")
+	tokens := map[string]bool{}
+	for _, n := range snapshot.Nodes {
+		tokens[n.Token] = true
+	}
+	assert.True(t, tokens["doxcnRoot"], "根节点应保留")
+	assert.True(t, tokens["doxcnA"], "第一页节点应保留")
+	assert.False(t, tokens["doxcnB"], "第二页失败不应被收集")
+}
+
+// TestListTreeDriveIncompleteOnRecoverablePageFailure 验证 drive 第二页返回可恢复错误时，
+// snapshot 仍包含第一页文件，但 Complete=false 且带 warning。
+func TestListTreeDriveIncompleteOnRecoverablePageFailure(t *testing.T) {
+	const (
+		folder = "fldcnPart"
+		page2  = "tok2"
+	)
+	api := newFakeAPI()
+	api.drivePages[drivePageKey{folder, ""}] = []*larkdrive.File{
+		{Token: strPtr("doxcnP1a"), Name: strPtr("页1文档A"), Type: strPtr("docx")},
+	}
+	api.driveNext[drivePageKey{folder, ""}] = page2
+	api.driveHasMore[drivePageKey{folder, ""}] = true
+	api.drivePages[drivePageKey{folder, page2}] = []*larkdrive.File{
+		{Token: strPtr("doxcnP2a"), Name: strPtr("页2文档A"), Type: strPtr("docx")},
+	}
+	api.driveNext[drivePageKey{folder, page2}] = ""
+	api.driveHasMore[drivePageKey{folder, page2}] = false
+	// 第二页返回可恢复错误。
+	api.driveListPagedErr[drivePageKey{folder, page2}] = errors.New("飞书限流，请稍后重试")
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: folder})
+	require.NoError(t, err, "可恢复错误不应导致 ListTree 返回 error")
+	assert.False(t, snapshot.Complete, "可恢复分页失败必须标记 Complete=false")
+	require.NotEmpty(t, snapshot.Warnings, "partial snapshot 应携带 warning")
+	// 第一页文件应被保留。
+	tokens := map[string]bool{}
+	for _, n := range snapshot.Nodes {
+		tokens[n.Token] = true
+	}
+	assert.True(t, tokens["doxcnP1a"], "第一页文件应保留")
+	assert.False(t, tokens["doxcnP2a"], "第二页失败不应被收集")
+}
+
+// TestListTreeWikiSubtreeRecoverableFailure 验证子树列举出现可恢复错误时，
+// 整体 Complete=false，但其他子树仍被收集。
+func TestListTreeWikiSubtreeRecoverableFailure(t *testing.T) {
+	const (
+		spaceID      = "spcSub"
+		rootToken    = "wikcnSub"
+		childAToken  = "wikcnA"
+		childBToken  = "wikcnB"
+		grandAToken  = "wikcnGA"
+		grandB1Token = "wikcnGB1"
+		grandB2Token = "wikcnGB2"
+	)
+	api := newFakeAPI()
+	api.wikiNodes[rootToken] = &larkwiki.Node{
+		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnRoot"),
+		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
+		Title: strPtr("根文档"),
+	}
+	// 根下两个 folder 子节点。
+	api.wikiChildren[wikiChildKey{spaceID, rootToken}] = []*larkwiki.Node{
+		wikiNode(childAToken, "fldcnA", "folder", "", "子A", true),
+		wikiNode(childBToken, "fldcnB", "folder", "", "子B", true),
+	}
+	// 子A 正常：一个 grandChild。
+	api.wikiChildren[wikiChildKey{spaceID, childAToken}] = []*larkwiki.Node{
+		wikiNode(grandAToken, "doxcnGA", "docx", childAToken, "孙A", false),
+	}
+	// 子B 可恢复失败。
+	api.listChildrenErr[childBToken] = errors.New("子B 子树限流")
+	// 引用 grandB1Token / grandB2Token 避免 unused 报错（保留语义占位）。
+	_ = grandB1Token
+	_ = grandB2Token
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+	require.NoError(t, err)
+	assert.False(t, snapshot.Complete, "子树失败应标记 Complete=false")
+	require.NotEmpty(t, snapshot.Warnings)
+
+	tokens := map[string]bool{}
+	for _, n := range snapshot.Nodes {
+		tokens[n.Token] = true
+	}
+	assert.True(t, tokens["doxcnRoot"], "根节点应保留")
+	assert.True(t, tokens["doxcnGA"], "未失败的子树仍应被收集")
+	// 子B 自身作为根下子节点已收集，但其孙子不应存在。
+}
+
+// TestListTreeCompleteCalculatesMaxEditTime 验证完整遍历时
+// MaxEditTime = 所有非零 EditTime 的最大值。
+func TestListTreeCompleteCalculatesMaxEditTime(t *testing.T) {
+	const (
+		spaceID   = "spcEdit"
+		rootToken = "wikcnEdit"
+	)
+	// 三个节点的 ObjEditTime（毫秒 unix）：1000、3000、（零/空）。
+	const (
+		editMsRoot = "1000"
+		editMsA    = "3000"
+	)
+	api := newFakeAPI()
+	api.wikiNodes[rootToken] = &larkwiki.Node{
+		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnRoot"),
+		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
+		Title:       strPtr("根文档"),
+		ObjEditTime: strPtr(editMsRoot),
+	}
+	api.wikiChildren[wikiChildKey{spaceID, rootToken}] = []*larkwiki.Node{
+		wikiNodeWithEdit("wikcnA", "doxcnA", "docx", "", "文档A", editMsA, false),
+		// ObjEditTime 为 nil/空：EditTime 应为零值，不应参与 max 计算。
+		wikiNode("wikcnB", "doxcnB", "docx", "", "文档B无编辑时间", false),
+	}
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+	require.NoError(t, err)
+	require.True(t, snapshot.Complete, "完整遍历应 Complete=true")
+	// MaxEditTime 应等于 editMsA（3000ms）对应的时间。
+	expected := parseEditTime(strPtr(editMsA))
+	assert.True(t, snapshot.MaxEditTime.Equal(expected),
+		"MaxEditTime 应为非零最大值 %v，got %v", expected, snapshot.MaxEditTime)
+	assert.False(t, snapshot.MaxEditTime.IsZero(), "存在非零 EditTime 时 MaxEditTime 不应为零")
+}
+
+// TestListTreePartialStillReportsMaxEditTime 验证 partial snapshot 也应填充 MaxEditTime
+// （adapter 只报告值，是否推进由 application 决定）。
+func TestListTreePartialStillReportsMaxEditTime(t *testing.T) {
+	const (
+		spaceID   = "spcEditP"
+		rootToken = "wikcnEditP"
+		page2     = "tok2"
+	)
+	const editMsRoot = "2000"
+	api := newFakeAPI()
+	api.wikiNodes[rootToken] = &larkwiki.Node{
+		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnRoot"),
+		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
+		Title:       strPtr("根文档"),
+		ObjEditTime: strPtr(editMsRoot),
+	}
+	key := wikiChildKey{spaceID: spaceID, parentToken: rootToken}
+	setWikiPagedChildren(api, spaceID, rootToken,
+		map[string][]*larkwiki.Node{
+			"":    {wikiNodeWithEdit("wikcnA", "doxcnA", "docx", "", "文档A", "5000", false)},
+			page2: {wikiNode("wikcnB", "doxcnB", "docx", "", "文档B", false)},
+		},
+		map[string]string{"": page2},
+		map[string]bool{"": true},
+	)
+	if api.wikiChildrenPagedErr[key] == nil {
+		api.wikiChildrenPagedErr[key] = map[string]error{}
+	}
+	api.wikiChildrenPagedErr[key][page2] = errors.New("第二页限流")
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+	require.NoError(t, err)
+	assert.False(t, snapshot.Complete)
+	// 已收集节点中最大 EditTime = 5000ms。
+	expected := parseEditTime(strPtr("5000"))
+	assert.True(t, snapshot.MaxEditTime.Equal(expected),
+		"partial snapshot 也应报告 MaxEditTime %v，got %v", expected, snapshot.MaxEditTime)
+}
+
+// TestListTreeFatalAuthErrorReturnsNoSnapshot 验证致命鉴权错误返回 error 且不返回可应用 snapshot。
+func TestListTreeFatalAuthErrorReturnsNoSnapshot(t *testing.T) {
+	const (
+		spaceID   = "spcFatal"
+		rootToken = "wikcnFatal"
+	)
+	api := newFakeAPI()
+	api.wikiNodes[rootToken] = &larkwiki.Node{
+		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnRoot"),
+		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
+	}
+	api.listChildrenErr[rootToken] = fmt.Errorf("%w: token 失效", sourceport.ErrSourceUnavailable)
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, sourceport.ErrSourceUnavailable),
+		"致命鉴权错误应传播 ErrSourceUnavailable，got %v", err)
+	assert.Empty(t, snapshot.Nodes, "致命错误不应返回可应用 snapshot")
+	assert.False(t, snapshot.Complete)
+}
+
+// TestListTreeEmptyAndCompleteIsLegal 验证「根下无可见节点」返回 Complete=true 的合法空快照。
+func TestListTreeEmptyAndCompleteIsLegal(t *testing.T) {
+	const (
+		spaceID   = "spcEmpty"
+		rootToken = "wikcnEmpty"
+	)
+	api := newFakeAPI()
+	api.wikiNodes[rootToken] = &larkwiki.Node{
+		NodeToken: strPtr(rootToken), ObjToken: strPtr("doxcnRoot"),
+		ObjType: strPtr("docx"), SpaceId: strPtr(spaceID),
+		Title: strPtr("根文档"),
+	}
+	// 根下无子节点。
+	api.wikiChildren[wikiChildKey{spaceID, rootToken}] = nil
+
+	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+	require.NoError(t, err)
+	assert.True(t, snapshot.Complete, "空且完整的快照应 Complete=true")
+	// 根节点自身应在结果中（walkWiki 总会先放入根节点）。
+	require.Len(t, snapshot.Nodes, 1, "根节点应被返回")
+}
+
+// TestFetchStopsAtMaxContentBytes 验证内容超过 MaxContentBytes 时返回 ErrSourceContentTooLarge。
+func TestFetchStopsAtMaxContentBytes(t *testing.T) {
+	const docID = "doxcnBig"
+	api := newFakeAPI()
+	api.docxContent[docID] = string(bytes.Repeat([]byte("x"), 1024))
+	api.docxTitle[docID] = "大文档"
+
+	_, err := testConnector(api).Fetch(context.Background(), testConn(), docID,
+		sourceport.FetchOptions{MaxContentBytes: 128})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, sourceport.ErrSourceContentTooLarge),
+		"超限应返回 ErrSourceContentTooLarge，got %v", err)
+}
+
+// TestFetchUnderLimitSucceeds 验证内容不超过 MaxContentBytes 时正常返回。
+func TestFetchUnderLimitSucceeds(t *testing.T) {
+	const docID = "doxcnSmall"
+	api := newFakeAPI()
+	api.docxContent[docID] = "# 小文档\n正文"
+	api.docxTitle[docID] = "小文档"
+
+	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID,
+		sourceport.FetchOptions{MaxContentBytes: 1024})
+	require.NoError(t, err)
+	assert.Equal(t, "小文档", doc.Title)
+	assert.Equal(t, "docx", doc.ObjType)
+	assert.Contains(t, string(doc.Markdown), "# 小文档")
+}
+
+// TestFetchZeroOrUnsetLimitNoCap 验证 MaxContentBytes <= 0 时不设上限。
+func TestFetchZeroOrUnsetLimitNoCap(t *testing.T) {
+	const docID = "doxcnNoCap"
+	api := newFakeAPI()
+	api.docxContent[docID] = string(bytes.Repeat([]byte("y"), 2048))
+	api.docxTitle[docID] = "不限文档"
+
+	// 0 表示不限。
+	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID,
+		sourceport.FetchOptions{MaxContentBytes: 0})
+	require.NoError(t, err, "MaxContentBytes<=0 不应受限")
+	assert.Len(t, doc.Markdown, 2048)
+
+	// 负数同样视为不限。
+	doc, err = testConnector(api).Fetch(context.Background(), testConn(), docID,
+		sourceport.FetchOptions{MaxContentBytes: -1})
+	require.NoError(t, err, "MaxContentBytes 负数也应视为不限")
+	assert.Len(t, doc.Markdown, 2048)
+}
+
+// TestFetchExactlyAtLimit 验证内容字节数恰好等于上限时不算超限（边界）。
+func TestFetchExactlyAtLimit(t *testing.T) {
+	const docID = "doxcnExact"
+	api := newFakeAPI()
+	body := bytes.Repeat([]byte("z"), 256)
+	api.docxContent[docID] = string(body)
+	api.docxTitle[docID] = "恰好"
+
+	doc, err := testConnector(api).Fetch(context.Background(), testConn(), docID,
+		sourceport.FetchOptions{MaxContentBytes: int64(len(body))})
+	require.NoError(t, err, "恰好等于上限不应超限")
+	assert.Len(t, doc.Markdown, 256)
 }

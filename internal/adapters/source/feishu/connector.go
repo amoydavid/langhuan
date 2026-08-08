@@ -9,6 +9,7 @@ package feishu
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -90,6 +91,16 @@ func NewConnector(opts ...Option) *Connector {
 func (c *Connector) Provider() string { return ProviderName }
 
 // ListTree 按 SyncRoot.Kind 分派，递归遍历飞书节点树。
+//
+// 错误分类（spec 3.1）：
+//   - 致命错误（ErrSourceUnavailable 鉴权失败 / ErrSourceNotFound 根不存在或无权限）：
+//     返回 error，且不返回可应用 snapshot（Nodes 为空）。
+//   - 可恢复错误（限流、瞬态分页失败、子树列举失败等非致命错误）：
+//     停止受影响分页/子树的进一步列举，保留已收集节点，标记 Complete=false 并附 warning。
+//   - 全量列举成功：Complete=true。
+//
+// MaxEditTime 为快照内所有非零 EditTime 的最大值；adapter 只负责报告，是否推进
+// application cursor 由调用方依据 Complete 决定。
 func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot) (sourceport.TreeSnapshot, error) {
 	if root.Token == "" {
 		return sourceport.TreeSnapshot{}, fmt.Errorf("%w: sync root token 为空", sourceport.ErrSourceNotFound)
@@ -98,27 +109,35 @@ func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, r
 	if err != nil {
 		return sourceport.TreeSnapshot{}, err
 	}
-	var nodes []model.ExternalNode
+	state := newWalkState()
 	switch root.Kind {
 	case sourceport.SyncRootWikiNode:
-		nodes, err = c.walkWiki(ctx, api, root.Token)
+		err = c.walkWiki(ctx, api, root.Token, state)
 	case sourceport.SyncRootDriveFolder:
-		nodes, err = c.walkDrive(ctx, api, root.Token)
+		err = c.walkDrive(ctx, api, root.Token, state)
 	default:
 		return sourceport.TreeSnapshot{}, fmt.Errorf("不支持的 sync root kind: %s", root.Kind)
 	}
 	if err != nil {
+		// 致命错误：不返回可应用 snapshot。
 		return sourceport.TreeSnapshot{}, err
 	}
-	// TODO(task-4): 真正计算 completeness / warnings / MaxEditTime。
-	// 首版假设全量列举成功即 Complete=true，MaxEditTime 由调用方在循环中另行推进。
-	return sourceport.TreeSnapshot{Nodes: nodes, Complete: true}, nil
+	return sourceport.TreeSnapshot{
+		Nodes:       state.nodes,
+		Complete:    !state.partial,
+		Warnings:    state.warnings,
+		MaxEditTime: maxEditTime(state.nodes),
+	}, nil
 }
 
 // Fetch 拉取单个外部文档（首版仅 docx）。
 //
-// TODO(task-7): 根据 options.MaxContentBytes 限制拉取大小，超限返回 ErrSourceContentTooLarge。
-// 当前实现忽略上限，保持与旧调用方兼容，由后续任务补齐。
+// 内容大小限制：当 options.MaxContentBytes > 0 且返回的 markdown 字节数超过该上限时，
+// 返回包装了 ErrSourceContentTooLarge 的错误；MaxContentBytes <= 0 表示不限。
+//
+// 实现说明：飞书 SDK 的 DocxRawContent 一次性返回完整内容字符串，无法在传输层流式截断。
+// 因此本实现采用「先拉取后校验长度」的策略——这是在 SDK 不提供流式接口前提下的现实边界。
+// application 层（spec 7.2）仍会对最终 markdown 做第二次校验，防止 adapter 实现错误。
 func (c *Connector) Fetch(ctx context.Context, conn model.SourceConnection, externalID string, options sourceport.FetchOptions) (model.FetchedDocument, error) {
 	if externalID == "" {
 		return model.FetchedDocument{}, fmt.Errorf("%w: external_id 为空", sourceport.ErrSourceNotFound)
@@ -131,9 +150,14 @@ func (c *Connector) Fetch(ctx context.Context, conn model.SourceConnection, exte
 	if err != nil {
 		return model.FetchedDocument{}, err
 	}
+	markdown := []byte(content)
+	if options.MaxContentBytes > 0 && int64(len(markdown)) > options.MaxContentBytes {
+		return model.FetchedDocument{}, fmt.Errorf("%w: docx %s 内容 %d 字节超过上限 %d",
+			sourceport.ErrSourceContentTooLarge, externalID, len(markdown), options.MaxContentBytes)
+	}
 	title, _ := api.DocxGetTitle(ctx, externalID) // 标题获取失败降级为空，非硬错误
 	return model.FetchedDocument{
-		Markdown: []byte(content),
+		Markdown: markdown,
 		Title:    title,
 		ObjType:  "docx",
 	}, nil
@@ -233,37 +257,93 @@ func ptrString(p *string) string {
 
 // ---- 编排逻辑：wiki 递归遍历 ----
 
-func (c *Connector) walkWiki(ctx context.Context, api feishuAPI, rootToken string) ([]model.ExternalNode, error) {
+// walkState 累积一次 ListTree 遍历过程中的节点、告警与完整性标记。
+//
+// 设计：所有递归遍历函数共享同一个 state，从而把「子树可恢复失败」
+// 透传到顶层，最终让 ListTree 决定 Complete=false 并附 warning。
+type walkState struct {
+	nodes    []model.ExternalNode
+	warnings []string
+	partial  bool
+}
+
+func newWalkState() *walkState {
+	return &walkState{nodes: make([]model.ExternalNode, 0, 64)}
+}
+
+// append 追加一个外部节点，保持首项出现顺序（token 去重由 application 负责）。
+func (s *walkState) append(n model.ExternalNode) {
+	s.nodes = append(s.nodes, n)
+}
+
+// markPartial 记录一条 warning 并把快照标记为 partial（Complete=false）。
+// warning 仅含非敏感的定位信息（标识、错误文本），不含文档内容。
+func (s *walkState) markPartial(warning string) {
+	s.partial = true
+	s.warnings = append(s.warnings, warning)
+}
+
+// isFatalListError 列举过程中判定错误是否致命。
+//
+// 致命（返回 error，不返回可应用 snapshot）：
+//   - ErrSourceUnavailable：鉴权失败 / 源不可达；
+//   - ErrSourceNotFound：根或对象不存在 / 无权限。
+//
+// 其它错误（限流、瞬态分页失败、未分类的 API error）视为可恢复，
+// 由调用方记录 warning 并标记 partial。
+func isFatalListError(err error) bool {
+	return errors.Is(err, sourceport.ErrSourceUnavailable) || errors.Is(err, sourceport.ErrSourceNotFound)
+}
+
+// maxEditTime 返回所有节点中非零 EditTime 的最大值；全为零则返回零值。
+func maxEditTime(nodes []model.ExternalNode) time.Time {
+	var max time.Time
+	for i := range nodes {
+		et := nodes[i].EditTime
+		if et.IsZero() {
+			continue
+		}
+		if max.IsZero() || et.After(max) {
+			max = et
+		}
+	}
+	return max
+}
+
+func (c *Connector) walkWiki(ctx context.Context, api feishuAPI, rootToken string, state *walkState) error {
 	// 先用 get_node 解析根节点的 space_id 与自身信息。
 	node, err := api.WikiGetNode(ctx, rootToken)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	spaceID := ptrString(node.SpaceId)
 	if spaceID == "" {
-		return nil, fmt.Errorf("%w: wiki 节点缺少 space_id", sourceport.ErrSourceNotFound)
+		return fmt.Errorf("%w: wiki 节点缺少 space_id", sourceport.ErrSourceNotFound)
 	}
-	result := []model.ExternalNode{wikiNodeToExternal(node, "")}
+	state.append(wikiNodeToExternal(node, ""))
 	// 递归收集子节点。
-	if err := c.collectWikiChildren(ctx, api, spaceID, ptrString(node.NodeToken), &result); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return c.collectWikiChildren(ctx, api, spaceID, ptrString(node.NodeToken), state)
 }
 
-func (c *Connector) collectWikiChildren(ctx context.Context, api feishuAPI, spaceID, parentToken string, result *[]model.ExternalNode) error {
+func (c *Connector) collectWikiChildren(ctx context.Context, api feishuAPI, spaceID, parentToken string, state *walkState) error {
 	pageToken := ""
 	for {
 		items, next, hasMore, err := api.WikiListChildren(ctx, spaceID, parentToken, pageToken)
 		if err != nil {
-			return err
+			if isFatalListError(err) {
+				return err
+			}
+			// 可恢复错误：停止本父节点的分页，记录 partial + warning，保留已收集节点。
+			state.markPartial(fmt.Sprintf("wiki 子节点列举失败 (space=%s parent=%s page=%s): %v",
+				spaceID, parentToken, pageToken, err))
+			return nil
 		}
 		for i := range items {
 			item := items[i]
-			*result = append(*result, wikiNodeToExternal(item, parentToken))
+			state.append(wikiNodeToExternal(item, parentToken))
 			// has_child 为 true 时继续递归。
 			if item.HasChild != nil && *item.HasChild {
-				if err := c.collectWikiChildren(ctx, api, spaceID, ptrString(item.NodeToken), result); err != nil {
+				if err := c.collectWikiChildren(ctx, api, spaceID, ptrString(item.NodeToken), state); err != nil {
 					return err
 				}
 			}
@@ -293,22 +373,27 @@ func wikiNodeToExternal(node *larkwiki.Node, fallbackParent string) model.Extern
 
 // ---- 编排逻辑：drive 文件夹递归遍历 ----
 
-func (c *Connector) walkDrive(ctx context.Context, api feishuAPI, folderToken string) ([]model.ExternalNode, error) {
-	var result []model.ExternalNode
-	return result, c.collectDriveChildren(ctx, api, folderToken, &result)
+func (c *Connector) walkDrive(ctx context.Context, api feishuAPI, folderToken string, state *walkState) error {
+	return c.collectDriveChildren(ctx, api, folderToken, state)
 }
 
-func (c *Connector) collectDriveChildren(ctx context.Context, api feishuAPI, folderToken string, result *[]model.ExternalNode) error {
+func (c *Connector) collectDriveChildren(ctx context.Context, api feishuAPI, folderToken string, state *walkState) error {
 	pageToken := ""
 	for {
 		files, next, hasMore, err := api.DriveList(ctx, folderToken, pageToken)
 		if err != nil {
-			return err
+			if isFatalListError(err) {
+				return err
+			}
+			// 可恢复错误：停止本文件夹的分页，记录 partial + warning。
+			state.markPartial(fmt.Sprintf("drive 文件夹列举失败 (folder=%s page=%s): %v",
+				folderToken, pageToken, err))
+			return nil
 		}
 		for i := range files {
 			f := files[i]
 			objType := ptrString(f.Type)
-			*result = append(*result, model.ExternalNode{
+			state.append(model.ExternalNode{
 				Token:       ptrString(f.Token),
 				ParentToken: folderToken,
 				Title:       ptrString(f.Name),
@@ -317,7 +402,7 @@ func (c *Connector) collectDriveChildren(ctx context.Context, api feishuAPI, fol
 				// drive 列举不返回 edit_time，统一零值。
 			})
 			if objType == objTypeFolder {
-				if err := c.collectDriveChildren(ctx, api, ptrString(f.Token), result); err != nil {
+				if err := c.collectDriveChildren(ctx, api, ptrString(f.Token), state); err != nil {
 					return err
 				}
 			}
