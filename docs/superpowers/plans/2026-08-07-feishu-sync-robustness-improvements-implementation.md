@@ -1012,17 +1012,17 @@ git commit -m "docs(source): 更新飞书同步健壮性合同"
 
 ## Final Verification Checklist
 
-- [ ] `go test ./...` 通过，数据库测试没有连接开发库。
-- [ ] `make test-image` 成功，integration tests 使用临时 pgvector/zhparser 容器。
-- [ ] `go vet ./...` 通过。
-- [ ] `git diff --check` 通过。
-- [ ] 不完整 snapshot 不删除 Document/folder，且不推进 cursor。
-- [ ] 完整空 snapshot 可按 keep/remove 删除远端缺失 Document。
-- [ ] 同 external token 复用 Document ID，revision number 单调递增。
-- [ ] hash unchanged 跳过；force/retry 创建或复用正确 revision。
-- [ ] raw key 按 RevisionID 隔离，旧 key 可读写。
-- [ ] remove 删除 DB 投影并异步 cleanup 外部对象，失败可重试。
-- [ ] force latch 在 enqueue/consume/finalize 竞态下不丢失。
-- [ ] source sync Job 只在 fatal error 时 failed，partial 结果仍 succeeded + `sync_last_result.status=partial`。
-- [ ] 非法 `on_delete` API 返回 400，不覆盖 root/cursor/cron/latch。
-- [ ] Conventional Commits 提交信息使用中文主体。
+- [x] `go test ./...` 通过，数据库测试没有连接开发库。
+- [x] `make test-image` 成功，integration tests 使用临时 pgvector/zhparser 容器。
+- [x] `go vet ./...` 通过。
+- [x] `git diff --check` 通过。
+- [x] 不完整 snapshot 不删除 Document/folder，且不推进 cursor。
+- [x] 完整空 snapshot 可按 keep/remove 删除远端缺失 Document。
+- [x] 同 external token 复用 Document ID，revision number 单调递增。
+- [x] hash unchanged 跳过；force/retry 创建或复用正确 revision。
+- [x] raw key 按 RevisionID 隔离，旧 key 可读写。
+- [x] remove 删除 DB 投影并异步 cleanup 外部对象，失败可重试。
+- [x] force latch 在 enqueue/consume/finalize 竞态下不丢失。
+- [x] source sync Job 只在 fatal error 时 failed，partial 结果仍 succeeded + `sync_last_result.status=partial`。
+- [x] 非法 `on_delete` API 返回 400，不覆盖 root/cursor/cron/latch。
+- [x] Conventional Commits 提交信息使用中文主体。
