@@ -168,7 +168,6 @@ func TestEmbeddedSPAKeepsProtocolNamespaces(t *testing.T) {
 		{name: "MCP child", target: "/mcp/unknown"},
 		{name: "legacy health", target: "/healthz"},
 		{name: "legacy auth", target: "/auth/me"},
-		{name: "legacy admin", target: "/admin/users/id/password-reset"},
 	}
 
 	for _, tt := range tests {
@@ -187,5 +186,22 @@ func TestEmbeddedSPAKeepsProtocolNamespaces(t *testing.T) {
 				t.Fatalf("content-type = %q, want JSON = %t", rec.Header().Get("Content-Type"), tt.wantJSON404)
 			}
 		})
+	}
+}
+
+func TestEmbeddedSPAFallsBackForAdminModelDetailRoute(t *testing.T) {
+	bundle := fstest.MapFS{
+		"index.html": {Data: []byte("<html>console</html>")},
+	}
+	router := NewRouter(Dependencies{SPA: bundle})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/models/019fe4b6-4d99-762c-9a9c-4a0e9d794a64", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.String() != "<html>console</html>" {
+		t.Fatalf("body = %q, want embedded SPA", recorder.Body.String())
 	}
 }

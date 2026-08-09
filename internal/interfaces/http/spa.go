@@ -74,7 +74,6 @@ func isNonSPAPath(requestPath string) bool {
 		"/mcp",
 		"/healthz",
 		"/auth",
-		"/admin",
 	} {
 		if pathHasPrefix(requestPath, prefix) {
 			return true
