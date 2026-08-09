@@ -27,6 +27,11 @@ type ChunkStage struct {
 	chunker     Chunker
 }
 
+// legacyStandardChunkerVersion is the last flat-only standard chunking contract.
+// Its immutable Generation snapshots remain valid and must continue to accept new
+// documents after the v3 parent/child contract is deployed.
+const legacyStandardChunkerVersion = 2
+
 // NewChunkStage creates a revision- and generation-scoped chunk stage.
 func NewChunkStage(
 	revisions DocumentRevisionRepository,
@@ -65,18 +70,23 @@ func (s ChunkStage) Run(ctx context.Context, workspaceID, revisionID, generation
 		generation.KnowledgeBaseID != revision.KnowledgeBaseID {
 		return uuid.Nil, fmt.Errorf("%w: Revision/Document/Generation lineage 不一致", domainerrors.ErrValidation)
 	}
-	if generation.ChunkerVersion != CurrentStandardChunkerVersion {
+	if generation.ChunkerVersion != CurrentStandardChunkerVersion && generation.ChunkerVersion != legacyStandardChunkerVersion {
 		return uuid.Nil, fmt.Errorf(
 			"%w: 不支持 standard chunker version %d",
 			domainerrors.ErrValidation,
 			generation.ChunkerVersion,
 		)
 	}
-	config, err := decodeChunkingConfig(generation.ChunkingConfig)
+	config, err := decodeChunkingConfigForVersion(generation.ChunkerVersion, generation.ChunkingConfig)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	configMap := chunkingConfigMap(config)
+	if generation.ChunkerVersion == legacyStandardChunkerVersion {
+		// v2 snapshots only contain the flat chunk size and overlap. Keep that
+		// exact shape so existing ChunkSet identity and lookup remain stable.
+		configMap = map[string]any{"chunk_size": config.ChunkSize, "chunk_overlap": config.ChunkOverlap}
+	}
 	configHash, err := standardChunkConfigHash(generation.ChunkerVersion, configMap)
 	if err != nil {
 		return uuid.Nil, err
@@ -112,6 +122,10 @@ func (s ChunkStage) Run(ctx context.Context, workspaceID, revisionID, generation
 }
 
 func decodeChunkingConfig(raw map[string]any) (value.ChunkingConfig, error) {
+	return decodeChunkingConfigForVersion(CurrentStandardChunkerVersion, raw)
+}
+
+func decodeChunkingConfigForVersion(chunkerVersion int, raw map[string]any) (value.ChunkingConfig, error) {
 	encoded, err := json.Marshal(raw)
 	if err != nil {
 		return value.ChunkingConfig{}, fmt.Errorf("编码 ChunkingConfig 失败: %w", err)
@@ -145,6 +159,12 @@ func decodeChunkingConfig(raw map[string]any) (value.ChunkingConfig, error) {
 	}
 	if encodedConfig.ChildChunkSize != 0 {
 		config.ChildChunkSize = encodedConfig.ChildChunkSize
+	}
+	if chunkerVersion == legacyStandardChunkerVersion {
+		// v2 was flat-only and had no strategy/parent-child fields. Reconstruct
+		// those semantics without mutating the persisted Generation snapshot.
+		config.Strategy = value.ChunkingStrategyHeading
+		config.EnableParentChild = false
 	}
 	if err := config.Validate(); err != nil {
 		return value.ChunkingConfig{}, err

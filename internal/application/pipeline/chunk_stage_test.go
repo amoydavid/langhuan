@@ -71,7 +71,7 @@ func TestChunkStageBuildsIdempotentSet(t *testing.T) {
 	}
 }
 
-func TestChunkStageRejectsOutdatedStandardChunkerContract(t *testing.T) {
+func TestChunkStageBuildsLegacyV2FlatChunkSet(t *testing.T) {
 	workspaceID := uuid.New()
 	documentID := uuid.New()
 	revision := testDocumentRevision(workspaceID, documentID, value.DocumentKindFile, value.DocumentRevisionReady)
@@ -95,12 +95,20 @@ func TestChunkStageRejectsOutdatedStandardChunkerContract(t *testing.T) {
 		NewChunker(),
 	)
 
-	_, err := stage.Run(context.Background(), workspaceID, revision.ID, generation.ID)
-	if !errors.Is(err, domainerrors.ErrValidation) {
-		t.Fatalf("Run error = %v, want ErrValidation", err)
+	chunkSetID, err := stage.Run(context.Background(), workspaceID, revision.ID, generation.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if sets.getOrCreateCalls != 0 {
-		t.Fatalf("GetOrCreate calls = %d, want 0", sets.getOrCreateCalls)
+	if chunkSetID == uuid.Nil || sets.getOrCreateCalls != 1 {
+		t.Fatalf("chunk set id = %s, GetOrCreate calls = %d", chunkSetID, sets.getOrCreateCalls)
+	}
+	if sets.set.ChunkerVersion != 2 || sets.set.ChunkingConfig["chunk_size"] != 512 || sets.set.ChunkingConfig["chunk_overlap"] != 80 {
+		t.Fatalf("legacy chunk set = %#v", sets.set)
+	}
+	for _, chunk := range sets.chunks {
+		if chunk.Role != value.ChunkRoleFlat || chunk.ParentChunkID != nil {
+			t.Fatalf("legacy chunk role = %#v", chunk)
+		}
 	}
 }
 
