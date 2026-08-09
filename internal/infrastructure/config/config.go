@@ -50,10 +50,11 @@ type SourceSyncConfig struct {
 }
 
 type ServerConfig struct {
-	HTTPAddr  string `yaml:"http_addr"`
-	BaseURL   string `yaml:"base_url"`
-	RunHTTP   bool   `yaml:"run_http"`
-	RunWorker bool   `yaml:"run_worker"`
+	HTTPAddr          string `yaml:"http_addr"`
+	BaseURL           string `yaml:"base_url"`
+	RunHTTP           bool   `yaml:"run_http"`
+	RunWorker         bool   `yaml:"run_worker"`
+	MCPHostProtection bool   `yaml:"mcp_host_protection"`
 }
 
 // APIKeyConfig 描述 Workspace API Key 的生命周期与限流参数。

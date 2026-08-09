@@ -17,3 +17,5 @@ tmp/
 .data
 .codex/
 .reasonix/
+deploy/
+deploy.yaml

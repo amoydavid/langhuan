@@ -5,6 +5,9 @@ server:
   base_url: "http://127.0.0.1:8080"
   run_http: true
   run_worker: true
+  # MCP 的 localhost Host/DNS rebinding 防护。反向代理保留公网 Host 时默认关闭；
+  # 直连本地 MCP 服务或希望启用该防护时显式设置为 true。
+  mcp_host_protection: false
 
 database:
   driver: postgres

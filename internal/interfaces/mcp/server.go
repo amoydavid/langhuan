@@ -24,6 +24,8 @@ type Dependencies struct {
 	ChunkGet       MCPChunkGetService
 	MultiSearch    *service.MultiKnowledgeSearchService
 	InlineLimit    int64
+	// EnableLocalhostProtection enables mcp-go's DNS rebinding protection.
+	EnableLocalhostProtection bool
 }
 
 // Server 封装 mcp-go server 与 Streamable HTTP handler。
@@ -49,6 +51,7 @@ func NewServer(deps Dependencies) *Server {
 	handler := mcpserver.NewStreamableHTTPServer(srv,
 		mcpserver.WithStateLess(true),
 		mcpserver.WithDisableStreaming(true),
+		mcpserver.WithDisableLocalhostProtection(!deps.EnableLocalhostProtection),
 	)
 	return &Server{mcp: srv, handler: handler}
 }

@@ -155,6 +155,7 @@ type runtimeServices struct {
 	maxFileSize             int64
 	apiKeys                 *service.APIKeyService
 	mcpInlineLimit          int64
+	mcpHostProtection       bool
 }
 
 type embeddingFactoryCatalog interface {
@@ -676,6 +677,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		maxFileSize:            cfg.Ingest.MaxFileSizeBytes,
 		apiKeys:                apiKeys,
 		mcpInlineLimit:         cfg.MCP.InlineIngestMaxFileSizeBytes,
+		mcpHostProtection:      cfg.Server.MCPHostProtection,
 	}, nil
 }
 
@@ -822,10 +824,11 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		DocumentStatus: service.NewProgrammaticDocumentStatusService(&mcpDocumentStatusReader{
 			documents: services.documents, jobs: services.jobs,
 		}),
-		DocumentDelete: langmcp.NewMCPDocumentDeleteService(services.documents),
-		ChunkGet:       langmcp.NewMCPChunkGetService(services.chunkRevisions),
-		MultiSearch:    services.multiSearch,
-		InlineLimit:    services.mcpInlineLimit,
+		DocumentDelete:            langmcp.NewMCPDocumentDeleteService(services.documents),
+		ChunkGet:                  langmcp.NewMCPChunkGetService(services.chunkRevisions),
+		MultiSearch:               services.multiSearch,
+		InlineLimit:               services.mcpInlineLimit,
+		EnableLocalhostProtection: services.mcpHostProtection,
 	})
 	return langhttp.NewRouter(langhttp.Dependencies{
 		// auth (Task 8)

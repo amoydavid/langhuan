@@ -1,8 +1,11 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -30,6 +33,47 @@ func TestNewServerRegistersSixTools(t *testing.T) {
 		"knowledge_base_create", "document_ingest", "document_status",
 		"knowledge_search", "document_delete", "chunk_get",
 	}, names)
+}
+
+func TestNewServerDisablesLocalhostHostProtectionByDefault(t *testing.T) {
+	srv := NewServer(minimalDeps())
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL, bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)))
+	require.NoError(t, err)
+	req.Host = "kb.example.com"
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.NotEqual(t, http.StatusForbidden, resp.StatusCode)
+}
+
+func TestNewServerEnablesLocalhostHostProtectionWhenConfigured(t *testing.T) {
+	srv := NewServer(Dependencies{
+		KnowledgeBases:            minimalDeps().KnowledgeBases,
+		DocumentIngest:            minimalDeps().DocumentIngest,
+		DocumentStatus:            minimalDeps().DocumentStatus,
+		DocumentDelete:            minimalDeps().DocumentDelete,
+		ChunkGet:                  minimalDeps().ChunkGet,
+		MultiSearch:               minimalDeps().MultiSearch,
+		InlineLimit:               minimalDeps().InlineLimit,
+		EnableLocalhostProtection: true,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL, bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)))
+	require.NoError(t, err)
+	req.Host = "kb.example.com"
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 }
 
 func TestScopeToolFilterHidesToolsOutsideScope(t *testing.T) {

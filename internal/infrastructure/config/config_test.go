@@ -29,6 +29,9 @@ func TestV060DefaultsAndNormalization(t *testing.T) {
 	if cfg.MCP.InlineIngestMaxFileSizeBytes != 8388608 {
 		t.Fatalf("mcp.inline_ingest_max_file_size_bytes = %d, want 8388608", cfg.MCP.InlineIngestMaxFileSizeBytes)
 	}
+	if cfg.Server.MCPHostProtection {
+		t.Fatal("server.mcp_host_protection should default to false")
+	}
 	if cfg.Search.MultiKnowledgeBaseLimit != 20 || cfg.Search.MultiConcurrency != 4 || cfg.Search.MultiMergeRRFK != 60 {
 		t.Fatalf("search defaults = %#v", cfg.Search)
 	}
@@ -158,6 +161,7 @@ server:
   base_url: "https://langhuan.example.com/console/"
   run_http: true
   run_worker: false
+  mcp_host_protection: true
 database:
   driver: postgres
   dsn: "postgres://localhost:5432/langhuan?sslmode=disable"
@@ -184,6 +188,9 @@ log:
 	}
 	if cfg.Server.RunWorker {
 		t.Fatal("RunWorker should be false")
+	}
+	if !cfg.Server.MCPHostProtection {
+		t.Fatal("MCPHostProtection should be true")
 	}
 	if cfg.Database.Driver != "postgres" {
 		t.Fatalf("database driver = %q", cfg.Database.Driver)
