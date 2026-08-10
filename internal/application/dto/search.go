@@ -58,10 +58,10 @@ type MatchedChild struct {
 // ContentSHA256 对 API 返回的 content 字段按 UTF-8 字节计算 SHA-256，输出小写十六进制字符串；
 // 它与 DocumentRevision.SHA256（原始资产指纹）不同，不得混用。
 type CitationRef struct {
-	DocumentRevisionID uuid.UUID          `json:"document_revision_id"`
-	ChunkRevisionID    uuid.UUID          `json:"chunk_revision_id"`
-	SourceAnchor       map[string]any     `json:"source_anchor"`
-	ContentSHA256      string             `json:"content_sha256"`
+	DocumentRevisionID uuid.UUID            `json:"document_revision_id"`
+	ChunkRevisionID    uuid.UUID            `json:"chunk_revision_id"`
+	SourceAnchor       map[string]any       `json:"source_anchor"`
+	ContentSHA256      string               `json:"content_sha256"`
 	Status             value.CitationStatus `json:"status"`
 }
 

@@ -11,16 +11,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
-	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 type fakeReplayService struct {
-	input service.ReplaySearchInput
-	run   dto.SearchRunSummary
-	err   error
+	input  service.ReplaySearchInput
+	run    dto.SearchRunSummary
+	err    error
 	called bool
 }
 

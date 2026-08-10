@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/application/dto"
-		"github.com/dajee/langhuan/internal/application/requestmeta"
+	"github.com/dajee/langhuan/internal/application/requestmeta"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -39,26 +39,26 @@ type searchSnapshotOverride struct {
 
 // SearchReplayService 使用原 SearchRun 记录的固定快照重放检索，仅供 owner/admin 调用。
 type SearchReplayService struct {
-	runs            SearchRunStore
-	repository      indexport.SearchRepository
-	resolver        EmbeddingClientResolver
-	rerankResolver  RerankClientResolver
-	searchProfile   SearchProfileResolver
-	logger          interface{ Log() }
-	searchRuns      SearchRunStore
+	runs               SearchRunStore
+	repository         indexport.SearchRepository
+	resolver           EmbeddingClientResolver
+	rerankResolver     RerankClientResolver
+	searchProfile      SearchProfileResolver
+	logger             interface{ Log() }
+	searchRuns         SearchRunStore
 	searchRunRetention time.Duration
-	multiLimit      int
-	multiConcurrency int
+	multiLimit         int
+	multiConcurrency   int
 }
 
 // SearchReplayDeps 描述 SearchReplayService 的依赖。
 type SearchReplayDeps struct {
-	Runs              SearchRunStore
-	Repository        indexport.SearchRepository
-	Resolver          EmbeddingClientResolver
-	RerankResolver    RerankClientResolver
-	SearchProfile     SearchProfileResolver
-	Logger            replayLogger
+	Runs               SearchRunStore
+	Repository         indexport.SearchRepository
+	Resolver           EmbeddingClientResolver
+	RerankResolver     RerankClientResolver
+	SearchProfile      SearchProfileResolver
+	Logger             replayLogger
 	SearchRunRetention time.Duration
 }
 
@@ -276,7 +276,9 @@ func groupReplayGenerations(generations map[uuid.UUID]*model.IndexGeneration) []
 		}
 		byKey[key] = append(byKey[key], kbID)
 	}
-	sort.Slice(keyOrder, func(i, j int) bool { return keyOrder[i].EmbeddingModelID.String() < keyOrder[j].EmbeddingModelID.String() })
+	sort.Slice(keyOrder, func(i, j int) bool {
+		return keyOrder[i].EmbeddingModelID.String() < keyOrder[j].EmbeddingModelID.String()
+	})
 	groups := make([]replayEmbeddingGroup, 0, len(keyOrder))
 	for _, key := range keyOrder {
 		groups = append(groups, replayEmbeddingGroup{key: key, kbIDs: byKey[key]})

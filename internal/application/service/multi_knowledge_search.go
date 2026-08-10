@@ -156,10 +156,16 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 	queryChars := len([]rune(query))
 	meta := requestmeta.From(ctx)
 	// 基础输入校验通过后创建 SearchRun recorder。
+	// vectorTopK/keywordTopK 在多库检索时由各 KB 的 Generation 配置决定，
+	// 这里用最终 topK 作为占位（SearchRun 主要记录 finalTopK 用于回放）。
+	defaultTopK := finalTopK
+	if defaultTopK < minRetrievalTopK {
+		defaultTopK = minRetrievalTopK
+	}
 	recorder := newSearchRunRecorder(
 		s.searchRuns, s.logger, time.Now, s.searchRunRetention,
 		input.WorkspaceID, queryHash, queryChars,
-		0, 0, finalTopK,
+		defaultTopK, defaultTopK, finalTopK,
 		requestedScope, meta.Transport, meta.RequestID, meta.PrincipalKind,
 		nil,
 	)

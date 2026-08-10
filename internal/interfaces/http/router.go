@@ -58,7 +58,7 @@ type Dependencies struct {
 	IndexGenerations          IndexGenerationHTTPService
 	Search                    SearchHTTPService
 	MultiSearch               MultiSearchHTTPService
-	SearchReplay             SearchReplayHTTPService
+	SearchReplay              SearchReplayHTTPService
 	Jobs                      JobQueryService
 	SourceConnections         SourceConnectionService
 	MCPHandler                stdhttp.Handler
@@ -506,11 +506,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		}
 
 		// 检索回放：POST /workspaces/:workspace_slug/search-runs/:search_id/replay
-		// 仅 Session owner/admin 可调用；Bearer API Key 在 handler 返回 403。
+		// 注册在 progGroup（Session + Bearer）下，Bearer 到达 handler 后返回 403。
 		if deps.SearchReplay != nil {
-			replayGroup := wsGroup.Group("", RequireWorkspaceRole(value.RoleAdmin))
 			replayHandler := searchHandler{replaySvc: deps.SearchReplay}
-			replayGroup.POST("/search-runs/:search_id/replay", replayHandler.replayHandler)
+			progGroup.POST("/search-runs/:search_id/replay", replayHandler.replayHandler)
 		}
 
 		// admin+ routes.

@@ -59,8 +59,8 @@ func TestSearchRouteIsWorkspaceMemberScoped(t *testing.T) {
 }
 
 type searchHTTPServiceFake struct {
-	inputs  []service.SearchInput
-	results []*dto.SearchResult
+	inputs   []service.SearchInput
+	results  []*dto.SearchResult
 	searchID uuid.UUID
 	status   value.RetrievalStatus
 	genIDs   []uuid.UUID

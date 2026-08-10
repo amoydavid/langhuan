@@ -12,26 +12,26 @@ import (
 
 // SearchRun 是一次检索运行的元数据快照，不保存原始 query、正文、向量或凭证。
 type SearchRun struct {
-	ID                  uuid.UUID
-	WorkspaceID         uuid.UUID
-	RequestedScope      value.SearchScope
-	QueryHash           string
-	QueryChars          int
-	VectorTopK          int
-	KeywordTopK         int
-	FinalTopK           int
-	RetrievalStatus     value.RetrievalStatus
-	FailureClass        string
-	RankingStage        value.RankingStage
-	ResultCount         int
-	RequestID           string
-	Transport           string
-	PrincipalKind       string
-	CreatedAt           time.Time
-	CompletedAt         *time.Time
-	ExpiresAt           time.Time
-	ReplayOfID          *uuid.UUID
-	Generations         []SearchRunGeneration
+	ID                        uuid.UUID
+	WorkspaceID               uuid.UUID
+	RequestedScope            value.SearchScope
+	QueryHash                 string
+	QueryChars                int
+	VectorTopK                int
+	KeywordTopK               int
+	FinalTopK                 int
+	RetrievalStatus           value.RetrievalStatus
+	FailureClass              string
+	RankingStage              value.RankingStage
+	ResultCount               int
+	RequestID                 string
+	Transport                 string
+	PrincipalKind             string
+	CreatedAt                 time.Time
+	CompletedAt               *time.Time
+	ExpiresAt                 time.Time
+	ReplayOfID                *uuid.UUID
+	Generations               []SearchRunGeneration
 	EffectiveKnowledgeBaseIDs []uuid.UUID
 }
 
@@ -56,12 +56,12 @@ type SearchRunGeneration struct {
 
 // SearchRunCompletion 是完成一个 running SearchRun 所需的终态信息。
 type SearchRunCompletion struct {
-	Status             value.RetrievalStatus
-	FailureClass       string
-	RankingStage       value.RankingStage
-	ResultCount        int
-	EffectiveKBIDs     []uuid.UUID
-	Generations        []SearchRunGeneration
+	Status         value.RetrievalStatus
+	FailureClass   string
+	RankingStage   value.RankingStage
+	ResultCount    int
+	EffectiveKBIDs []uuid.UUID
+	Generations    []SearchRunGeneration
 }
 
 // Validate 校验 SearchRun 的不变量。

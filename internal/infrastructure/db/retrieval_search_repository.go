@@ -177,7 +177,7 @@ func (r *retrievalSearchReader) LoadEvidence(
 			EntryID: row.EntryID, ChunkID: row.ChunkID, ChunkRevisionID: row.ChunkRevisionID,
 			DocumentID: row.DocumentID, DocumentKind: kind, Content: row.Content,
 			DocumentRevisionID: row.DocumentRevisionID,
-			SearchContent:     row.SearchContent, DocumentName: documentName, SourceAnchor: anchor,
+			SearchContent:      row.SearchContent, DocumentName: documentName, SourceAnchor: anchor,
 			Metadata:       normalizedDomainMap(row.Metadata),
 			MatchedChunkID: row.MatchedChunkID, MatchedChunkRevisionID: row.MatchedChunkRevisionID,
 			MatchedContent: row.MatchedContent, MatchedSearchContent: row.MatchedSearchContent,

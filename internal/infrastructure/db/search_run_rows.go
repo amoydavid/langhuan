@@ -82,26 +82,26 @@ func searchRunToRow(run *model.SearchRun) *SearchRunRow {
 
 func searchRunFromRow(row *SearchRunRow, generations []model.SearchRunGeneration) *model.SearchRun {
 	return &model.SearchRun{
-		ID:                  row.ID,
-		WorkspaceID:         row.WorkspaceID,
-		RequestedScope:      value.SearchScope(row.RequestedScope),
-		QueryHash:           row.QueryHash,
-		QueryChars:          row.QueryChars,
-		VectorTopK:          row.VectorTopK,
-		KeywordTopK:         row.KeywordTopK,
-		FinalTopK:           row.FinalTopK,
-		RetrievalStatus:     value.RetrievalStatus(row.RetrievalStatus),
-		FailureClass:        row.FailureClass,
-		RankingStage:        value.RankingStage(row.RankingStage),
-		ResultCount:         row.ResultCount,
-		RequestID:           row.RequestID,
-		Transport:           row.Transport,
-		PrincipalKind:       row.PrincipalKind,
-		CreatedAt:           row.CreatedAt,
-		CompletedAt:         row.CompletedAt,
-		ExpiresAt:           row.ExpiresAt,
-		ReplayOfID:          row.ReplayOfID,
-		Generations:         generations,
+		ID:              row.ID,
+		WorkspaceID:     row.WorkspaceID,
+		RequestedScope:  value.SearchScope(row.RequestedScope),
+		QueryHash:       row.QueryHash,
+		QueryChars:      row.QueryChars,
+		VectorTopK:      row.VectorTopK,
+		KeywordTopK:     row.KeywordTopK,
+		FinalTopK:       row.FinalTopK,
+		RetrievalStatus: value.RetrievalStatus(row.RetrievalStatus),
+		FailureClass:    row.FailureClass,
+		RankingStage:    value.RankingStage(row.RankingStage),
+		ResultCount:     row.ResultCount,
+		RequestID:       row.RequestID,
+		Transport:       row.Transport,
+		PrincipalKind:   row.PrincipalKind,
+		CreatedAt:       row.CreatedAt,
+		CompletedAt:     row.CompletedAt,
+		ExpiresAt:       row.ExpiresAt,
+		ReplayOfID:      row.ReplayOfID,
+		Generations:     generations,
 	}
 }
 
@@ -125,12 +125,12 @@ func searchRunGenerationToRow(gen model.SearchRunGeneration) SearchRunGeneration
 	}
 	if gen.RerankSnapshot != nil {
 		row.RerankSnapshot = JSONMap{
-			"model_id":           gen.RerankSnapshot.ModelID,
-			"provider_id":        gen.RerankSnapshot.ProviderID,
-			"model_name":         gen.RerankSnapshot.ModelName,
-			"model_config_hash":  gen.RerankSnapshot.ModelConfigHash,
-			"candidate_top_k":    gen.RerankSnapshot.CandidateTopK,
-			"failure_mode":       string(gen.RerankSnapshot.FailureMode),
+			"model_id":          gen.RerankSnapshot.ModelID,
+			"provider_id":       gen.RerankSnapshot.ProviderID,
+			"model_name":        gen.RerankSnapshot.ModelName,
+			"model_config_hash": gen.RerankSnapshot.ModelConfigHash,
+			"candidate_top_k":   gen.RerankSnapshot.CandidateTopK,
+			"failure_mode":      string(gen.RerankSnapshot.FailureMode),
 		}
 	}
 	return row

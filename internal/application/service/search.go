@@ -34,13 +34,13 @@ type SearchInput struct {
 
 // SearchServiceDeps contains hybrid-search persistence and embedding dependencies.
 type SearchServiceDeps struct {
-	Repository        indexport.SearchRepository
-	Resolver          EmbeddingClientResolver
-	RerankResolver    RerankClientResolver
-	SearchProfile     SearchProfileResolver
-	SearchRuns        SearchRunStore
+	Repository         indexport.SearchRepository
+	Resolver           EmbeddingClientResolver
+	RerankResolver     RerankClientResolver
+	SearchProfile      SearchProfileResolver
+	SearchRuns         SearchRunStore
 	SearchRunRetention time.Duration
-	Logger            *slog.Logger
+	Logger             *slog.Logger
 }
 
 // SearchService executes active-Generation vector/FTS retrieval and RRF fusion.
@@ -88,16 +88,9 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 	}
 	stats := &searchRunStats{startedAt: time.Now(), queryChars: len([]rune(query))}
 	queryHash := searchQueryHash(query)
-	// 基础输入校验通过后创建 SearchRun recorder。
 	meta := requestmeta.From(ctx)
-	recorder := newSearchRunRecorder(
-		s.searchRuns, s.logger, time.Now, s.searchRunRetention,
-		input.WorkspaceID, queryHash, stats.queryChars,
-		0, 0, 0, // topK 在读取 Generation 后补全
-		value.SearchScopeSelected, meta.Transport, meta.RequestID, meta.PrincipalKind,
-		nil,
-	)
 	var failurePhase searchFailurePhase = searchFailurePhaseRetrieval
+	var recorder *searchRunRecorder
 	var runGeneration *model.IndexGeneration
 	var runOptions searchOptions
 	var runRankingStage value.RankingStage
@@ -105,7 +98,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 	var runGenerationSnapshot model.SearchRunGeneration
 	defer func() {
 		stats.err = err
-		if err != nil {
+		if err != nil && recorder != nil {
 			failureClass := classifySearchFailure(err, failurePhase)
 			stage := runRankingStage
 			if !stage.IsValid() {
@@ -162,10 +155,14 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 		return nil, err
 	}
 	runOptions = options
-	// 补全 recorder 的 topK 字段用于摘要。
-	recorder.vectorTopK = options.vectorTopK
-	recorder.keywordTopK = options.keywordTopK
-	recorder.finalTopK = options.finalTopK
+	// 读取 Generation 配置后创建 SearchRun recorder（此时 topK 已知）。
+	recorder = newSearchRunRecorder(
+		s.searchRuns, s.logger, time.Now, s.searchRunRetention,
+		input.WorkspaceID, queryHash, stats.queryChars,
+		options.vectorTopK, options.keywordTopK, options.finalTopK,
+		value.SearchScopeSelected, meta.Transport, meta.RequestID, meta.PrincipalKind,
+		nil,
+	)
 	runGenerationSnapshot = recorder.generationSnapshot(generation)
 	failurePhase = searchFailurePhaseEmbedding
 	resolved, err := s.resolver.Resolve(ctx, input.WorkspaceID, generation.EmbeddingModelID)

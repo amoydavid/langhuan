@@ -37,7 +37,7 @@ type SearchEvidence struct {
 	DocumentKind                                  value.DocumentKind
 	Content, DocumentName                         string
 	// DocumentRevisionID 是证据所属的 Document Revision lineage，来自 retrieval projection。
-	DocumentRevisionID                    uuid.UUID
+	DocumentRevisionID uuid.UUID
 	// SearchContent 是命中的检索原始文本（FAQ 为问题集合，file/web 为片段正文）。
 	// 仅用于排序（如 Rerank 文本构造），不进入 API DTO。
 	SearchContent                          string

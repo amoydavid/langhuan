@@ -292,6 +292,7 @@ KnowledgeBase/Document 使用 `deleted_at` 提供恢复窗口。软删除 Docume
 
 - staging/failed Entry 使用 `failed_staging_retention`；
 - retired Entry 和 retired Generation 使用 `retired_generation_retention`；
+- SearchRun 使用 `search_run_retention`（默认 `168h`，必须不大于 `retired_generation_retention`），且必须先于 retired Generation projection 清理，因为 `search_run_generations` 通过 `ON DELETE RESTRICT` 引用 Generation（见 9.a）；
 - 按时间和 UUID 稳定排序，`FOR UPDATE SKIP LOCKED`，一次 transaction 最多一个 `cleanup_batch_size`；
 - active Generation 永不进入物理删除候选；
 - Generation 的 `base_generation_id` 外键只在被引用历史代删除时置空该可空列，不得置空 `workspace_id/knowledge_base_id`。
@@ -364,6 +365,38 @@ OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id
 ### 异步对象清理（两阶段）
 
 外部对象存储不参与 PostgreSQL 事务。`on_delete=remove` 的删除分两阶段：在 Workspace DB 事务内锁定 Document、收集所有 revision raw/parser/asset key 并按 `SourceCleanupObjectBatchSize`（100）拆批创建 KB-only `source_cleanup` Job，随后删除 Document 依赖 FK cascade 清理 retrieval/chunk/revision/file tree；事务提交后由 application 入队 `source_cleanup` task。**`SourceCleanupService.Run` 绝不在 DB 事务内调用 storage/index adapter**；它逐个幂等删除对象，`storage.ErrObjectNotFound` 视为成功，其它失败标记 Job failed 以便重试。`SourceCleanupScheduler` 在启动与周期 Tick 重新派发仍 pending 的 cleanup Job，保证「DB 已提交、首次 enqueue 失败」不形成永久孤儿。
+
+### 9.a 检索证据血缘与可回放检索（迁移 000023）
+
+检索运行快照用于把一次检索与它的结果集合、参与的 Generation 快照和后续回放关联起来，并支持证据血缘复算。`search_runs` 与 `search_run_generations` 只保存运行级元数据，**严禁**持久化原始 query、返回正文、向量或任何凭证。
+
+`search_runs`（迁移 000023）保存单次检索运行：
+
+- 直接租户键 `workspace_id uuid NOT NULL` + `UNIQUE (workspace_id, id)`（主键为 `id`）。
+- `requested_scope text NOT NULL`（CHECK `'selected' | 'api_key_bound_all'`）、`query_hash text NOT NULL`（trim 后 query 的 SHA-256 小写 hex，**不**保存 query 本身）、`query_chars integer NOT NULL CHECK (>= 0)`。
+- topK 三元组 `vector_top_k` / `keyword_top_k` / `final_top_k` 均 `integer NOT NULL CHECK (> 0)`，记录本次实际使用的召回/最终窗口。
+- `retrieval_status text NOT NULL`（CHECK `'running' | 'available' | 'empty' | 'degraded' | 'failed'`）、`failure_class text NOT NULL DEFAULT ''`、`ranking_stage text NOT NULL DEFAULT ''`、`result_count integer NOT NULL DEFAULT 0 CHECK (>= 0)`。
+- CHECK 约束 `search_runs_failure_class`：`retrieval_status='failed'` 必须有非空 `failure_class`，其它终态必须为空，保证失败原因与状态自洽。
+- `request_id` / `transport` / `principal_kind` 为可观测辅助字段；`created_at` 必填，`completed_at` 可空（`running` 态），`expires_at` 必填。
+- `replay_of_id uuid` 通过**复合外键** `search_runs_replay_fk (workspace_id, replay_of_id) -> search_runs(workspace_id, id) ON DELETE SET NULL` 约束回放只能指向同一 Workspace 的原 SearchRun，删除原记录时置空而非阻止。
+
+`search_run_generations`（迁移 000023）为每个参与检索的知识库保存一条 Generation 快照：
+
+- 直接租户键 `workspace_id uuid NOT NULL` + `UNIQUE (workspace_id, search_run_id, knowledge_base_id)`：一次 SearchRun 对同一 KB 恰好一条快照。
+- 记录 `source_content_version` / `indexed_content_version`（ bigint NOT NULL）、`generation_config_hash`、Embedding 五元组（`embedding_model_id` / `provider_id` / `model_name` / `model_config_hash` / `embedding_dimension`）、`retrieval_config_hash` 与可选 `rerank_snapshot jsonb`。
+- **复合外键** `search_run_generations_run_fk (workspace_id, search_run_id) -> search_runs(workspace_id, id) ON DELETE CASCADE`：SearchRun 删除时级联清理其快照，复合键阻止跨租户引用。
+- **复合外键** `search_run_generations_generation_fk (workspace_id, knowledge_base_id, generation_id) -> knowledge_base_index_generations(workspace_id, knowledge_base_id, id) ON DELETE RESTRICT`：被引用的 Generation 不得在仍被 SearchRun 引用时物理删除，保证回放可定位到完整 Generation。
+
+索引（迁移 000023）：
+
+- `search_runs_expiry_idx (workspace_id, expires_at)`：支持按 Workspace 扫描过期 SearchRun。
+- `search_runs_query_hash_idx (workspace_id, query_hash, created_at)`：支持按 query hash 复算与回放一致性校验。
+- `search_run_generations_lookup_idx (workspace_id, search_run_id)`：支持按 SearchRun 列出参与 Generation。
+
+保留期与清理顺序：
+
+- 配置 `retrieval.search_run_retention`（默认 `168h`），且**必须不大于 `retired_generation_retention`**：SearchRun 的 Generation snapshot 通过 `ON DELETE RESTRICT` 引用 Generation projection，SearchRun 必须先于 retired Generation projection 物理清理，否则 Generation 删除会被 RESTRICT 阻断，回放也会引用到已不存在的 Generation。
+- SearchRun 清理同样按 Workspace 进入 `WithinWorkspace`，按 `expires_at` 与 UUID 稳定排序，`FOR UPDATE SKIP LOCKED`，不绕过 RLS-ready 边界。
 
 ## 10. 迁移与测试
 

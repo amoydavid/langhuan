@@ -213,6 +213,42 @@ flowchart TD
 - evidence 不信任 RetrievalEntry 中的标题快照。File 返回当前 node name；FAQ/Web 返回当前 `documents.title`。
 - Search 只返回 evidence，不生成 LLM 答案。
 
+### 7.1 SearchRun 与证据血缘
+
+每次成功的检索都会创建一个 `SearchRun`，并对外暴露一个稳定且不透明的 `search_id`（UUID），用于把一次查询与它的结果集合、参与的 Generation 快照和后续回放关联起来，而不暴露原始 query。
+
+`SearchRun` 只保存运行级元数据，**绝不**持久化原始 query、返回正文、向量或任何凭证：
+
+- `query_hash`：对 trim 后 query 计算 SHA-256（小写 hex），只用于复算与回放一致性校验；query 本身不入库。
+- `query_chars`、`vector_top_k`/`keyword_top_k`/`final_top_k`、`retrieval_status`、`failure_class`、`ranking_stage` 与 `result_count` 描述这次运行的形态。
+- `retrieval_status` 区分 `available`（正常返回）、`empty`（0 结果）、`degraded`（Rerank fallback 等）与 `failed`；`failed` 必须带非空 `failure_class`，其它终态该字段为空。
+- 每个参与检索的知识库在 `search_run_generations` 中落一条 `GenerationSnapshot`，记录该次运行实际使用的 source/indexed content version、Generation 配置 hash、Embedding model/provider/name/config hash、维度、retrieval config hash 与可选 Rerank 快照。
+
+`SearchResult` 在原 evidence 字段之外，补充证据血缘三元组与 `CitationRef`：
+
+- `DocumentRevisionID`、`IndexGenerationID`：定位这次返回来自哪个 Document Revision 与哪个 Index Generation。
+- `CitationRef` 包含 `DocumentRevisionID`、`ChunkRevisionID`、`SourceAnchor`、`ContentSHA256` 和 `Status`。
+- `ContentSHA256` 是对返回 `content` 字段 UTF-8 字节计算的小写 hex SHA-256，可由调用方独立复算，用于校验返回内容是否被改动。它与 `DocumentRevision.SHA256`（原始资产 hash）是不同的语义，不能互相替代。
+- `SourceAnchor` 只表达结果在原文中的位置（如页码/sheet/行列/offset），不承担内容指纹职责。
+
+协议侧只对原有合同做最小扩展：
+
+- 单库 REST 仍返回 `[]SearchResult` 数组（结构不变），额外通过三个响应头携带运行信息：`X-Search-ID`（`search_id`）、`X-Retrieval-Status`、`X-Generation-IDs`（按参与 KB 排序的 Generation ID 列表）。
+- 多库 REST 与 MCP 在外层 wrapper 中补充 `search_id`、`requested_scope`、`effective_scope`、`retrieval_status` 和 `generation_ids`，`results` 数组结构不变。
+
+### 7.2 回放检索
+
+在 SearchRun 保留期内，Workspace owner/admin 可以用原始 query 重新触发一次检索用于排查或复现：
+
+```text
+POST /api/v1/workspaces/:workspace_slug/search-runs/:search_id/replay
+```
+
+- 鉴权：仅 Session 主体中的 owner/admin 可调用；Bearer API Key 返回 `403`。
+- 回放使用原 SearchRun 中冻结的 Generation/topK/Rerank 快照，不读取当前 active Generation 或当前 Workspace Search Settings。
+- 重新发起的检索会创建一条**新的** `SearchRun`，其 `replay_of_id` 指向原 `search_id`，便于把回放链路串起来。
+- 回放需要调用方再次提供 query；当 query 的 hash 与原 `SearchRun` 不一致、或原引用的 Generation 已被清理时，返回明确失败，不静默使用其它配置。
+
 ## 8. 文档流水线与幂等
 
 File/Web：
@@ -359,10 +395,11 @@ member 可以读、上传、创建/更新 FAQ、操作允许的文件树、删�
 retrieval:
   failed_staging_retention: 24h
   retired_generation_retention: 168h
+  search_run_retention: 168h
   cleanup_batch_size: 1000
 ```
 
-duration 必须大于 0；batch 必须为 1–10000。Cleanup service 已在 runtime 装配为可调用的 Workspace-scoped 能力；当前不引入进程级全租户扫描 scheduler。
+duration 必须大于 0；batch 必须为 1–10000。`search_run_retention` 默认 168h，且必须不大于 `retired_generation_retention`——SearchRun 的 Generation snapshot 引用了 Generation projection，物理清理顺序上 SearchRun 先于 retired Generation projection 清理，避免回放时引用已被删除的 Generation。Cleanup service 已在 runtime 装配为可调用的 Workspace-scoped 能力；当前不引入进程级全租户扫描 scheduler。
 
 ## 12. 验证与后续边界
 

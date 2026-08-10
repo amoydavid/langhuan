@@ -18,7 +18,7 @@ func replayServiceWithRun(run *model.SearchRun) (*SearchReplayService, *fakeSear
 	store := &fakeSearchRunStore{getRun: run}
 	repo := &searchRepositoryFake{generationsByGenID: map[uuid.UUID]*model.IndexGeneration{}}
 	resolver := &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{
-		Client: &chunkRevisionEmbeddingSpy{dimension: 1024},
+		Client:  &chunkRevisionEmbeddingSpy{dimension: 1024},
 		ModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "embed", Dimensions: 1024,
 	}}
 	svc := NewSearchReplayService(SearchReplayDeps{
@@ -93,7 +93,7 @@ func TestSearchReplayAllowsOwnerAndAdmin(t *testing.T) {
 	store := &fakeSearchRunStore{getRun: run}
 	repo := &searchRepositoryFake{generationsByGenID: map[uuid.UUID]*model.IndexGeneration{gen.ID: gen}}
 	resolver := &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{
-		Client: &chunkRevisionEmbeddingSpy{dimension: 1024},
+		Client:  &chunkRevisionEmbeddingSpy{dimension: 1024},
 		ModelID: gen.EmbeddingModelID, ProviderID: gen.ProviderID, ModelName: "embed", Dimensions: 1024, ModelConfigHash: "model-hash",
 	}}
 	svc := NewSearchReplayService(SearchReplayDeps{Runs: store, Repository: repo, Resolver: resolver})
@@ -145,7 +145,7 @@ func TestSearchReplayCreatesNewSearchRunWithReplayOfID(t *testing.T) {
 		evidence:           map[uuid.UUID]indexport.SearchEvidence{},
 	}
 	resolver := &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{
-		Client: &chunkRevisionEmbeddingSpy{dimension: 1024},
+		Client:  &chunkRevisionEmbeddingSpy{dimension: 1024},
 		ModelID: gen.EmbeddingModelID, ProviderID: gen.ProviderID, ModelName: "embed", Dimensions: 1024, ModelConfigHash: "model-hash",
 	}}
 	svc := NewSearchReplayService(SearchReplayDeps{Runs: store, Repository: repo, Resolver: resolver})

@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/dajee/langhuan/internal/domain/model"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -31,17 +31,17 @@ func newSearchRunRepositoryHarness(t *testing.T) (*SearchRunRepository, knowledg
 
 func readyRunningSearchRun(seed knowledgeSchemaSeed, now time.Time) *model.SearchRun {
 	return &model.SearchRun{
-		ID:             uuid.New(),
-		WorkspaceID:    seed.workspaceID,
-		RequestedScope: value.SearchScopeSelected,
-		QueryHash:      "sha256:v1:abc",
-		QueryChars:     4,
-		VectorTopK:     20,
-		KeywordTopK:    20,
-		FinalTopK:      10,
+		ID:              uuid.New(),
+		WorkspaceID:     seed.workspaceID,
+		RequestedScope:  value.SearchScopeSelected,
+		QueryHash:       "sha256:v1:abc",
+		QueryChars:      4,
+		VectorTopK:      20,
+		KeywordTopK:     20,
+		FinalTopK:       10,
 		RetrievalStatus: value.RetrievalStatusRunning,
-		CreatedAt:      now,
-		ExpiresAt:      now.Add(168 * time.Hour),
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(168 * time.Hour),
 	}
 }
 

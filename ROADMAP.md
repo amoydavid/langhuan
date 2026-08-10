@@ -440,6 +440,27 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - 失败文档可安全重试，重复请求和 worker 重启不破坏 active Generation。
 - 在空数据库与空对象存储上可重复完成安装、备份、恢复和单二进制 smoke。
 
+### v0.9.0 - 检索证据血缘与可回放检索
+
+目标：为每次检索建立稳定 SearchRun 身份、完整 Evidence lineage、可验证 CitationRef，并提供不向公开 API 暴露 Generation ID 的 Workspace 管理员回放入口。
+
+- 每次成功检索创建 SearchRun，暴露稳定 opaque `search_id`，关联一个或多个 GenerationSnapshot。
+- SearchResult 增加 Document Revision、Chunk Revision、Index Generation lineage 与 CitationRef（含 ContentSHA256）。
+- retrieval_status（available/empty/degraded/failed）在协议和日志中可区分；failed 必带 failure_class。
+- SearchRun 只保存运行元数据，不保存原始 query、正文、向量或凭证。
+- 在保留期内，owner/admin 可用原 query 回放；query 不一致或资源已清理时明确失败。
+- 单库 REST body 保持 `[]SearchResult`，通过响应头携带运行元数据；多库 REST/MCP 在 wrapper 中扩展。
+
+验收标准：
+
+1. 每次成功检索都有可关联的 `search_id`，并能定位到一个或多个 GenerationSnapshot。
+2. 每个结果能定位到 Document Revision、Chunk Revision 和 Index Generation。
+3. CitationRef 的 hash 能复算返回内容；Source Anchor 仍只表达位置。
+4. 0 结果、Rerank fallback 和失败在协议和日志中可区分。
+5. SearchRun 不保存 query、正文、向量或凭证。
+6. 在 SearchRun 保留期和 Generation projection 保留期内，owner/admin 可用原 query 回放；query 不一致或资源已清理时明确失败。
+7. 现有单库 REST、MCP 结果字段和 API Key 租户边界保持兼容。
+
 ### v1.0.0 - 首次对外发布与兼容基线
 
 目标：冻结首个可对外使用的产品、协议和数据兼容基线。从该版本起，不再以“删除内部测试库重新安装”替代正式升级路径。

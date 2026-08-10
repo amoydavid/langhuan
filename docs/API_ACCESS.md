@@ -85,8 +85,9 @@ OpenAPI 文档（`GET /api/v1/openapi.json`）只收录上述支持 API Key 的�
 | `DELETE /workspaces/:slug/documents/:id` | `documents:write` | 软删除文档（FAQ 也通过此接口删除）；Bearer 会校验文档所属知识库是否在 key 绑定范围内 |
 | `GET /workspaces/:slug/api-key/self` | Bearer-only（无 scope 要求） | 查询当前 API Key 的 scope 列表；任意有效 Bearer key 均可调用（Session 返回 403），用于下游连接性测试判定 key scope 是否充分；绝不返回 key 明文或用户数据 |
 | `GET /workspaces/:slug/knowledge-bases/:id/chunks/:chunk_id` | `documents:read` | 获取 Chunk |
-| `POST /workspaces/:slug/knowledge-bases/:id/search` | `search:read` | 单库检索 |
-| `POST /workspaces/:slug/search` | `search:read` | 多库检索（按 Embedding 模型分组） |
+| `POST /workspaces/:slug/knowledge-bases/:id/search` | `search:read` | 单库检索；响应携带 `X-Search-ID`/`X-Retrieval-Status`/`X-Generation-IDs` 头 |
+| `POST /workspaces/:slug/search` | `search:read` | 多库检索（按 Embedding 模型分组）；wrapper 携带 `search_id`/`retrieval_status` 等 |
+| `POST /workspaces/:slug/search-runs/:search_id/replay` | Session owner/admin | 用原 SearchRun 快照回放检索；Bearer API Key 返回 `403` |
 
 越界（跨 Workspace、未绑定知识库或其下资源）统一返回 `404`，不泄漏存在性。成员、邀请、Provider、设置、API Key 管理等路由仍为 Session-only；模型选择仅开放上一行所述的 Bearer 精确过滤合同。
 
@@ -136,9 +137,52 @@ FAQ 旧路径 `/workspaces/:slug/documents/:document_id/faq` 已移除；所有�
 }
 ```
 
-`score` 始终是 RRF 融合分数；`rerank_score` 仅在 Workspace Search Settings 启用 Rerank 且成功应用时出现；`ranking_stage` 为 `rrf`（未启用重排）、`rerank`（成功重排）或 `rrf_fallback`（重排远端失败后回退到 RRF 顺序）。多知识库可以混用不同 Embedding Generation，各库召回后统一使用 Workspace Search Settings 指定的 Rerank 模型。
+`score` 始终是 RRF 融合分数；`rerank_score` 仅在 Workspace Search Settings 启用 Rerank 且成功应用时出现；`ranking_stage` 为 `rrf`（未启用重排）、`rerank`（成功重排）或 `rrf_fallback`（重排远端失败后回退到 RRF 顺序）。协议中不存在合成的 `final_score`：调用方需要排序时自行决定按 `score` 还是 `rerank_score`，并参考 `ranking_stage` 判断当前实际生效的排序阶段。多知识库可以混用不同 Embedding Generation，各库召回后统一使用 Workspace Search Settings 指定的 Rerank 模型。
 
 Workspace 管理员可通过 `GET /api/v1/workspaces/:workspace_slug/search-settings` 查看默认策略，并通过 `PUT` 更新。PUT 仅接受 Session owner/admin；Bearer API Key 只能执行搜索。未配置策略时默认关闭 Rerank。
+
+### 5.1 证据血缘与运行元数据
+
+每次成功的检索都会产生一个 `SearchRun`，并对外返回稳定且不透明的 `search_id`（UUID）。`SearchRun` 只持久化运行级元数据（query 的 SHA-256、字符数、topK、检索状态、参与 Generation 快照等），**不**保存原始 query、返回正文、向量或凭证。返回的每个结果都携带证据血缘：`DocumentRevisionID`、`IndexGenerationID`，以及 `CitationRef`（`DocumentRevisionID`、`ChunkRevisionID`、`SourceAnchor`、`ContentSHA256`、`Status`）。
+
+- `CitationRef.ContentSHA256` 是返回 `content` 字段 UTF-8 字节的 SHA-256（小写 hex），调用方可独立复算以校验内容未被改动；它与 `DocumentRevision.SHA256`（原始资产 hash）语义不同。
+- `SourceAnchor` 只表达结果在原文中的位置，不承担内容指纹职责。
+
+单库检索 `POST /workspaces/:slug/knowledge-bases/:id/search` 仍返回 `[]SearchResult` 数组（结构不变），并额外在响应头中携带运行信息：
+
+| 响应头 | 含义 |
+|---|---|
+| `X-Search-ID` | 本次检索的 `search_id`（UUID） |
+| `X-Retrieval-Status` | 运行级状态：`available` / `empty` / `degraded` / `failed` |
+| `X-Generation-IDs` | 本次实际使用的 Index Generation ID 列表（按参与 KB 排序） |
+
+多库检索 `POST /workspaces/:slug/search` 与 MCP `knowledge_search` 在外层 wrapper 中补充下列字段，`results` 数组结构不变：
+
+```json
+{
+  "search_id": "<uuid>",
+  "requested_scope": "selected",
+  "effective_scope": "selected",
+  "retrieval_status": "available",
+  "generation_ids": ["<gen-kb-a>", "<gen-kb-b>"],
+  "results": [ /* SearchResult[] */ ]
+}
+```
+
+- `requested_scope` / `effective_scope`：`selected` 表示按指定知识库集合检索；`api_key_bound_all` 表示 API Key 绑定全库检索。两者不同时表示请求的知识库集合被收窄或部分失效。
+- `retrieval_status` 同响应头语义。
+
+### 5.2 检索回放
+
+```text
+POST /api/v1/workspaces/:workspace_slug/search-runs/:search_id/replay
+```
+
+- 鉴权：仅 Session 主体中的 Workspace owner/admin 可调用；Bearer API Key 返回 `403 forbidden`，member 也返回 `403`。
+- 回放使用原 `SearchRun` 中冻结的 Generation/topK/Rerank 快照，不读取当前 active Generation 或 Workspace Search Settings。
+- 调用方需要再次提供 query；query 的 hash 必须与原 `SearchRun` 的 `query_hash` 一致，否则返回 `409 search_run_query_mismatch`。
+- 回放会创建一条**新的** `SearchRun`，其 `replay_of_id` 指向原 `search_id`；原 `SearchRun` 或其引用的 Generation 已被清理时返回 `410 search_run_unavailable`。
+- 回放结果的响应结构（响应头 / wrapper）与普通检索一致。
 
 ## 6. MCP
 
@@ -165,7 +209,7 @@ Workspace 管理员可通过 `GET /api/v1/workspaces/:workspace_slug/search-sett
 | `knowledge_base_create` | `knowledge_bases:write` | 创建知识库并原子加入 key 范围 |
 | `document_ingest` | `documents:write` | Base64 内联导入（上限 8 MiB，超限请用 REST multipart） |
 | `document_status` | `documents:read` | 文档与可选 Job 状态 |
-| `knowledge_search` | `search:read` | 多库检索，结果带知识库来源 |
+| `knowledge_search` | `search:read` | 多库检索，结果带知识库来源；输出补充 `search_id`、`requested_scope`、`effective_scope`、`retrieval_status`、`generation_ids`，每条结果携带 `DocumentRevisionID`/`IndexGenerationID`/`CitationRef` |
 | `document_delete` | `documents:write` | 软删除文档 |
 | `chunk_get` | `documents:read` | 获取 Chunk 内容与活跃修订 |
 

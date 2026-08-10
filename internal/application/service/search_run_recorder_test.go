@@ -15,14 +15,14 @@ import (
 )
 
 type fakeSearchRunStore struct {
-	createErr     error
-	completeErr   error
-	created       *model.SearchRun
-	completions   []recordedCompletion
-	getRun        *model.SearchRun
-	deleted       int64
-	deleteErr     error
-	limit         int
+	createErr   error
+	completeErr error
+	created     *model.SearchRun
+	completions []recordedCompletion
+	getRun      *model.SearchRun
+	deleted     int64
+	deleteErr   error
+	limit       int
 }
 
 type recordedCompletion struct {

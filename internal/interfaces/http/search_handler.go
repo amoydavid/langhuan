@@ -96,13 +96,13 @@ type multiSearchRequest struct {
 }
 
 type multiSearchResponse struct {
-	SearchID                string              `json:"search_id"`
-	RequestedScope          string              `json:"requested_scope"`
-	EffectiveScope          string              `json:"effective_scope"`
-	RetrievalStatus         string              `json:"retrieval_status"`
-	GenerationIDs           []uuid.UUID         `json:"generation_ids"`
-	SearchedKnowledgeBaseIDs []uuid.UUID        `json:"searched_knowledge_base_ids"`
-	Results                 []*dto.SearchResult `json:"results"`
+	SearchID                 string              `json:"search_id"`
+	RequestedScope           string              `json:"requested_scope"`
+	EffectiveScope           string              `json:"effective_scope"`
+	RetrievalStatus          string              `json:"retrieval_status"`
+	GenerationIDs            []uuid.UUID         `json:"generation_ids"`
+	SearchedKnowledgeBaseIDs []uuid.UUID         `json:"searched_knowledge_base_ids"`
+	Results                  []*dto.SearchResult `json:"results"`
 }
 
 // multiSearchHandler 检索多个知识库，按 Embedding 模型快照分组复用 query embedding，

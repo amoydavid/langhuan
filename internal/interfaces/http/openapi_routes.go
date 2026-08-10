@@ -449,14 +449,14 @@ func (b *specBuilder) searchOps() []op {
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/search", tag: "检索", summary: "单知识库检索",
 			reqBody: searchRequest{}, respBody: []*dto.SearchResult{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeSearchRead},
 			responseHeaders: searchHeaders,
-			description: "Body 继续为 []SearchResult；运行级元数据通过响应头 X-Search-ID、X-Retrieval-Status、X-Generation-IDs 承载。"},
+			description:     "Body 继续为 []SearchResult；运行级元数据通过响应头 X-Search-ID、X-Retrieval-Status、X-Generation-IDs 承载。"},
 		{method: http.MethodPost, path: wsBase + "/search", tag: "检索", summary: "多知识库检索",
 			reqBody: multiSearchRequest{}, respBody: multiSearchResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeSearchRead},
 			responseHeaders: searchHeaders,
-			description: "返回包含 search_id、requested_scope、effective_scope、retrieval_status、generation_ids 的 wrapper。"},
+			description:     "返回包含 search_id、requested_scope、effective_scope、retrieval_status、generation_ids 的 wrapper。"},
 		{method: http.MethodPost, path: wsBase + "/search-runs/:search_id/replay", tag: "检索", summary: "管理员固定快照回放",
 			reqBody: searchReplayRequest{}, respBody: &dto.SearchResponse{}, status: http.StatusOK, sec: secSessionAdmin,
-			params: []openapiParam{{name: "search_id", in: "path", description: "原检索运行 ID", required: true, typeName: "string", format: "uuid"}},
+			params:      []openapiParam{{name: "search_id", in: "path", description: "原检索运行 ID", required: true, typeName: "string", format: "uuid"}},
 			description: "仅 Session owner/admin 可调用（Bearer API Key 返回 403）。使用原 SearchRun 记录的 Generation/topK/Rerank 快照重放，query 必须与原运行一致。"},
 	}
 }
