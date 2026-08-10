@@ -16,7 +16,16 @@ import (
 )
 
 // runRetrievalCleanupLoop 周期性清理过期的 retrieval 投影，随 ctx 取消退出。
-func runRetrievalCleanupLoop(ctx context.Context, cleanup *service.RetrievalCleanupService, interval time.Duration, log *slog.Logger) {
+// SearchRun 清理先于 retired Generation projection 清理执行，保证 SearchRun 引用的
+// Generation 在保留期内可回放。
+func runRetrievalCleanupLoop(
+	ctx context.Context,
+	cleanup *service.RetrievalCleanupService,
+	searchRunCleanup *service.SearchRunCleanupService,
+	batchSize int,
+	interval time.Duration,
+	log *slog.Logger,
+) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	log.Info("启动 retrieval 投影定时清理", "interval", interval.String())
@@ -29,6 +38,16 @@ func runRetrievalCleanupLoop(ctx context.Context, cleanup *service.RetrievalClea
 				return
 			}
 			cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			if searchRunCleanup != nil {
+				deleted, err := searchRunCleanup.RunNow(cctx, batchSize)
+				if err != nil {
+					if ctx.Err() == nil {
+						log.Warn("search_run 清理失败", "error", err.Error())
+					}
+				} else if deleted > 0 {
+					log.Info("search_run 清理完成", "deleted_search_runs", deleted)
+				}
+			}
 			result, err := cleanup.CleanupGlobal(cctx)
 			cancel()
 			if err != nil {

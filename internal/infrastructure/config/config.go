@@ -257,6 +257,9 @@ type RetrievalConfig struct {
 	// CleanupIntervalSeconds 是定时清理过期投影的周期（秒）。
 	// <=0 时由 applyDefaults 兜底为 3600（1 小时）。
 	CleanupIntervalSeconds int `yaml:"cleanup_interval_seconds"`
+	// SearchRunRetention 是 SearchRun 元数据的保留期，默认 168 小时，
+	// 且不得长于 retired_generation_retention。
+	SearchRunRetention time.Duration `yaml:"search_run_retention"`
 }
 
 // CredentialsConfig 描述持久化敏感凭证所使用的主密钥。
@@ -386,6 +389,7 @@ func defaultConfig() Config {
 			RetiredGenerationRetention: 168 * time.Hour,
 			CleanupBatchSize:           1000,
 			CleanupIntervalSeconds:     3600,
+			SearchRunRetention:         168 * time.Hour,
 		},
 		APIKey: defaultAPIKeyConfig(),
 		MCP: MCPConfig{
@@ -657,6 +661,12 @@ func (c *Config) validate() error {
 	}
 	if c.Retrieval.CleanupBatchSize < 1 || c.Retrieval.CleanupBatchSize > 10000 {
 		return errors.New("retrieval.cleanup_batch_size 必须在 1 到 10000 之间")
+	}
+	if c.Retrieval.SearchRunRetention <= 0 {
+		return errors.New("retrieval.search_run_retention 必须大于 0")
+	}
+	if c.Retrieval.SearchRunRetention > c.Retrieval.RetiredGenerationRetention {
+		return errors.New("retrieval.search_run_retention 不得超过 retired_generation_retention")
 	}
 	if err := c.validateAuth(); err != nil {
 		return err

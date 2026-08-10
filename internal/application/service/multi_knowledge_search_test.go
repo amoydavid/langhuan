@@ -146,7 +146,7 @@ func newMultiSearchFixture(groupKeys []embeddingGroupKey) (*MultiKnowledgeSearch
 	names := &fakeAPIKeyNameStore{kbNames: map[uuid.UUID]string{}}
 	svc := NewMultiKnowledgeSearchService(repo, resolver, nil, nil, names, config.SearchConfig{
 		MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60,
-	}, nil)
+	}, nil, nil, 0)
 	return svc, repo, resolver
 }
 
@@ -174,11 +174,11 @@ func TestMultiSearchEmbedsOncePerSnapshotGroup(t *testing.T) {
 		KnowledgeBaseIDs: []uuid.UUID{kbA1, kbA2, kbB1}, Query: "如何重置密码？",
 	})
 	require.NoError(t, err)
-	require.Len(t, results, 3)
+	require.Len(t, results.Results, 3)
 	// 2 个模型组各 embed 一次，共 2 次。
 	require.Equal(t, 2, embedCallCount(resolver), "两个快照组应各 embed 一次")
 	// 每条结果带 KB 来源。
-	for _, r := range results {
+	for _, r := range results.Results {
 		require.NotEqual(t, uuid.Nil, r.KnowledgeBaseID)
 	}
 }
@@ -197,7 +197,7 @@ func TestMultiSearchDifferentEmbeddingsUseOneWorkspaceRerank(t *testing.T) {
 	rerankModelID, rerankProviderID := uuid.New(), uuid.New()
 	rerankClient := &recordingRerankClientForSearch{scores: []float64{0.9, 0.8}}
 	rerankResolver := &multiSearchRerankResolverStub{client: &ResolvedRerankClient{Client: rerankClient, ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank", ModelConfigHash: "rhash", MaxDocumentChars: 8192}}
-	service := NewMultiKnowledgeSearchService(repo, resolver, rerankResolver, &multiSearchProfileStub{snapshot: &model.RerankSnapshot{ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank", ModelConfigHash: "rhash", CandidateTopK: 50, FailureMode: value.RerankFailureFail}}, names, config.SearchConfig{MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60}, slog.Default())
+	service := NewMultiKnowledgeSearchService(repo, resolver, rerankResolver, &multiSearchProfileStub{snapshot: &model.RerankSnapshot{ModelID: rerankModelID, ProviderID: rerankProviderID, ModelName: "rerank", ModelConfigHash: "rhash", CandidateTopK: 50, FailureMode: value.RerankFailureFail}}, names, config.SearchConfig{MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60}, slog.Default(), nil, 0)
 	kbA, kbB, entryA, entryB := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	repo.activeGens[kbA] = makeGeneration(workspaceID, kbA, groupA)
 	repo.activeGens[kbB] = makeGeneration(workspaceID, kbB, groupB)
@@ -206,7 +206,7 @@ func TestMultiSearchDifferentEmbeddingsUseOneWorkspaceRerank(t *testing.T) {
 	repo.evidenceByEntry[entryA] = indexport.SearchEvidence{EntryID: entryA, ChunkID: uuid.New(), Content: "候选 A", SearchContent: "候选 A"}
 	repo.evidenceByEntry[entryB] = indexport.SearchEvidence{EntryID: entryB, ChunkID: uuid.New(), Content: "候选 B", SearchContent: "候选 B"}
 	results, err := service.Search(context.Background(), MultiKnowledgeSearchInput{WorkspaceID: workspaceID, Access: value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}, KnowledgeBaseIDs: []uuid.UUID{kbA, kbB}, Query: "跨模型查询"})
-	if err != nil || len(results) != 2 {
+	if err != nil || len(results.Results) != 2 {
 		t.Fatalf("results=%#v err=%v", results, err)
 	}
 	if rerankResolver.workspaceID != workspaceID || rerankClient.calls != 1 || rerankClient.input.Query != "跨模型查询" {
@@ -235,9 +235,9 @@ func TestMultiSearchGroupsMatchingChildrenBeforeFinalTopK(t *testing.T) {
 		KnowledgeBaseIDs: []uuid.UUID{kbID}, Query: "配置",
 	})
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, parentID, results[0].ChunkID)
-	require.Len(t, results[0].MatchedChildren, 2)
+	require.Len(t, results.Results, 1)
+	require.Equal(t, parentID, results.Results[0].ChunkID)
+	require.Len(t, results.Results[0].MatchedChildren, 2)
 }
 
 // embedCallCount 统计所有 countingEmbeddingClient 的 embed 次数。
@@ -297,6 +297,69 @@ func TestMultiSearchRejectsEmptyQuery(t *testing.T) {
 		KnowledgeBaseIDs: []uuid.UUID{uuid.New()}, Query: "  ",
 	})
 	require.Error(t, err)
+}
+
+func TestMultiSearchRecordsEffectiveScope(t *testing.T) {
+	workspaceID := uuid.New()
+	group := embeddingGroupKey{EmbeddingModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "model", EmbeddingDimension: 4, ModelConfigHash: "hash"}
+	repo := &fakeMultiSearchRepository{
+		activeGens: map[uuid.UUID]*model.IndexGeneration{}, vectorByKB: map[uuid.UUID][]indexport.SearchCandidate{}, keywordByKB: map[uuid.UUID][]indexport.SearchCandidate{}, evidenceByEntry: map[uuid.UUID]indexport.SearchEvidence{}, gensByID: map[uuid.UUID]*model.IndexGeneration{},
+	}
+	resolver := &fakeMultiResolver{byModel: map[uuid.UUID]*ResolvedEmbeddingClient{}}
+	vector := make([]float32, group.EmbeddingDimension)
+	resolver.byModel[group.EmbeddingModelID] = &ResolvedEmbeddingClient{Client: &countingEmbeddingClient{vector: vector}, ModelID: group.EmbeddingModelID, ProviderID: group.ProviderID, ModelName: group.ModelName, Dimensions: group.EmbeddingDimension}
+	names := &fakeAPIKeyNameStore{kbNames: map[uuid.UUID]string{}}
+	store := &fakeSearchRunStore{}
+	svc := NewMultiKnowledgeSearchService(repo, resolver, nil, nil, names, config.SearchConfig{
+		MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60,
+	}, nil, store, 0)
+	kbA, kbB := uuid.New(), uuid.New()
+	repo.activeGens[kbA] = makeGeneration(workspaceID, kbA, group)
+	repo.activeGens[kbB] = makeGeneration(workspaceID, kbB, group)
+	entryA, entryB := uuid.New(), uuid.New()
+	repo.vectorByKB[kbA] = []indexport.SearchCandidate{{EntryID: entryA, Score: 0.9}}
+	repo.vectorByKB[kbB] = []indexport.SearchCandidate{{EntryID: entryB, Score: 0.8}}
+	repo.evidenceByEntry[entryA] = indexport.SearchEvidence{EntryID: entryA, ChunkID: uuid.New(), Content: "A"}
+	repo.evidenceByEntry[entryB] = indexport.SearchEvidence{EntryID: entryB, ChunkID: uuid.New(), Content: "B"}
+
+	response, err := svc.Search(context.Background(), MultiKnowledgeSearchInput{
+		WorkspaceID: workspaceID, Access: value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true},
+		KnowledgeBaseIDs: []uuid.UUID{kbA, kbB}, Query: "退款", RequestedScope: value.SearchScopeSelected,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.ElementsMatch(t, []uuid.UUID{kbA, kbB}, response.Run.EffectiveKnowledgeBaseIDs)
+	require.Len(t, response.Run.GenerationSnapshots, 2)
+	require.NotEqual(t, uuid.Nil, response.Run.SearchID)
+	require.Equal(t, value.SearchScopeSelected, response.Run.RequestedScope)
+}
+
+func TestMultiSearchRequestedScopeDefaultsToSelected(t *testing.T) {
+	workspaceID := uuid.New()
+	group := embeddingGroupKey{EmbeddingModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "model", EmbeddingDimension: 4, ModelConfigHash: "hash"}
+	repo := &fakeMultiSearchRepository{
+		activeGens: map[uuid.UUID]*model.IndexGeneration{}, vectorByKB: map[uuid.UUID][]indexport.SearchCandidate{}, keywordByKB: map[uuid.UUID][]indexport.SearchCandidate{}, evidenceByEntry: map[uuid.UUID]indexport.SearchEvidence{}, gensByID: map[uuid.UUID]*model.IndexGeneration{},
+	}
+	resolver := &fakeMultiResolver{byModel: map[uuid.UUID]*ResolvedEmbeddingClient{}}
+	vector := make([]float32, group.EmbeddingDimension)
+	resolver.byModel[group.EmbeddingModelID] = &ResolvedEmbeddingClient{Client: &countingEmbeddingClient{vector: vector}, ModelID: group.EmbeddingModelID, ProviderID: group.ProviderID, ModelName: group.ModelName, Dimensions: group.EmbeddingDimension}
+	names := &fakeAPIKeyNameStore{kbNames: map[uuid.UUID]string{}}
+	store := &fakeSearchRunStore{}
+	svc := NewMultiKnowledgeSearchService(repo, resolver, nil, nil, names, config.SearchConfig{
+		MultiKnowledgeBaseLimit: 20, MultiConcurrency: 4, MultiMergeRRFK: 60,
+	}, nil, store, 0)
+	kbID := uuid.New()
+	repo.activeGens[kbID] = makeGeneration(workspaceID, kbID, group)
+	entry := uuid.New()
+	repo.vectorByKB[kbID] = []indexport.SearchCandidate{{EntryID: entry, Score: 0.9}}
+	repo.evidenceByEntry[entry] = indexport.SearchEvidence{EntryID: entry, ChunkID: uuid.New(), Content: "X"}
+
+	response, err := svc.Search(context.Background(), MultiKnowledgeSearchInput{
+		WorkspaceID: workspaceID, Access: value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true},
+		KnowledgeBaseIDs: []uuid.UUID{kbID}, Query: "退款",
+	})
+	require.NoError(t, err)
+	require.Equal(t, value.SearchScopeSelected, response.Run.RequestedScope)
 }
 
 func TestEmbeddingGroupKeyGrouping(t *testing.T) {

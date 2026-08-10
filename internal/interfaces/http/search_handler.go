@@ -9,16 +9,17 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // SearchHTTPService is the Workspace-scoped evidence retrieval contract.
 type SearchHTTPService interface {
-	Search(context.Context, service.SearchInput) ([]*dto.SearchResult, error)
+	Search(context.Context, service.SearchInput) (*dto.SearchResponse, error)
 }
 
 // MultiSearchHTTPService is the multi-KnowledgeBase evidence retrieval contract.
 type MultiSearchHTTPService interface {
-	Search(context.Context, service.MultiKnowledgeSearchInput) ([]*dto.SearchResult, error)
+	Search(context.Context, service.MultiKnowledgeSearchInput) (*dto.SearchResponse, error)
 }
 
 type searchHandler struct {
@@ -87,17 +88,19 @@ func (h searchHandler) multiSearchHandler(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "检索参数无效")
 		return
 	}
-	results, err := h.multiSearchSvc.Search(c.Request.Context(), service.MultiKnowledgeSearchInput{
+	response, err := h.multiSearchSvc.Search(c.Request.Context(), service.MultiKnowledgeSearchInput{
 		WorkspaceID: authCtx.WorkspaceID, Access: authCtx.ResourceAccess(),
 		KnowledgeBaseIDs: request.KnowledgeBaseIDs, Query: request.Query,
 		VectorTopK: request.VectorTopK, KeywordTopK: request.KeywordTopK, FinalTopK: request.FinalTopK,
+		RequestedScope: value.SearchScopeSelected,
 	})
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
-	if results == nil {
-		results = []*dto.SearchResult{}
+	results := []*dto.SearchResult{}
+	if response != nil {
+		results = response.Results
 	}
 	c.JSON(stdhttp.StatusOK, multiSearchResponse{
 		SearchedKnowledgeBaseIDs: request.KnowledgeBaseIDs, Results: results,

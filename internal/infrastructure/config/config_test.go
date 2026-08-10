@@ -60,6 +60,9 @@ func TestRetrievalRetentionDefaultsAndValidation(t *testing.T) {
 		cfg.Retrieval.CleanupBatchSize != 1000 {
 		t.Fatalf("retrieval defaults = %#v", cfg.Retrieval)
 	}
+	if cfg.Retrieval.SearchRunRetention != 168*time.Hour {
+		t.Fatalf("search_run_retention default = %v", cfg.Retrieval.SearchRunRetention)
+	}
 	cfg.Database.DSN = "postgres://localhost:5432/langhuan?sslmode=disable"
 	cfg.Credentials.EncryptionKey = testEncryptionKey
 	tests := []struct {
@@ -70,6 +73,8 @@ func TestRetrievalRetentionDefaultsAndValidation(t *testing.T) {
 		{name: "retired retention", mutate: func(cfg *Config) { cfg.Retrieval.RetiredGenerationRetention = -time.Hour }},
 		{name: "batch zero", mutate: func(cfg *Config) { cfg.Retrieval.CleanupBatchSize = 0 }},
 		{name: "batch too large", mutate: func(cfg *Config) { cfg.Retrieval.CleanupBatchSize = 10001 }},
+		{name: "search_run_retention zero", mutate: func(cfg *Config) { cfg.Retrieval.SearchRunRetention = 0 }},
+		{name: "search_run_retention exceeds retired", mutate: func(cfg *Config) { cfg.Retrieval.SearchRunRetention = 240 * time.Hour }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -79,6 +84,13 @@ func TestRetrievalRetentionDefaultsAndValidation(t *testing.T) {
 				t.Fatal("validate error = nil")
 			}
 		})
+	}
+}
+
+func TestSearchRunRetentionDefault(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Retrieval.SearchRunRetention != 168*time.Hour {
+		t.Fatalf("search_run_retention default = %v", cfg.Retrieval.SearchRunRetention)
 	}
 }
 

@@ -378,7 +378,7 @@ func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 			}
 			kbIDs = append(kbIDs, auth.KnowledgeBaseIDs...)
 		}
-		results, err := deps.MultiSearch.Search(ctx, service.MultiKnowledgeSearchInput{
+		response, err := deps.MultiSearch.Search(ctx, service.MultiKnowledgeSearchInput{
 			WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
 			KnowledgeBaseIDs: kbIDs, Query: in.Query,
 			VectorTopK: in.VectorTopK, KeywordTopK: in.KeywordTopK, FinalTopK: in.FinalTopK,
@@ -390,8 +390,9 @@ func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 		for _, id := range kbIDs {
 			searched = append(searched, id.String())
 		}
-		if results == nil {
-			results = []*dto.SearchResult{}
+		results := []*dto.SearchResult{}
+		if response != nil {
+			results = response.Results
 		}
 		return jsonResult(knowledgeSearchOutput{SearchedKnowledgeBaseIDs: searched, Results: results}), nil
 	}))

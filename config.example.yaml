@@ -84,6 +84,9 @@ retrieval:
   failed_staging_retention: 24h
   retired_generation_retention: 168h
   cleanup_batch_size: 1000
+  # 检索运行（SearchRun）元数据保留期，默认 168 小时。
+  # 不得超过 retired_generation_retention；需要更长反馈窗口时必须同时提高两项。
+  search_run_retention: 168h
 
 credentials:
   # 生成命令：openssl rand -base64 32

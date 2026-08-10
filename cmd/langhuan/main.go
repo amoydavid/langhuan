@@ -152,6 +152,7 @@ type runtimeServices struct {
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
 	retrievalCleanup        *service.RetrievalCleanupService
+	searchRunCleanup        *service.SearchRunCleanupService
 	pipeline                *pipeline.DocumentPipeline
 	rawStore                storageport.RawDocumentStore
 	parserRegistry          *parseradapter.Registry
@@ -587,11 +588,22 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Resolver: embeddingResolver, Index: retrievalRepo,
 	})
 	workspaceSearchSettings := service.NewWorkspaceSearchSettingsService(workspaceSearchSettingsRepo, kbRepo)
+	searchRunRepo := db.NewSearchRunRepository(gormDB)
+	searchRunRetention := cfg.Retrieval.SearchRunRetention
+	if searchRunRetention <= 0 {
+		searchRunRetention = service.DefaultSearchRunRetention
+	}
+	searchRunCleanup := service.NewSearchRunCleanupService(searchRunRepo)
 	search := service.NewSearchService(service.SearchServiceDeps{
-		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver, SearchProfile: workspaceSearchSettings, Logger: log,
+		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver,
+		SearchProfile: workspaceSearchSettings, SearchRuns: searchRunRepo,
+		SearchRunRetention: searchRunRetention, Logger: log,
 	})
 	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
-	multiSearch := service.NewMultiKnowledgeSearchService(retrievalRepo, embeddingResolver, rerankResolver, workspaceSearchSettings, apiKeyNameStore, cfg.Search, log)
+	multiSearch := service.NewMultiKnowledgeSearchService(
+		retrievalRepo, embeddingResolver, rerankResolver, workspaceSearchSettings,
+		apiKeyNameStore, cfg.Search, log, searchRunRepo, searchRunRetention,
+	)
 	retrievalCleanup := service.NewRetrievalCleanupService(retrievalCleanupRepo, service.RetrievalCleanupOptions{
 		FailedStagingRetention:     cfg.Retrieval.FailedStagingRetention,
 		RetiredGenerationRetention: cfg.Retrieval.RetiredGenerationRetention,
@@ -727,6 +739,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		search:                 search,
 		multiSearch:            multiSearch,
 		retrievalCleanup:       retrievalCleanup,
+		searchRunCleanup:       searchRunCleanup,
 		pipeline:               documentPipeline,
 		rawStore:               rawStore,
 		parserRegistry:         runtimeParser,
@@ -1002,7 +1015,7 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 		// 避免 rebuildable 数据无限增长。ctx 取消即停（随 shutdown）。
 		if a.services != nil && a.services.retrievalCleanup != nil && a.cfg.Retrieval.CleanupIntervalSeconds > 0 {
 			interval := time.Duration(a.cfg.Retrieval.CleanupIntervalSeconds) * time.Second
-			go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, interval, log)
+			go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, a.services.searchRunCleanup, a.cfg.Retrieval.CleanupBatchSize, interval, log)
 		}
 		readyCh <- struct{}{}
 	}

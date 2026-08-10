@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dajee/langhuan/internal/application/dto"
+	"github.com/dajee/langhuan/internal/application/requestmeta"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -37,6 +39,7 @@ type MultiKnowledgeSearchInput struct {
 	VectorTopK       *int
 	KeywordTopK      *int
 	FinalTopK        *int
+	RequestedScope   value.SearchScope
 }
 
 // knowledgeBaseSearchSnapshot 描述一个被选中知识库在检索开始时的只读快照。
@@ -61,15 +64,17 @@ type embeddingGroup struct {
 // 每 KB 用共同 multi_merge_rrf_k 做 vector/keyword RRF -> 合并 model-
 // independent score -> 加载完整 evidence -> 按父块聚合 -> 稳定排序与全局截断。
 type MultiKnowledgeSearchService struct {
-	repository       indexport.SearchRepository
-	resolver         EmbeddingClientResolver
-	rerankResolver   RerankClientResolver
-	searchProfile    SearchProfileResolver
-	names            APIKeyNameStore
-	logger           *slog.Logger
-	multiLimit       int
-	multiConcurrency int
-	mergeRRFK        int
+	repository         indexport.SearchRepository
+	resolver           EmbeddingClientResolver
+	rerankResolver     RerankClientResolver
+	searchProfile      SearchProfileResolver
+	names              APIKeyNameStore
+	logger             *slog.Logger
+	multiLimit         int
+	multiConcurrency   int
+	mergeRRFK          int
+	searchRuns         SearchRunStore
+	searchRunRetention time.Duration
 }
 
 // NewMultiKnowledgeSearchService 构造多知识库检索服务。
@@ -81,6 +86,8 @@ func NewMultiKnowledgeSearchService(
 	names APIKeyNameStore,
 	cfg config.SearchConfig,
 	logger *slog.Logger,
+	searchRuns SearchRunStore,
+	searchRunRetention time.Duration,
 ) *MultiKnowledgeSearchService {
 	limit := cfg.MultiKnowledgeBaseLimit
 	if limit < 1 {
@@ -97,18 +104,24 @@ func NewMultiKnowledgeSearchService(
 	if logger == nil {
 		logger = slog.Default()
 	}
+	retention := searchRunRetention
+	if retention <= 0 {
+		retention = defaultSearchRunRetention
+	}
 	return &MultiKnowledgeSearchService{
 		repository: repository, resolver: resolver, rerankResolver: rerankResolver, searchProfile: searchProfile, names: names,
 		logger: logger, multiLimit: limit, multiConcurrency: concurrency, mergeRRFK: rrfK,
+		searchRuns: searchRuns, searchRunRetention: retention,
 	}
 }
 
 // Search 执行多知识库检索。任一 Generation 无效、Provider 失败、维度不匹配或查询
-// 失败都按 all-or-nothing 返回稳定错误。
-func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKnowledgeSearchInput) ([]*dto.SearchResult, error) {
+// 失败都按 all-or-nothing 返回稳定错误。返回 *dto.SearchResponse 包含运行元数据。
+func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKnowledgeSearchInput) (response *dto.SearchResponse, err error) {
 	if s.repository == nil || s.resolver == nil || s.names == nil {
 		return nil, fmt.Errorf("%w: 多知识库检索依赖不能为空", domainerrors.ErrValidation)
 	}
+	requestedScope := value.NormalizeSearchScope(input.RequestedScope)
 	query := strings.TrimSpace(input.Query)
 	if query == "" {
 		return nil, fmt.Errorf("%w: 检索 query 不能为空", domainerrors.ErrValidation)
@@ -139,14 +152,50 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 		finalTopK = maxFinalTopK
 	}
 
+	queryHash := searchQueryHash(query)
+	queryChars := len([]rune(query))
+	meta := requestmeta.From(ctx)
+	// 基础输入校验通过后创建 SearchRun recorder。
+	recorder := newSearchRunRecorder(
+		s.searchRuns, s.logger, time.Now, s.searchRunRetention,
+		input.WorkspaceID, queryHash, queryChars,
+		0, 0, finalTopK,
+		requestedScope, meta.Transport, meta.RequestID, meta.PrincipalKind,
+		nil,
+	)
+	var failurePhase searchFailurePhase = searchFailurePhaseRetrieval
+	var runRankingStage value.RankingStage
+	var runSnapshots []model.SearchRunGeneration
+	defer func() {
+		if err != nil {
+			failureClass := classifySearchFailure(err, failurePhase)
+			stage := runRankingStage
+			if !stage.IsValid() {
+				stage = value.RankingStageRRF
+			}
+			recorder.Finish(ctx, value.RetrievalStatusFailed, failureClass, stage, 0, nil)
+			summary := recorder.buildSummary(value.RetrievalStatusFailed, failureClass, stage, 0, nil, nil, requestedScope)
+			summary.CompletedAt = ptrTime(time.Now())
+			response = &dto.SearchResponse{Run: summary, Results: nil}
+		}
+	}()
+
 	// 在一个 Workspace read 中加载全部 KB 名称和 ready active Generation。
 	snapshots, err := s.loadSnapshots(ctx, input.WorkspaceID, kbIDs)
 	if err != nil {
+		failurePhase = searchFailurePhaseRetrieval
 		return nil, err
 	}
+	// 按 KB UUID 稳定排序构造 Generation snapshot，不依赖 map 遍历。
+	orderedKBIDs := make([]uuid.UUID, 0, len(snapshots))
+	for kbID := range snapshots {
+		orderedKBIDs = append(orderedKBIDs, kbID)
+	}
+	sort.Slice(orderedKBIDs, func(i, j int) bool { return orderedKBIDs[i].String() < orderedKBIDs[j].String() })
 
 	// 查询阶段 Rerank 只读取 Workspace Search Profile；各知识库可使用不同 Embedding。
 	var rerankSnapshot *model.RerankSnapshot
+	failurePhase = searchFailurePhaseRerank
 	if s.searchProfile != nil {
 		rerankSnapshot, err = s.searchProfile.Resolve(ctx, input.WorkspaceID)
 		if err != nil {
@@ -158,11 +207,13 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 	groups := groupByEmbeddingSnapshot(snapshots)
 
 	// 并发解析 + 一次 embed 每组。任一组失败全部失败。
+	failurePhase = searchFailurePhaseEmbedding
 	if err := s.embedGroups(ctx, input.WorkspaceID, groups, query); err != nil {
 		return nil, err
 	}
 
 	// 在一个 Workspace tx 内对每个 KB 做 vector/keyword 检索与 RRF。
+	failurePhase = searchFailurePhaseRetrieval
 	perKBFused, err := s.searchPerKB(ctx, input, groups, query)
 	if err != nil {
 		return nil, err
@@ -179,14 +230,65 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 	}
 	results = groupMultiSearchResults(results)
 	// 全局一次重排：所有知识库共享 Workspace Search Profile 的 Rerank 模型。
+	failurePhase = searchFailurePhaseRerank
 	results, err = s.applyMultiKnowledgeRerank(ctx, input.WorkspaceID, query, results, rerankSnapshot)
 	if err != nil {
 		return nil, err
 	}
+	failurePhase = searchFailurePhaseRetrieval
 	if finalTopK < len(results) {
 		results = results[:finalTopK]
 	}
-	return results, nil
+	// 推断 ranking stage：若所有结果共享同一 stage 则用它，否则 RRF 兜底。
+	runRankingStage = inferMultiRankingStage(results)
+	// 构造每个 KB 的 Generation snapshot（按 KB UUID 排序）。
+	for _, kbID := range orderedKBIDs {
+		snap := snapshots[kbID]
+		runSnapshots = append(runSnapshots, buildMultiGenerationSnapshot(input.WorkspaceID, recorder.RunID(), snap.generation))
+	}
+	runResultCount := len(results)
+	status := value.RetrievalStatusAvailable
+	if runResultCount == 0 {
+		status = value.RetrievalStatusEmpty
+	} else if runRankingStage == value.RankingStageRRFFallback {
+		status = value.RetrievalStatusDegraded
+	}
+	recorder.Finish(ctx, status, "", runRankingStage, runResultCount, runSnapshots)
+	summary := recorder.buildSummary(status, "", runRankingStage, runResultCount, orderedKBIDs, runSnapshots, requestedScope)
+	summary.CompletedAt = ptrTime(time.Now())
+	return &dto.SearchResponse{Run: summary, Results: results}, nil
+}
+
+func inferMultiRankingStage(results []*dto.SearchResult) value.RankingStage {
+	if len(results) == 0 {
+		return value.RankingStageRRF
+	}
+	stage := results[0].RankingStage
+	for _, r := range results[1:] {
+		if r.RankingStage != stage {
+			return value.RankingStageRRF
+		}
+	}
+	if !stage.IsValid() {
+		return value.RankingStageRRF
+	}
+	return stage
+}
+
+func buildMultiGenerationSnapshot(workspaceID, runID uuid.UUID, gen *model.IndexGeneration) model.SearchRunGeneration {
+	return model.SearchRunGeneration{
+		ID: uuid.New(), WorkspaceID: workspaceID, SearchRunID: runID,
+		KnowledgeBaseID: gen.KnowledgeBaseID, GenerationID: gen.ID,
+		SourceContentVersion:  gen.SourceContentVersion,
+		IndexedContentVersion: gen.IndexedContentVersion,
+		GenerationConfigHash:  gen.ConfigHash,
+		EmbeddingModelID:      gen.EmbeddingModelID,
+		ProviderID:            gen.ProviderID,
+		ModelName:             gen.ModelName,
+		ModelConfigHash:       gen.ModelConfigHash,
+		EmbeddingDimension:    gen.EmbeddingDimension,
+		RetrievalConfigHash:   retrievalConfigHash(gen.RetrievalConfig),
+	}
 }
 
 // loadSnapshots 在一个 Workspace read 内加载每个 KB 的名称和 ready active Generation。

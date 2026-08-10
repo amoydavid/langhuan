@@ -18,7 +18,7 @@ import (
 func TestSearchHandlerAllowsMemberAndForwardsWorkspaceScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	workspaceID, userID, knowledgeBaseID := uuid.New(), uuid.New(), uuid.New()
-	fake := &searchHTTPServiceFake{results: []*dto.SearchResult{{ChunkID: uuid.New(), Content: "answer"}}}
+	fake := &searchHTTPServiceFake{results: []*dto.SearchResult{{ChunkID: uuid.New(), Content: "answer"}}, searchID: uuid.New()}
 	handler := searchHandler{service: fake}
 	router := gin.New()
 	router.POST("/knowledge-bases/:id/search", func(c *gin.Context) {
@@ -60,9 +60,14 @@ func TestSearchRouteIsWorkspaceMemberScoped(t *testing.T) {
 type searchHTTPServiceFake struct {
 	inputs  []service.SearchInput
 	results []*dto.SearchResult
+	searchID uuid.UUID
 }
 
-func (s *searchHTTPServiceFake) Search(_ context.Context, input service.SearchInput) ([]*dto.SearchResult, error) {
+func (s *searchHTTPServiceFake) Search(_ context.Context, input service.SearchInput) (*dto.SearchResponse, error) {
 	s.inputs = append(s.inputs, input)
-	return s.results, nil
+	searchID := s.searchID
+	if searchID == uuid.Nil {
+		searchID = uuid.New()
+	}
+	return &dto.SearchResponse{Run: dto.SearchRunSummary{SearchID: searchID}, Results: s.results}, nil
 }
