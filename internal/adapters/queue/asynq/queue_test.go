@@ -65,9 +65,10 @@ func TestQueueEnqueuePassesTaskAndOptions(t *testing.T) {
 func TestQueueEnqueueWithGlobalDefaults(t *testing.T) {
 	fake := &fakeEnqueuer{}
 	adapter := NewQueueWithDefaults(fake, QueueDefaults{
-		MaxRetry:  4,
-		Timeout:   30 * time.Minute,
-		Retention: 24 * time.Hour,
+		MaxRetry:    4,
+		MaxRetrySet: true,
+		Timeout:     30 * time.Minute,
+		Retention:   24 * time.Hour,
 	})
 
 	if _, err := adapter.Enqueue(context.Background(), queueport.JobRequest{
@@ -91,9 +92,10 @@ func TestQueueEnqueueWithGlobalDefaults(t *testing.T) {
 func TestQueueEnqueueJobRequestOverridesDefaults(t *testing.T) {
 	fake := &fakeEnqueuer{}
 	adapter := NewQueueWithDefaults(fake, QueueDefaults{
-		MaxRetry:  4,
-		Timeout:   30 * time.Minute,
-		Retention: 24 * time.Hour,
+		MaxRetry:    4,
+		MaxRetrySet: true,
+		Timeout:     30 * time.Minute,
+		Retention:   24 * time.Hour,
 	})
 
 	if _, err := adapter.Enqueue(context.Background(), queueport.JobRequest{
@@ -115,6 +117,25 @@ func TestQueueEnqueueJobRequestOverridesDefaults(t *testing.T) {
 	}
 	if v, ok := optValue(fake.opts, hibikenasynq.RetentionOpt); !ok || v != 2*time.Hour {
 		t.Fatalf("Retention opt = %v (ok=%v), want 2h (override)", v, ok)
+	}
+}
+
+// TestQueueEnqueueZeroMaxRetryExplicit 验证 max_attempts=1（MaxRetry=0）时
+// 显式注入 MaxRetry(0)，而不是回落到 asynq 库默认 25 次重试。
+func TestQueueEnqueueZeroMaxRetryExplicit(t *testing.T) {
+	fake := &fakeEnqueuer{}
+	adapter := NewQueueWithDefaults(fake, QueueDefaults{
+		MaxRetry:    0,
+		MaxRetrySet: true,
+	})
+
+	if _, err := adapter.Enqueue(context.Background(), queueport.JobRequest{
+		Type: "document_index",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := optValue(fake.opts, hibikenasynq.MaxRetryOpt); !ok || v != 0 {
+		t.Fatalf("MaxRetry opt = %v (ok=%v), want 0 (explicit no-retry)", v, ok)
 	}
 }
 

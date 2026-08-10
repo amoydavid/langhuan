@@ -258,3 +258,31 @@ func encodeChunkSetBuild(
 	}
 	return chunkRows, revisionRows, nil
 }
+
+// MarkFailed 把构建中的 ChunkSet 标记为失败。
+// 用于 chunk 数量超限等 terminal 场景，避免 Building 状态永久残留。
+// 幂等：目标已非 Building（如已 ready）时按成功处理，不覆盖终态。
+func (r *ChunkSetRepository) MarkFailed(
+	ctx context.Context,
+	workspaceID, chunkSetID uuid.UUID,
+	errorClass, message string,
+) error {
+	if workspaceID == uuid.Nil || chunkSetID == uuid.Nil {
+		return fmt.Errorf("%w: MarkFailed lineage 不能为空", domainerrors.ErrValidation)
+	}
+	now := time.Now().UTC()
+	return NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
+		result := tx.WithContext(ctx).Model(&DocumentChunkSetRow{}).
+			Where("workspace_id = ? AND id = ? AND status = ?", workspaceID, chunkSetID, value.ChunkSetBuilding).
+			Updates(map[string]any{
+				"status":        string(value.ChunkSetFailed),
+				"error_class":   errorClass,
+				"error_message": message,
+				"updated_at":    now,
+			})
+		if result.Error != nil {
+			return translateDBError(result.Error, "标记 ChunkSet 失败")
+		}
+		return nil
+	})
+}

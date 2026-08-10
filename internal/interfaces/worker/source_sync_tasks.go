@@ -6,12 +6,36 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 )
+
+// recordSourceSyncStage 记录 source_sync 阶段 span event（时长 + 状态），
+// 与 document 链路的 recordStage 对齐。traces 未启用时 span 为 noop，零开销。
+func recordSourceSyncStage(ctx context.Context, stage string, start time.Time, failed bool, payload SourceSyncTaskPayload) {
+	span := trace.SpanFromContext(ctx)
+	if !span.IsRecording() {
+		return
+	}
+	status := "ok"
+	if failed {
+		status = "fail"
+	}
+	span.AddEvent("source.stage", trace.WithAttributes(
+		attribute.String("stage", stage),
+		attribute.String("status", status),
+		attribute.Int64("duration_ms", time.Since(start).Milliseconds()),
+		attribute.String("workspace_id", payload.WorkspaceID.String()),
+		attribute.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
+		attribute.String("job_id", payload.JobID.String()),
+	))
+}
 
 // TaskSourceSync 是知识库级来源同步任务（飞书全量同步）的 asynq type。
 const TaskSourceSync = "source_sync"
@@ -100,7 +124,11 @@ func (h SourceSyncHandler) Handle(ctx context.Context, task *asynq.Task) error {
 		}
 	}
 
+	// 记录 source_sync 阶段 span event（与 document 链路 recordStage 对齐）。
+	start := time.Now()
+	recordSourceSyncStage(ctx, "source_sync", start, false, payload)
 	if err := h.Runner.RunSourceSyncJob(ctx, payload.WorkspaceID, payload.KnowledgeBaseID, payload.JobID); err != nil {
+		recordSourceSyncStage(ctx, "source_sync", start, true, payload)
 		h.logger().LogAttrs(ctx, slog.LevelError, "source_sync 同步失败",
 			slog.String("workspace_id", payload.WorkspaceID.String()),
 			slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),

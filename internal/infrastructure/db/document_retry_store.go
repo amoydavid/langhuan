@@ -87,6 +87,19 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 	if request.WorkspaceID == uuid.Nil || request.DocumentID == uuid.Nil || request.RevisionID == uuid.Nil {
 		return uuid.Nil, fmt.Errorf("%w: 重试 lineage 不能为空", domainerrors.ErrValidation)
 	}
+	if request.GenerationID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("%w: 重试 generation 不能为空", domainerrors.ErrValidation)
+	}
+
+	// 锁序：先锁 Document 再锁 Revision（与 source_sync RetrySourceRevision 一致，
+	// 避免两路复位逻辑在同一文档上 AB-BA 死锁）。
+	// deleted_at IS NULL：软删文档不可重试，早失败返回 ErrNotFound。
+	var docRow DocumentRow
+	if err := tx.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("workspace_id = ? AND id = ? AND deleted_at IS NULL", request.WorkspaceID, request.DocumentID).
+		First(&docRow).Error; err != nil {
+		return uuid.Nil, translateDBError(err, "锁定重试 Document 失败")
+	}
 
 	// 锁定 revision 并校验状态。
 	var revRow DocumentRevisionRow
@@ -128,7 +141,8 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 
 	var jobID uuid.UUID
 	if findErr == nil {
-		// 重置既有 Job 为 pending。
+		// 重置既有 Job 为 pending，并刷新 payload 的 index_generation_id 为当前 active
+		// generation（reindex 后重试必须指向新 generation，否则 worker 校验失败）。
 		jobReset := tx.db.WithContext(ctx).Model(&JobRow{}).
 			Where("workspace_id = ? AND id = ?", request.WorkspaceID, existingJob.ID).
 			Updates(map[string]any{
@@ -136,13 +150,14 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 				"error_class":   "",
 				"error_message": "",
 				"updated_at":    now,
+				"payload":       gorm.Expr("jsonb_set(COALESCE(payload, '{}'::jsonb), '{index_generation_id}', to_jsonb(?::text), true)", request.GenerationID.String()),
 			})
 		if jobReset.Error != nil {
 			return uuid.Nil, translateDBError(jobReset.Error, "重置重试 parse Job 失败")
 		}
 		jobID = existingJob.ID
 	} else if errors.Is(findErr, gorm.ErrRecordNotFound) {
-		// 新建幂等 parse Job。
+		// 新建幂等 parse Job，payload 携带 index_generation_id 供 worker 校验。
 		job, err := model.NewJob(model.NewJobInput{
 			WorkspaceID:        request.WorkspaceID,
 			KnowledgeBaseID:    request.KnowledgeBaseID,
@@ -150,6 +165,9 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 			DocumentRevisionID: request.RevisionID,
 			Type:               "document_parse_start",
 			Status:             value.JobStatusPending,
+			Payload: map[string]any{
+				"index_generation_id": request.GenerationID.String(),
+			},
 		})
 		if err != nil {
 			return uuid.Nil, err
@@ -163,8 +181,10 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 	}
 
 	// 复位 document 状态为 pending（不复活软删，手动重试 Revive=false）。
+	// 软删（deleted_at 非空）文档不可重试——重试其 revision 没有意义，
+	// 返回 ErrNotFound 让调用方明确感知，而非静默 202。
 	docUpdate := tx.db.WithContext(ctx).Model(&DocumentRow{}).
-		Where("workspace_id = ? AND id = ?", request.WorkspaceID, request.DocumentID).
+		Where("workspace_id = ? AND id = ? AND deleted_at IS NULL", request.WorkspaceID, request.DocumentID).
 		Updates(map[string]any{
 			"status":     string(value.DocumentStatusPending),
 			"updated_at": now,
@@ -172,9 +192,52 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 	if docUpdate.Error != nil {
 		return uuid.Nil, translateDBError(docUpdate.Error, "重置重试 Document 状态失败")
 	}
-	// document 不存在不算致命（可能已被软删），不强制 RowsAffected 校验。
+	if docUpdate.RowsAffected != 1 {
+		return uuid.Nil, domainerrors.ErrNotFound
+	}
 
 	return jobID, nil
+}
+
+// FailReset 把已复位（pending）的 revision 与 job 标回 failed，供入队失败补偿。
+// 幂等：目标已非 pending 时仍按成功处理（状态已推进，无需回滚）。
+func (tx *documentRetryDBTx) FailReset(
+	ctx context.Context,
+	request appservice.ResetFailedRevisionRequest,
+	jobID uuid.UUID,
+	message string,
+) error {
+	if request.WorkspaceID == uuid.Nil || request.DocumentID == uuid.Nil ||
+		request.RevisionID == uuid.Nil || jobID == uuid.Nil {
+		return fmt.Errorf("%w: FailReset lineage 不能为空", domainerrors.ErrValidation)
+	}
+	now := time.Now().UTC()
+	// job 标回 failed。
+	jobUpdate := tx.db.WithContext(ctx).Model(&JobRow{}).
+		Where("workspace_id = ? AND id = ? AND document_revision_id = ?",
+			request.WorkspaceID, jobID, request.RevisionID).
+		Updates(map[string]any{
+			"status":        string(value.JobStatusFailed),
+			"error_class":   "enqueue_error",
+			"error_message": message,
+			"updated_at":    now,
+		})
+	if jobUpdate.Error != nil {
+		return translateDBError(jobUpdate.Error, "补偿标记重试 Job 失败")
+	}
+	// revision 标回 failed。
+	revUpdate := tx.db.WithContext(ctx).Model(&DocumentRevisionRow{}).
+		Where("workspace_id = ? AND id = ?", request.WorkspaceID, request.RevisionID).
+		Updates(map[string]any{
+			"status":        string(value.DocumentRevisionFailed),
+			"error_class":   "enqueue_error",
+			"error_message": message,
+			"completed_at":  now,
+		})
+	if revUpdate.Error != nil {
+		return translateDBError(revUpdate.Error, "补偿标记重试 DocumentRevision 失败")
+	}
+	return nil
 }
 
 // derefUUID 安全解引用 *uuid.UUID，nil 返回 uuid.Nil。

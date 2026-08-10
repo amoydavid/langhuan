@@ -48,6 +48,9 @@ type ChunkSetRepository interface {
 		chunks []*model.Chunk,
 		revisions []*model.ChunkRevision,
 	) (*model.DocumentChunkSet, error)
+	// MarkFailed 把构建中的 ChunkSet 标记为失败（chunk 数量超限等 terminal 场景），
+	// 避免 Building 状态永久残留；后续重试时 GetOrCreate 会重开为 Building 重新构建。
+	MarkFailed(ctx context.Context, workspaceID, chunkSetID uuid.UUID, errorClass, message string) error
 }
 
 // RawDocumentReader opens persisted raw document content for parsing.

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -35,6 +36,7 @@ type fakeRetryTx struct {
 	resetJobID     uuid.UUID
 	resetErr       error
 	latestErr      error
+	failResetCalls int
 }
 
 func (tx *fakeRetryTx) GetKnowledgeBase(_ context.Context, _ uuid.UUID) (*model.KnowledgeBase, error) {
@@ -51,6 +53,10 @@ func (tx *fakeRetryTx) GetJobRevision(_ context.Context, _ uuid.UUID) (*JobRevis
 }
 func (tx *fakeRetryTx) ResetFailedRevision(_ context.Context, _ ResetFailedRevisionRequest) (uuid.UUID, error) {
 	return tx.resetJobID, tx.resetErr
+}
+func (tx *fakeRetryTx) FailReset(_ context.Context, _ ResetFailedRevisionRequest, _ uuid.UUID, _ string) error {
+	tx.failResetCalls++
+	return nil
 }
 
 // fakeRetryStore 进入事务并执行回调。
@@ -160,6 +166,28 @@ func TestRetryDocumentAPIKeyCrossKBNotFound(t *testing.T) {
 	}
 	// kb 变量在这里只用于 access 构造，避免 unused 警告。
 	_ = kb
+}
+
+// TestRetryDocumentEnqueueFailureTriggersFailReset 验证入队失败时调用 FailReset 补偿
+// （revision/job 标回 failed），避免"revision 已 pending 但任务未入队"的永久卡死。
+func TestRetryDocumentEnqueueFailureTriggersFailReset(t *testing.T) {
+	ws, kb, doc, rev, gen, job := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	genPtr := gen
+	tx := &fakeRetryTx{
+		kb:             &model.KnowledgeBase{ID: kb, WorkspaceID: ws, ActiveIndexGenerationID: &genPtr},
+		latestRevision: &model.DocumentRevision{ID: rev, WorkspaceID: ws, KnowledgeBaseID: kb, DocumentID: doc},
+		resetJobID:     job,
+	}
+	q := &fakeRetryQueue{err: fmt.Errorf("redis 不可用")}
+	svc := newRetryService(tx, q)
+
+	_, err := svc.RetryDocument(context.Background(), unrestrictedAccess(ws), doc)
+	if err == nil {
+		t.Fatal("error = nil, want enqueue error")
+	}
+	if tx.failResetCalls != 1 {
+		t.Fatalf("FailReset calls = %d, want 1", tx.failResetCalls)
+	}
 }
 
 func TestRetryJobSuccess(t *testing.T) {

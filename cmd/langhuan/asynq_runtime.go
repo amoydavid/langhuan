@@ -7,6 +7,7 @@ import (
 	"time"
 
 	hibikenasynq "github.com/hibiken/asynq"
+	"go.opentelemetry.io/otel"
 
 	"github.com/dajee/langhuan/internal/adapters/queue/asynq"
 	"github.com/dajee/langhuan/internal/application/service"
@@ -87,11 +88,26 @@ func retryDelayFunc(minBackoff, maxBackoff time.Duration) hibikenasynq.RetryDela
 }
 
 // queueDefaults 从 config 派生入队侧的全局策略。
+// MaxRetrySet 恒为 true：applyDefaults 保证 MaxAttempts 有默认值，
+// 因此 MaxRetry()=0（max_attempts=1）也是显式配置，必须注入。
 func queueDefaults(cfg config.QueueConfig) asynq.QueueDefaults {
 	return asynq.QueueDefaults{
-		MaxRetry:  cfg.MaxRetry(),
-		Timeout:   cfg.TaskTimeout(),
-		Retention: cfg.Retention(),
+		MaxRetry:    cfg.MaxRetry(),
+		MaxRetrySet: true,
+		Timeout:     cfg.TaskTimeout(),
+		Retention:   cfg.Retention(),
+	}
+}
+
+// otelTaskMiddleware 为每个 asynq 任务开 OTel 根 span（span name=task.<type>）。
+// traces 未启用时全局 tracer 为 noop，零开销。
+func otelTaskMiddleware() hibikenasynq.MiddlewareFunc {
+	return func(next hibikenasynq.Handler) hibikenasynq.Handler {
+		return hibikenasynq.HandlerFunc(func(ctx context.Context, task *hibikenasynq.Task) error {
+			ctx, span := otel.Tracer("langhuan.worker").Start(ctx, "task."+task.Type())
+			defer span.End()
+			return next.ProcessTask(ctx, task)
+		})
 	}
 }
 
@@ -115,9 +131,10 @@ func (a asynqSlogAdapter) log(level slog.Level, args []any) {
 }
 
 // asynqErrorHandler 是 asynq 的全局错误处理器。
-// 在任务到达 MaxRetry 终态或 handler panic 时被调用，记录结构化日志。
-// 与 worker handler 内的 failPipelineRun 互补：后者负责业务侧终态落库，
-// ErrorHandler 负责 asynq 层兜底（覆盖 handler 未捕获的 panic、超过 MaxRetry 等）。
+// 注意：asynq 在任务**每次失败**时都会调用 ErrorHandler（不限于终态），
+// 因此这里用 Warn 级别 + "asynq.task.failed" 事件名，避免把非终态重试误标为
+// terminal 并刷 Error 日志。
+// 业务侧终态落库（failPipelineRun）与 asynq 层兜底互不冲突：ErrorHandler 只打日志。
 type asynqErrorHandler struct {
 	logger *slog.Logger
 }
@@ -129,7 +146,7 @@ func (h asynqErrorHandler) HandleError(_ context.Context, task *hibikenasynq.Tas
 	// asynq 的 *Task 不携带 ID 字段（ID 在 TaskInfo 上，此处不可得），
 	// 这里只记录 task type；业务侧的准确 job/document lineage 由 worker handler
 	// 内的 failPipelineRun 落库，ErrorHandler 仅作 asynq 层兜底。
-	h.logger.Error("asynq.task.terminal",
+	h.logger.Warn("asynq.task.failed",
 		"task_type", task.Type(),
 		"error", err.Error(),
 	)

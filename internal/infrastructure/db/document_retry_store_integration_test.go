@@ -48,6 +48,7 @@ func TestDocumentRetryStoreResetFailedRevision(t *testing.T) {
 			KnowledgeBaseID: seed.kbID,
 			DocumentID:      documentID,
 			RevisionID:      revisionID,
+			GenerationID:    seed.generationID,
 		})
 		jobID = id
 		return err
@@ -106,6 +107,7 @@ func TestDocumentRetryStoreRejectsNonFailedRevision(t *testing.T) {
 			KnowledgeBaseID: seed.kbID,
 			DocumentID:      documentID,
 			RevisionID:      revisionID,
+			GenerationID:    seed.generationID,
 		})
 		return err
 	})
@@ -130,7 +132,7 @@ func TestDocumentRetryStoreResetIsIdempotentForJob(t *testing.T) {
 	err := store.WithinWorkspace(ctx, seed.workspaceID, func(txCtx context.Context, tx appservice.DocumentRetryTx) error {
 		id, err := tx.ResetFailedRevision(txCtx, appservice.ResetFailedRevisionRequest{
 			WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID,
-			DocumentID: documentID, RevisionID: revisionID,
+			DocumentID: documentID, RevisionID: revisionID, GenerationID: seed.generationID,
 		})
 		jobID1 = id
 		return err
@@ -145,7 +147,7 @@ func TestDocumentRetryStoreResetIsIdempotentForJob(t *testing.T) {
 	err = store.WithinWorkspace(ctx, seed.workspaceID, func(txCtx context.Context, tx appservice.DocumentRetryTx) error {
 		id, err := tx.ResetFailedRevision(txCtx, appservice.ResetFailedRevisionRequest{
 			WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID,
-			DocumentID: documentID, RevisionID: revisionID,
+			DocumentID: documentID, RevisionID: revisionID, GenerationID: seed.generationID,
 		})
 		jobID2 = id
 		return err

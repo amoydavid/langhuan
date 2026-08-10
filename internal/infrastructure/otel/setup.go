@@ -32,12 +32,11 @@ import (
 	"github.com/dajee/langhuan/internal/infrastructure/version"
 )
 
-// Providers 持有初始化完成的 TracerProvider 与 MeterProvider，以及 Prometheus reader。
+// Providers 持有初始化完成的 TracerProvider 与 MeterProvider。
+// /metrics 端点走全局 prometheus.DefaultGatherer（exporter 已注册），无需额外字段。
 type Providers struct {
 	TracerProvider trace.TracerProvider
 	MeterProvider  otelpmetric.MeterProvider
-	// PrometheusReader 暴露给 /metrics 端点采集（OTel Prometheus exporter）。
-	PrometheusReader sdkmetric.Reader
 	// tracerProvider 与 meterProvider 的原始句柄，用于 Shutdown。
 	tp *sdktrace.TracerProvider
 	mp *sdkmetric.MeterProvider
@@ -103,12 +102,13 @@ func Setup(ctx context.Context, cfg config.ObservabilityConfig, log *slog.Logger
 	}
 
 	// ---- MeterProvider ----
+	// legacy 下划线指标名的固定（NameValidationScheme）在 metrics.New 内设置，
+	// 保证任何构造路径（生产 Setup 或测试）输出一致的指标名。
 	// Prometheus exporter 注册到默认 registry，/metrics 端点用默认 promhttp.Handler() 即可采集。
 	promReader, err := prometheus.New(prometheus.WithRegisterer(stdprometheus.DefaultRegisterer))
 	if err != nil {
 		return nil, fmt.Errorf("创建 Prometheus exporter 失败: %w", err)
 	}
-	providers.PrometheusReader = promReader
 	mpOpts := []sdkmetric.Option{
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(promReader),

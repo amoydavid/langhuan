@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -28,6 +29,9 @@ type ResetFailedRevisionRequest struct {
 	KnowledgeBaseID uuid.UUID
 	DocumentID      uuid.UUID
 	RevisionID      uuid.UUID
+	// GenerationID 是复位时当前 active generation，写入 parse job payload，
+	// 保证 worker 的 generationIDFromJobPayload 校验通过（reindex 后重试场景）。
+	GenerationID uuid.UUID
 }
 
 // DocumentRetryTx 定位失败 revision 并在事务内原子复位。
@@ -40,6 +44,9 @@ type DocumentRetryTx interface {
 	// ResetFailedRevision 复位 failed revision 到 pending 并复位/新建 parse Job。
 	// revision 非 failed 时返回 ErrNotRetryable；返回的 JobID 供调用方入队。
 	ResetFailedRevision(context.Context, ResetFailedRevisionRequest) (uuid.UUID, error)
+	// FailReset 在复位后入队失败时，把 revision 与 job 标回 failed（error_class=enqueue_error），
+	// 保证用户可以再次重试，避免"revision 已 pending 但任务未入队"的永久卡死。
+	FailReset(context.Context, ResetFailedRevisionRequest, uuid.UUID, string) error
 }
 
 // DocumentRetryStore 进入 Workspace 级别的失败重试事务。
@@ -141,6 +148,17 @@ func (s *DocumentRetryService) retryInWorkspace(
 		return nil, err
 	}
 	if err := s.enqueueParseStart(ctx, access.WorkspaceID, plan.kbID, plan.documentID, plan.revisionID, plan.genID, plan.jobID); err != nil {
+		// 补偿：复位已提交（revision/job=pending）但任务未入队。把 revision/job 标回 failed，
+		// 允许再次重试；否则 revision 已 pending，下次 retry 会拿 ErrNotRetryable 永久卡死。
+		compErr := s.store.WithinWorkspace(ctx, access.WorkspaceID, func(txCtx context.Context, tx DocumentRetryTx) error {
+			return tx.FailReset(txCtx, ResetFailedRevisionRequest{
+				WorkspaceID: access.WorkspaceID, KnowledgeBaseID: plan.kbID,
+				DocumentID: plan.documentID, RevisionID: plan.revisionID, GenerationID: plan.genID,
+			}, plan.jobID, err.Error())
+		})
+		if compErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("重试入队失败补偿落库失败: %w", compErr))
+		}
 		return nil, err
 	}
 	return &RetryResult{JobID: plan.jobID, RevisionID: plan.revisionID, DocumentID: plan.documentID}, nil
@@ -160,6 +178,7 @@ func (s *DocumentRetryService) planReset(ctx context.Context, tx DocumentRetryTx
 		KnowledgeBaseID: kb.ID,
 		DocumentID:      documentID,
 		RevisionID:      revisionID,
+		GenerationID:    *kb.ActiveIndexGenerationID,
 	})
 	if err != nil {
 		return nil, err

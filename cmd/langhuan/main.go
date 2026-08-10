@@ -220,6 +220,9 @@ func run(args []string) error {
 		return err
 	}
 	log := newLogger(cfg)
+	// 把脱敏 logger 设为全局默认：worker/service 里 slog.Default() 兜底路径
+	// （Logger 未注入时）也继承脱敏，避免隐性旁路。
+	slog.SetDefault(log)
 	log.Info("starting langhuan", slog.String("version", version.Version()))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -304,6 +307,9 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			DB:       cfg.Redis.DB,
 		}
 		app.workerMux = hibikenasynq.NewServeMux()
+		// 为每个 asynq 任务开 OTel 根 span（task.<type>），使 handler 内的
+		// document.stage / source.stage span event 有可归属的父 span。
+		app.workerMux.Use(otelTaskMiddleware())
 		app.workerServer = hibikenasynq.NewServer(redisOpt, asynqServerConfig(cfg.Queue, log))
 	}
 

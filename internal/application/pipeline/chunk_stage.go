@@ -124,6 +124,13 @@ func (s ChunkStage) Run(ctx context.Context, workspaceID, revisionID, generation
 	}
 	// 单文档 chunk 数量上限：超限直接 terminal 失败，避免超大文档拖垮 embedding/index。
 	if s.maxChunksPerDocument > 0 && len(chunks) > s.maxChunksPerDocument {
+		// 把 ChunkSet 标为 Failed，避免 Building 状态永久残留；
+		// 后续重试时 GetOrCreate 会重开为 Building 重新构建。
+		if markErr := s.chunkSets.MarkFailed(ctx, workspaceID, chunkSet.ID,
+			"chunk_limit_exceeded", fmt.Sprintf("文档分块数 %d 超过上限 %d", len(chunks), s.maxChunksPerDocument)); markErr != nil {
+			return uuid.Nil, fmt.Errorf("%w: 文档分块数 %d 超过上限 %d（标记 ChunkSet 失败: %v）",
+				domainerrors.ErrValidation, len(chunks), s.maxChunksPerDocument, markErr)
+		}
 		return uuid.Nil, fmt.Errorf("%w: 文档分块数 %d 超过上限 %d",
 			domainerrors.ErrValidation, len(chunks), s.maxChunksPerDocument)
 	}

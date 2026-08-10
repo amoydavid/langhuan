@@ -16,9 +16,13 @@ type Enqueuer interface {
 // QueueDefaults 是入队时注入的全局策略默认值（来自 config.queue）。
 // 当 JobRequest 未显式覆盖对应字段时使用这些默认值。零值字段表示不注入对应 asynq 选项。
 type QueueDefaults struct {
-	MaxRetry  int
-	Timeout   time.Duration
-	Retention time.Duration
+	MaxRetry int
+	// MaxRetrySet 标记 MaxRetry 是否被显式配置（包括 0）。
+	// 必要：config.max_attempts=1 时 MaxRetry()=0 是合法配置（不重试），
+	// 若仅凭 MaxRetry!=0 判断，会回落到 asynq 库默认 25 次重试。
+	MaxRetrySet bool
+	Timeout     time.Duration
+	Retention   time.Duration
 }
 
 type Queue struct {
@@ -49,11 +53,12 @@ func (q *Queue) Enqueue(ctx context.Context, job queueport.JobRequest) (*queuepo
 		opts = append(opts, hibikenasynq.ProcessIn(d))
 	}
 	// 重试次数：JobRequest 显式覆盖优先，否则用全局默认。
+	// 显式配置（含 0 = 不重试）必须注入 MaxRetry 选项，避免回落到 asynq 库默认 25 次。
 	maxRetry := job.MaxRetry
-	if maxRetry == 0 {
+	if maxRetry == 0 && q.defaults.MaxRetrySet {
 		maxRetry = q.defaults.MaxRetry
 	}
-	if maxRetry > 0 {
+	if job.MaxRetry != 0 || q.defaults.MaxRetrySet {
 		opts = append(opts, hibikenasynq.MaxRetry(maxRetry))
 	}
 	// 超时：JobRequest 显式覆盖优先，否则用全局默认。

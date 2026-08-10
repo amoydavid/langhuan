@@ -13,6 +13,7 @@ import (
 	"context"
 	"time"
 
+	stdprommodel "github.com/prometheus/common/model"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -25,13 +26,13 @@ type Metrics struct {
 	httpRequestDuration   metric.Float64Histogram
 	documentStageTotal    metric.Int64Counter
 	documentStageDuration metric.Float64Histogram
-	ragRetrievalTotal     metric.Int64Counter
-	ragRetrievalDuration  metric.Float64Histogram
-	ragRerankTotal        metric.Int64Counter
 }
 
 // New 用给定 MeterProvider 构造指标集。mp 为 nil 时回退到全局 MeterProvider。
 func New(mp metric.MeterProvider) *Metrics {
+	// 固定 legacy 下划线指标名（langhuan_http_requests_total），与 PromQL/告警契约一致；
+	// prometheus/common 默认 UTF8Validation 会保留点号（langhuan.http.requests_total），破坏契约。
+	stdprommodel.NameValidationScheme = stdprommodel.LegacyValidation
 	if mp == nil {
 		mp = otel.GetMeterProvider()
 	}
@@ -41,14 +42,13 @@ func New(mp metric.MeterProvider) *Metrics {
 	m.httpRequestDuration = histogram(meter, "langhuan.http.request.duration.seconds", "HTTP 请求耗时（秒）")
 	m.documentStageTotal = counter(meter, "langhuan.document.stage.total", "导入主链路各阶段执行次数")
 	m.documentStageDuration = histogram(meter, "langhuan.document.stage.duration.seconds", "导入主链路各阶段耗时（秒）")
-	m.ragRetrievalTotal = counter(meter, "langhuan.rag.retrieval.total", "RAG 检索请求总数")
-	m.ragRetrievalDuration = histogram(meter, "langhuan.rag.retrieval.duration.seconds", "RAG 检索耗时（秒）")
-	m.ragRerankTotal = counter(meter, "langhuan.rag.rerank.total", "RAG 重排执行总数")
 	return m
 }
 
 func counter(meter metric.Meter, name, desc string) metric.Int64Counter {
-	c, err := meter.Int64Counter(name, metric.WithDescription(desc), metric.WithUnit("1"))
+	// 注意：不设置 WithUnit("1")——OTel Prometheus exporter 会把 unit "1" 转成
+	// `_ratio` 后缀（如 langhuan_http_requests_ratio_total），破坏与设计契约的指标名。
+	c, err := meter.Int64Counter(name, metric.WithDescription(desc))
 	if err != nil {
 		return nil // 已注册或失败；调用方 nil-check 容忍（测试重复构造场景）。
 	}
@@ -92,26 +92,6 @@ func (m *Metrics) ObserveStage(_ context.Context, stage, status string, duration
 	if m.documentStageDuration != nil {
 		m.documentStageDuration.Record(context.Background(), duration.Seconds(), metric.WithAttributes(attrs...))
 	}
-}
-
-// ObserveRetrieval 记录一次 RAG 检索（result=ok|empty）。
-func (m *Metrics) ObserveRetrieval(_ context.Context, result string, duration time.Duration) {
-	if m == nil || m.ragRetrievalTotal == nil {
-		return
-	}
-	attrs := attribute.String("result", result)
-	m.ragRetrievalTotal.Add(context.Background(), 1, metric.WithAttributes(attrs))
-	if m.ragRetrievalDuration != nil {
-		m.ragRetrievalDuration.Record(context.Background(), duration.Seconds(), metric.WithAttributes(attrs))
-	}
-}
-
-// ObserveRerank 记录一次重排执行（applied=true|false）。
-func (m *Metrics) ObserveRerank(_ context.Context, applied bool) {
-	if m == nil || m.ragRerankTotal == nil {
-		return
-	}
-	m.ragRerankTotal.Add(context.Background(), 1, metric.WithAttributes(attribute.Bool("applied", applied)))
 }
 
 // StageRecorder 是导入阶段耗时的抽象接口，供 worker 驱动层注入。

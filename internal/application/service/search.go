@@ -81,10 +81,9 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 	)
 	defer func() {
 		stats.err = err
-		// 检索结果作为 span event（非 attribute），便于采样/脱敏。
-		if query != "" {
-			span.AddEvent("query", trace.WithAttributes(attribute.String("query", query)))
-		}
+		// 注意：不把 query 原文写入 span（attribute 或 event）——OTel event 与 attribute
+		// 一样随 OTLP 完整导出，无法单独采样/脱敏。与日志层 allowlist（不记录 query）
+		// 保持一致，只记录 query_chars 元信息。
 		span.SetAttributes(
 			attribute.Bool("rag.retrieval.empty_result", len(results) == 0),
 			attribute.Int("result_count", len(results)),
@@ -158,10 +157,13 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		),
 	)
 	embedded, err := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: []string{query}})
-	embedSpan.End()
 	if err != nil {
+		embedSpan.RecordError(err)
+		embedSpan.SetStatus(codes.Error, err.Error())
+		embedSpan.End()
 		return nil, err
 	}
+	embedSpan.End()
 	if embedded == nil || len(embedded.Vectors) != 1 ||
 		len(embedded.Vectors[0]) != generation.EmbeddingDimension || !finiteChunkRevisionVector(embedded.Vectors[0]) {
 		return nil, domainerrors.ErrInvalidEmbeddingResponse

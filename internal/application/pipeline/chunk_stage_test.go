@@ -173,6 +173,7 @@ type fakeChunkSetRepository struct {
 	revisions        []*model.ChunkRevision
 	getOrCreateCalls int
 	completeCalls    int
+	markFailedCalls  int
 }
 
 func (r *fakeChunkSetRepository) GetOrCreate(
@@ -208,6 +209,19 @@ func (r *fakeChunkSetRepository) Complete(
 	return r.set, nil
 }
 
+func (r *fakeChunkSetRepository) MarkFailed(
+	_ context.Context,
+	workspaceID, chunkSetID uuid.UUID,
+	_ string, _ string,
+) error {
+	if r.set == nil || r.set.WorkspaceID != workspaceID || r.set.ID != chunkSetID {
+		return domainerrors.ErrNotFound
+	}
+	r.markFailedCalls++
+	r.set.Status = value.ChunkSetFailed
+	return nil
+}
+
 // TestChunkStageRejectsExceedingMaxChunks 验证单文档 chunk 数量上限：
 // 超限时返回 ErrValidation（terminal），不调用 Complete。
 func TestChunkStageRejectsExceedingMaxChunks(t *testing.T) {
@@ -241,5 +255,11 @@ func TestChunkStageRejectsExceedingMaxChunks(t *testing.T) {
 	}
 	if sets.completeCalls != 0 {
 		t.Fatalf("Complete 应未被调用，实际调用 %d 次", sets.completeCalls)
+	}
+	if sets.markFailedCalls != 1 {
+		t.Fatalf("MarkFailed 应被调用 1 次（标记 ChunkSet 失败），实际 %d 次", sets.markFailedCalls)
+	}
+	if sets.set == nil || sets.set.Status != value.ChunkSetFailed {
+		t.Fatalf("ChunkSet 状态应为 failed，实际 %#v", sets.set)
 	}
 }
