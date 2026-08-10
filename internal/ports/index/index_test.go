@@ -36,6 +36,10 @@ func (testSearchReader) GetActiveGeneration(context.Context, uuid.UUID) (*model.
 	return &model.IndexGeneration{}, nil
 }
 
+func (testSearchReader) GetGeneration(context.Context, uuid.UUID, uuid.UUID) (*model.IndexGeneration, error) {
+	return &model.IndexGeneration{}, nil
+}
+
 func (testSearchReader) VectorCandidates(context.Context, SearchRequest) ([]SearchCandidate, error) {
 	return nil, nil
 }

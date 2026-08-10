@@ -418,7 +418,7 @@ func (s *MultiKnowledgeSearchService) loadEvidenceAndBuild(ctx context.Context, 
 				if !ok {
 					continue
 				}
-				result := dto.SearchResultFromEvidence(ev, m.score, m.vectorScore, m.keywordScore)
+				result := dto.SearchResultFromEvidence(ev, k.gen, m.score, m.vectorScore, m.keywordScore)
 				result.KnowledgeBaseID = m.knowledgeBaseID
 				result.KnowledgeBaseName = m.knowledgeBaseName
 				results = append(results, result)

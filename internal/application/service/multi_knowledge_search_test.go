@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
@@ -36,6 +37,7 @@ func (r *multiSearchRerankResolverStub) Resolve(_ context.Context, workspaceID, 
 type fakeMultiSearchRepository struct {
 	mu              sync.Mutex
 	activeGens      map[uuid.UUID]*model.IndexGeneration
+	gensByID        map[uuid.UUID]*model.IndexGeneration
 	vectorByKB      map[uuid.UUID][]indexport.SearchCandidate
 	keywordByKB     map[uuid.UUID][]indexport.SearchCandidate
 	evidenceByEntry map[uuid.UUID]indexport.SearchEvidence
@@ -53,6 +55,15 @@ func (r *fakeMultiSearchReader) GetActiveGeneration(_ context.Context, kbID uuid
 	defer r.repo.mu.Unlock()
 	r.repo.getActiveCalls++
 	return r.repo.activeGens[kbID], nil
+}
+
+func (r *fakeMultiSearchReader) GetGeneration(_ context.Context, _ uuid.UUID, generationID uuid.UUID) (*model.IndexGeneration, error) {
+	r.repo.mu.Lock()
+	defer r.repo.mu.Unlock()
+	if g, ok := r.repo.gensByID[generationID]; ok {
+		return g, nil
+	}
+	return nil, domainerrors.ErrNotFound
 }
 func (r *fakeMultiSearchReader) VectorCandidates(_ context.Context, req indexport.SearchRequest) ([]indexport.SearchCandidate, error) {
 	r.repo.mu.Lock()

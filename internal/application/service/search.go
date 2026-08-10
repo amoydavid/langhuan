@@ -217,7 +217,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 			if !ok {
 				return fmt.Errorf("%w: Search evidence 缺少 entry", domainerrors.ErrConflict)
 			}
-			current := dto.SearchResultFromEvidence(item, candidate.Score, candidate.VectorScore, candidate.KeywordScore)
+			current := dto.SearchResultFromEvidence(item, generation.ID, candidate.Score, candidate.VectorScore, candidate.KeywordScore)
 			if prior := grouped[current.ChunkID]; prior != nil {
 				prior.MatchedChildren = append(prior.MatchedChildren, current.MatchedChildren[0])
 				groupedSearchContent[current.ChunkID] = append(groupedSearchContent[current.ChunkID], matchedSearchContentOf(item))

@@ -51,6 +51,21 @@ func (r *retrievalSearchReader) GetActiveGeneration(
 	return indexGenerationFromRow(&row), nil
 }
 
+// GetGeneration reads a specific Generation snapshot by ID (用于固定快照回放)。
+func (r *retrievalSearchReader) GetGeneration(
+	ctx context.Context,
+	knowledgeBaseID, generationID uuid.UUID,
+) (*model.IndexGeneration, error) {
+	var row IndexGenerationRow
+	if err := r.db.WithContext(ctx).Table("knowledge_base_index_generations AS g").Select("g.*").Where(
+		"g.workspace_id = ? AND g.knowledge_base_id = ? AND g.id = ?",
+		r.workspaceID, knowledgeBaseID, generationID,
+	).First(&row).Error; err != nil {
+		return nil, translateDBError(err, "读取 IndexGeneration 快照失败")
+	}
+	return indexGenerationFromRow(&row), nil
+}
+
 // VectorCandidates executes one of four fixed HNSW-compatible expressions.
 func (r *retrievalSearchReader) VectorCandidates(
 	ctx context.Context,
@@ -111,6 +126,7 @@ func (r *retrievalSearchReader) LoadEvidence(
 		"re.id AS entry_id, COALESCE(parent.id, child.id) AS chunk_id, COALESCE(parent_revision.id, re.chunk_revision_id) AS chunk_revision_id, re.document_id, "+
 			"d.kind AS document_kind, COALESCE(parent_revision.content, re.content) AS content, re.search_content AS search_content, d.title AS document_title, "+
 			"ftn.name AS file_node_name, COALESCE(parent.source_anchor, re.source_anchor) AS source_anchor, COALESCE(parent.metadata, re.metadata) AS metadata, "+
+			"re.document_revision_id AS document_revision_id, "+
 			"re.chunk_id AS matched_chunk_id, re.chunk_revision_id AS matched_chunk_revision_id, re.content AS matched_content, re.search_content AS matched_search_content, re.source_anchor AS matched_source_anchor, child.role AS matched_role",
 	).Joins(
 		"JOIN chunks AS child ON child.workspace_id = re.workspace_id AND child.id = re.chunk_id",
@@ -160,7 +176,8 @@ func (r *retrievalSearchReader) LoadEvidence(
 		result[index] = indexport.SearchEvidence{
 			EntryID: row.EntryID, ChunkID: row.ChunkID, ChunkRevisionID: row.ChunkRevisionID,
 			DocumentID: row.DocumentID, DocumentKind: kind, Content: row.Content,
-			SearchContent: row.SearchContent, DocumentName: documentName, SourceAnchor: anchor,
+			DocumentRevisionID: row.DocumentRevisionID,
+			SearchContent:     row.SearchContent, DocumentName: documentName, SourceAnchor: anchor,
 			Metadata:       normalizedDomainMap(row.Metadata),
 			MatchedChunkID: row.MatchedChunkID, MatchedChunkRevisionID: row.MatchedChunkRevisionID,
 			MatchedContent: row.MatchedContent, MatchedSearchContent: row.MatchedSearchContent,
@@ -177,6 +194,7 @@ type searchCandidateRow struct {
 
 type searchEvidenceRow struct {
 	EntryID, ChunkID, ChunkRevisionID, DocumentID     uuid.UUID
+	DocumentRevisionID                                uuid.UUID
 	MatchedChunkID, MatchedChunkRevisionID            uuid.UUID
 	DocumentKind, Content, DocumentTitle              string
 	SearchContent                                     string

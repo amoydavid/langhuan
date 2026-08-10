@@ -36,6 +36,8 @@ type SearchEvidence struct {
 	EntryID, ChunkID, ChunkRevisionID, DocumentID uuid.UUID
 	DocumentKind                                  value.DocumentKind
 	Content, DocumentName                         string
+	// DocumentRevisionID 是证据所属的 Document Revision lineage，来自 retrieval projection。
+	DocumentRevisionID                    uuid.UUID
 	// SearchContent 是命中的检索原始文本（FAQ 为问题集合，file/web 为片段正文）。
 	// 仅用于排序（如 Rerank 文本构造），不进入 API DTO。
 	SearchContent                          string
@@ -51,6 +53,8 @@ type SearchEvidence struct {
 // SearchReader performs candidate and evidence reads on one Workspace-bound transaction.
 type SearchReader interface {
 	GetActiveGeneration(context.Context, uuid.UUID) (*model.IndexGeneration, error)
+	// GetGeneration 读取指定 Generation 快照（用于固定快照回放），已清理时返回 ErrNotFound。
+	GetGeneration(context.Context, uuid.UUID, uuid.UUID) (*model.IndexGeneration, error)
 	VectorCandidates(context.Context, SearchRequest) ([]SearchCandidate, error)
 	KeywordCandidates(context.Context, SearchRequest) ([]SearchCandidate, error)
 	LoadEvidence(context.Context, uuid.UUID, uuid.UUID, []uuid.UUID) ([]SearchEvidence, error)

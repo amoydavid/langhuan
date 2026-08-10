@@ -181,15 +181,16 @@ func TestSearchRejectsOversizedCandidateTopKOverride(t *testing.T) {
 }
 
 type searchRepositoryFake struct {
-	generation     *model.IndexGeneration
-	generations    []*model.IndexGeneration
-	generationGets int
-	vector         []indexport.SearchCandidate
-	keyword        []indexport.SearchCandidate
-	evidence       map[uuid.UUID]indexport.SearchEvidence
-	workspaceCalls int
-	lastRequest    indexport.SearchRequest
-	loadedLimit    int
+	generation         *model.IndexGeneration
+	generations        []*model.IndexGeneration
+	generationsByGenID map[uuid.UUID]*model.IndexGeneration
+	generationGets     int
+	vector             []indexport.SearchCandidate
+	keyword            []indexport.SearchCandidate
+	evidence           map[uuid.UUID]indexport.SearchEvidence
+	workspaceCalls     int
+	lastRequest        indexport.SearchRequest
+	loadedLimit        int
 }
 
 func (s *searchRepositoryFake) WithinWorkspace(
@@ -206,6 +207,13 @@ func (s *searchRepositoryFake) GetActiveGeneration(context.Context, uuid.UUID) (
 		index := min(s.generationGets, len(s.generations)-1)
 		s.generationGets++
 		return s.generations[index], nil
+	}
+	return s.generation, nil
+}
+
+func (s *searchRepositoryFake) GetGeneration(_ context.Context, _ uuid.UUID, generationID uuid.UUID) (*model.IndexGeneration, error) {
+	if g, ok := s.generationsByGenID[generationID]; ok {
+		return g, nil
 	}
 	return s.generation, nil
 }
