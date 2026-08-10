@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { LogOut, Palette } from 'lucide-react'
+import { Languages, LogOut, Palette, UserCog } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { SignOutDialog } from '@/components/sign-out-dialog'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -54,9 +54,21 @@ export function ProfileDropdown() {
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
             <DropdownMenuItem asChild>
+              <Link to='/settings/account'>
+                <UserCog />
+                {t('common.accountSettings')}
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
               <Link to='/settings/appearance'>
                 <Palette />
                 {t('common.appearanceSettings')}
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to='/settings/language'>
+                <Languages />
+                {t('common.languageSettings')}
               </Link>
             </DropdownMenuItem>
           </DropdownMenuGroup>

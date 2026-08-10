@@ -13,6 +13,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { useTheme } from '@/context/theme-provider'
 import { cn } from '@/lib/utils'
@@ -87,7 +88,7 @@ export function AppearanceForm() {
                   className='grid gap-3 sm:grid-cols-3'
                 >
                   {themeOptions.map((option) => (
-                    <FormLabel
+                    <Label
                       key={option.value}
                       className='group cursor-pointer font-normal'
                     >
@@ -133,7 +134,7 @@ export function AppearanceForm() {
                           </div>
                         </div>
                       </div>
-                    </FormLabel>
+                    </Label>
                   ))}
                 </RadioGroup>
               </FormControl>
