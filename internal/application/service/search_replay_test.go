@@ -102,6 +102,7 @@ func TestSearchReplayAllowsOwnerAndAdmin(t *testing.T) {
 		_, err := svc.Replay(context.Background(), ReplaySearchInput{
 			WorkspaceID: run.WorkspaceID, SearchRunID: run.ID,
 			Query: "退款政策", ActorRole: role,
+			Access: value.ResourceAccess{WorkspaceID: run.WorkspaceID, Unrestricted: true},
 		})
 		require.NoError(t, err, "role %s should be allowed", role)
 	}
@@ -120,6 +121,7 @@ func TestSearchReplayRejectsMissingGeneration(t *testing.T) {
 	_, err := svc.Replay(context.Background(), ReplaySearchInput{
 		WorkspaceID: run.WorkspaceID, SearchRunID: run.ID,
 		Query: "退款政策", ActorRole: value.RoleAdmin,
+		Access: value.ResourceAccess{WorkspaceID: run.WorkspaceID, Unrestricted: true},
 	})
 	require.ErrorIs(t, err, domainerrors.ErrGenerationNotAvailable)
 }
@@ -153,10 +155,43 @@ func TestSearchReplayCreatesNewSearchRunWithReplayOfID(t *testing.T) {
 	response, err := svc.Replay(context.Background(), ReplaySearchInput{
 		WorkspaceID: run.WorkspaceID, SearchRunID: run.ID,
 		Query: "退款政策", ActorRole: value.RoleAdmin,
+		Access: value.ResourceAccess{WorkspaceID: run.WorkspaceID, Unrestricted: true},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	require.NotEqual(t, run.ID, response.Run.SearchID)
 	require.NotNil(t, response.Run.ReplayOfID)
 	require.Equal(t, run.ID, *response.Run.ReplayOfID)
+}
+
+func TestSearchReplayRejectsRevokedKBAccess(t *testing.T) {
+	run := originalRun("退款政策")
+	gen := &model.IndexGeneration{
+		ID: uuid.New(), WorkspaceID: run.WorkspaceID, KnowledgeBaseID: uuid.New(),
+		EmbeddingModelID: uuid.New(), ProviderID: uuid.New(), ModelName: "embed",
+		EmbeddingDimension: 1024, Status: value.IndexGenerationReady, ConfigHash: "config-hash",
+		ModelConfigHash: "model-hash",
+		RetrievalConfig: map[string]any{"fts_config": "simple", "vector_top_k": 20, "keyword_top_k": 20, "final_top_k": 10, "rrf_k": 60},
+	}
+	run.Generations = []model.SearchRunGeneration{{
+		KnowledgeBaseID: gen.KnowledgeBaseID, GenerationID: gen.ID,
+		GenerationConfigHash: "config-hash", EmbeddingModelID: gen.EmbeddingModelID,
+		ProviderID: gen.ProviderID, ModelName: gen.ModelName, ModelConfigHash: gen.ModelConfigHash,
+		EmbeddingDimension: gen.EmbeddingDimension, RetrievalConfigHash: retrievalConfigHash(gen.RetrievalConfig),
+	}}
+	store := &fakeSearchRunStore{getRun: run}
+	repo := &searchRepositoryFake{generationsByGenID: map[uuid.UUID]*model.IndexGeneration{gen.ID: gen}}
+	resolver := &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{
+		Client:  &chunkRevisionEmbeddingSpy{dimension: 1024},
+		ModelID: gen.EmbeddingModelID, ProviderID: gen.ProviderID, ModelName: "embed", Dimensions: 1024, ModelConfigHash: "model-hash",
+	}}
+	svc := NewSearchReplayService(SearchReplayDeps{Runs: store, Repository: repo, Resolver: resolver})
+
+	// Access 绑定了其它 KB（不含 gen.KnowledgeBaseID），回放应返回 not_found。
+	_, err := svc.Replay(context.Background(), ReplaySearchInput{
+		WorkspaceID: run.WorkspaceID, SearchRunID: run.ID,
+		Query: "退款政策", ActorRole: value.RoleAdmin,
+		Access: value.ResourceAccess{WorkspaceID: run.WorkspaceID, AllowedKnowledgeBaseIDs: []uuid.UUID{uuid.New()}},
+	})
+	require.ErrorIs(t, err, domainerrors.ErrNotFound)
 }

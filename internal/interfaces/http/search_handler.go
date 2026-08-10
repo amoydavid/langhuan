@@ -197,6 +197,7 @@ func (h searchHandler) replayHandler(c *gin.Context) {
 	response, err := h.replaySvc.Replay(c.Request.Context(), service.ReplaySearchInput{
 		WorkspaceID: authCtx.WorkspaceID, SearchRunID: searchRunID,
 		Query: request.Query, ActorRole: authCtx.Role, IsAPIKey: authCtx.IsAPIKey(),
+		Access: authCtx.ResourceAccess(),
 	})
 	if response != nil {
 		writeRunHeaders(c, response.Run)

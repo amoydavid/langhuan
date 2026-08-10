@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ type ReplaySearchInput struct {
 	Query       string
 	ActorRole   value.WorkspaceRole
 	IsAPIKey    bool
+	Access      value.ResourceAccess
 }
 
 // searchSnapshotOverride 是回放专用的固定快照覆盖，不在公开 API 暴露 generation_id。
@@ -44,7 +46,7 @@ type SearchReplayService struct {
 	resolver           EmbeddingClientResolver
 	rerankResolver     RerankClientResolver
 	searchProfile      SearchProfileResolver
-	logger             interface{ Log() }
+	logger             *slog.Logger
 	searchRuns         SearchRunStore
 	searchRunRetention time.Duration
 	multiLimit         int
@@ -58,12 +60,8 @@ type SearchReplayDeps struct {
 	Resolver           EmbeddingClientResolver
 	RerankResolver     RerankClientResolver
 	SearchProfile      SearchProfileResolver
-	Logger             replayLogger
+	Logger             *slog.Logger
 	SearchRunRetention time.Duration
-}
-
-type replayLogger interface {
-	noopLog()
 }
 
 // NewSearchReplayService 创建回放服务。
@@ -72,12 +70,17 @@ func NewSearchReplayService(deps SearchReplayDeps) *SearchReplayService {
 	if retention <= 0 {
 		retention = defaultSearchRunRetention
 	}
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &SearchReplayService{
 		runs:               deps.Runs,
 		repository:         deps.Repository,
 		resolver:           deps.Resolver,
 		rerankResolver:     deps.RerankResolver,
 		searchProfile:      deps.SearchProfile,
+		logger:             logger,
 		searchRuns:         deps.Runs,
 		searchRunRetention: retention,
 		multiLimit:         20,
@@ -105,7 +108,7 @@ func (s *SearchReplayService) Replay(ctx context.Context, input ReplaySearchInpu
 		return nil, fmt.Errorf("%w: 回放 query 不能为空", domainerrors.ErrValidation)
 	}
 	// 4. 构造固定快照覆盖。
-	override, err := s.buildSnapshotOverride(ctx, input.WorkspaceID, run, query)
+	override, err := s.buildSnapshotOverride(ctx, input.WorkspaceID, run, input.Access)
 	if err != nil {
 		return nil, err
 	}
@@ -117,10 +120,16 @@ func (s *SearchReplayService) buildSnapshotOverride(
 	ctx context.Context,
 	workspaceID uuid.UUID,
 	run *model.SearchRun,
-	query string,
+	access value.ResourceAccess,
 ) (*searchSnapshotOverride, error) {
 	if len(run.Generations) == 0 {
 		return nil, domainerrors.ErrGenerationNotAvailable
+	}
+	// 重新校验当前调用方对每个 KB 的访问权限，不继承原请求权限。
+	for _, genSnapshot := range run.Generations {
+		if !access.AllowsKnowledgeBase(genSnapshot.KnowledgeBaseID) {
+			return nil, domainerrors.ErrNotFound
+		}
 	}
 	generations := make(map[uuid.UUID]*model.IndexGeneration, len(run.Generations))
 	// 读取每个 KB 对应的 Generation；若 projection 已清理则返回 ErrGenerationNotAvailable。
@@ -182,7 +191,7 @@ func (s *SearchReplayService) executeSnapshot(
 	}
 	sort.Slice(orderedKBIDs, func(i, j int) bool { return orderedKBIDs[i].String() < orderedKBIDs[j].String() })
 	recorder := newSearchRunRecorder(
-		s.searchRuns, nil, time.Now, s.searchRunRetention,
+		s.searchRuns, s.logger, time.Now, s.searchRunRetention,
 		input.WorkspaceID, queryHash, queryChars,
 		run.VectorTopK, run.KeywordTopK, run.FinalTopK,
 		run.RequestedScope, meta.Transport, meta.RequestID, meta.PrincipalKind,
@@ -222,7 +231,11 @@ func (s *SearchReplayService) executeSnapshot(
 			rerankClient.ProviderID == override.rerankSnapshot.ProviderID &&
 			rerankClient.ModelName == override.rerankSnapshot.ModelName &&
 			rerankClient.ModelConfigHash == override.rerankSnapshot.ModelConfigHash {
+			// 从结果 Content 构造 searchContentByChunk（重排需要文本）。
 			searchContentByChunk := make(map[uuid.UUID][]string, len(results))
+			for _, r := range results {
+				searchContentByChunk[r.ChunkID] = []string{r.Content}
+			}
 			rankables := buildRankablesWithContent(results, searchContentByChunk)
 			ranked, stage, rerankErr := applyRerank(ctx, rerankClient, query, rankables, override.rerankSnapshot.CandidateTopK, rerankClient.MaxDocumentChars)
 			if rerankErr == nil {

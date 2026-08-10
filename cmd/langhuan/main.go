@@ -608,7 +608,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	searchReplay := service.NewSearchReplayService(service.SearchReplayDeps{
 		Runs: searchRunRepo, Repository: retrievalRepo, Resolver: embeddingResolver,
 		RerankResolver: rerankResolver, SearchProfile: workspaceSearchSettings,
-		SearchRunRetention: searchRunRetention,
+		Logger: log, SearchRunRetention: searchRunRetention,
 	})
 	retrievalCleanup := service.NewRetrievalCleanupService(retrievalCleanupRepo, service.RetrievalCleanupOptions{
 		FailedStagingRetention:     cfg.Retrieval.FailedStagingRetention,
