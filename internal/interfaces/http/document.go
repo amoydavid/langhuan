@@ -44,12 +44,19 @@ type AssetContentStore interface {
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 }
 
+// DocumentRetryService 提供失败文档/任务的幂等重试。
+type DocumentRetryService interface {
+	RetryDocument(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) (*service.RetryResult, error)
+	RetryJob(ctx context.Context, access value.ResourceAccess, jobID uuid.UUID) (*service.RetryResult, error)
+}
+
 type documentHandler struct {
 	ingestService     DocumentIngestService
 	queryService      DocumentQueryService
 	assetService      DocumentAssetListService
 	assetGetter       DocumentAssetGetter
 	assetContentStore AssetContentStore
+	retryService      DocumentRetryService
 	maxFileSizeBytes  int64
 }
 
@@ -273,6 +280,54 @@ func (h documentHandler) delete(c *gin.Context) {
 		return
 	}
 	c.Status(stdhttp.StatusNoContent)
+}
+
+// retryDocument 重试失败文档的最新 revision，复位 failed 状态并重新入队解析。
+func (h documentHandler) retryDocument(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	if h.retryService == nil {
+		writeError(c, stdhttp.StatusNotImplemented, "not_implemented", "重试未启用")
+		return
+	}
+	documentID, err := uuid.Parse(c.Param("document_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
+		return
+	}
+	result, err := h.retryService.RetryDocument(c.Request.Context(), authCtx.ResourceAccess(), documentID)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusAccepted, result)
+}
+
+// retryJob 重试失败 job 关联的 revision。
+func (h documentHandler) retryJob(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	if h.retryService == nil {
+		writeError(c, stdhttp.StatusNotImplemented, "not_implemented", "重试未启用")
+		return
+	}
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "id 必须是有效 UUID")
+		return
+	}
+	result, err := h.retryService.RetryJob(c.Request.Context(), authCtx.ResourceAccess(), jobID)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusAccepted, result)
 }
 
 // assets 返回指定 Document 当前 active revision 的图片资产列表。

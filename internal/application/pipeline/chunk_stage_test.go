@@ -207,3 +207,39 @@ func (r *fakeChunkSetRepository) Complete(
 	r.set.ChunkCount = int64(len(chunks))
 	return r.set, nil
 }
+
+// TestChunkStageRejectsExceedingMaxChunks 验证单文档 chunk 数量上限：
+// 超限时返回 ErrValidation（terminal），不调用 Complete。
+func TestChunkStageRejectsExceedingMaxChunks(t *testing.T) {
+	workspaceID := uuid.New()
+	documentID := uuid.New()
+	revision := testDocumentRevision(workspaceID, documentID, value.DocumentKindFile, value.DocumentRevisionReady)
+	parsed := parsedTestDocument("第一段内容。第二段内容。第三段内容。")
+	revision.NormalizedMarkdown = parsed.Markdown
+	revision.ParseManifest = &parsed.Manifest
+	document := &model.Document{
+		ID: documentID, WorkspaceID: workspaceID, KnowledgeBaseID: revision.KnowledgeBaseID,
+		Kind: value.DocumentKindFile, Title: "超限文档",
+	}
+	generation := &model.IndexGeneration{
+		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: revision.KnowledgeBaseID,
+		ChunkerVersion: CurrentStandardChunkerVersion,
+		ChunkingConfig: map[string]any{"chunk_size": float64(8), "chunk_overlap": float64(2)},
+	}
+	sets := &fakeChunkSetRepository{}
+	stage := NewChunkStage(
+		&fakeRevisionRepository{revision: revision},
+		&fakeRevisionDocumentGetter{document: document},
+		&fakeIndexGenerationGetter{generation: generation},
+		sets,
+		NewChunker(),
+	).WithMaxChunksPerDocument(1) // 仅允许 1 个 chunk
+
+	_, err := stage.Run(context.Background(), workspaceID, revision.ID, generation.ID)
+	if !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("error = %v, want ErrValidation", err)
+	}
+	if sets.completeCalls != 0 {
+		t.Fatalf("Complete 应未被调用，实际调用 %d 次", sets.completeCalls)
+	}
+}

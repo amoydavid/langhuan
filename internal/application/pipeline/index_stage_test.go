@@ -179,3 +179,93 @@ func (s *indexStageProjectionSpy) StageBatch(
 	s.entries = entries
 	return nil
 }
+
+// positionalEmbedClient 用 text 内容的 ASCII 码作为向量标记，保证并发执行下每个 text
+// 的向量是确定性的（不依赖执行顺序），从而可断言最终结果顺序与输入对齐。
+type positionalEmbedClient struct {
+	dimension int
+	callCount int
+}
+
+func (c *positionalEmbedClient) Embed(_ context.Context, input embeddingport.EmbedInput) (*embeddingport.EmbedResult, error) {
+	c.callCount++
+	vectors := make([][]float32, len(input.Texts))
+	for i, text := range input.Texts {
+		vectors[i] = make([]float32, c.dimension)
+		// 第一个分量编码 text 的首字符 ASCII（确定性，与执行顺序无关）。
+		if len(text) > 0 {
+			vectors[i][0] = float32(text[0])
+		}
+	}
+	return &embeddingport.EmbedResult{Vectors: vectors}, nil
+}
+
+func (c *positionalEmbedClient) Dimension() int { return c.dimension }
+
+// TestEmbedIndexTextsConcurrencyPreservesOrder 验证并发 embedding 时结果顺序与输入一致。
+// 用 batch size=2 切成 3 批，concurrency=2 并发执行，断言最终向量顺序正确。
+func TestEmbedIndexTextsConcurrencyPreservesOrder(t *testing.T) {
+	embedder := &positionalEmbedClient{dimension: 4}
+	resolved := &appservice.ResolvedEmbeddingClient{
+		Client: embedder, Dimensions: 4, BatchSize: 2,
+	}
+	texts := []string{"a", "b", "c", "d", "e"}
+
+	// concurrency=2，batchLimit 不覆盖（用模型级 BatchSize=2）。
+	vectors, err := embedIndexTexts(context.Background(), resolved, texts, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vectors) != len(texts) {
+		t.Fatalf("vectors len = %d, want %d", len(vectors), len(texts))
+	}
+	// 每个向量的第 0 分量应等于对应 text 的首字符 ASCII（断言顺序对齐）。
+	for i, vec := range vectors {
+		if vec[0] != float32(texts[i][0]) {
+			t.Fatalf("vector[%d][0] = %v, want %d (顺序错乱)", i, vec[0], texts[i][0])
+		}
+	}
+	// 3 批（2+2+1），应触发 3 次 Embed 调用。
+	if embedder.callCount != 3 {
+		t.Fatalf("callCount = %d, want 3 batches", embedder.callCount)
+	}
+}
+
+// TestEmbedIndexTextsBatchLimitOverridesModel 验证 batchLimit 覆盖模型级 batch size。
+func TestEmbedIndexTextsBatchLimitOverridesModel(t *testing.T) {
+	embedder := &positionalEmbedClient{dimension: 4}
+	resolved := &appservice.ResolvedEmbeddingClient{
+		Client: embedder, Dimensions: 4, BatchSize: 100, // 模型级很大
+	}
+	texts := []string{"a", "b", "c", "d", "e"}
+
+	// batchLimit=2 应覆盖模型级 100，切成 3 批。
+	_, err := embedIndexTexts(context.Background(), resolved, texts, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if embedder.callCount != 3 {
+		t.Fatalf("callCount = %d, want 3 (batchLimit=2 切 5 文本为 3 批)", embedder.callCount)
+	}
+}
+
+// TestEmbedIndexTextsSerialPath 验证 concurrency<=1 走串行路径。
+func TestEmbedIndexTextsSerialPath(t *testing.T) {
+	embedder := &positionalEmbedClient{dimension: 4}
+	resolved := &appservice.ResolvedEmbeddingClient{
+		Client: embedder, Dimensions: 4, BatchSize: 2,
+	}
+	texts := []string{"a", "b", "c"}
+	vectors, err := embedIndexTexts(context.Background(), resolved, texts, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vectors) != 3 {
+		t.Fatalf("vectors len = %d, want 3", len(vectors))
+	}
+	for i, vec := range vectors {
+		if vec[0] != float32(texts[i][0]) {
+			t.Fatalf("vector[%d][0] = %v, want %d", i, vec[0], texts[i][0])
+		}
+	}
+}

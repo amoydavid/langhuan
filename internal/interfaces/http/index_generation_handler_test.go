@@ -79,6 +79,7 @@ func TestIndexGenerationRoutesExposeMemberListAndAdminMutations(t *testing.T) {
 		http.MethodGet + " /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/index-generations":                          false,
 		http.MethodPost + " /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/index-generations":                         false,
 		http.MethodPost + " /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/index-generations/:generation_id/activate": false,
+		http.MethodPost + " /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/reindex":                                   false,
 	}
 	for _, route := range NewRouter(deps).Routes() {
 		key := route.Method + " " + route.Path
@@ -109,4 +110,8 @@ func (s *generationHTTPServiceFake) Create(_ context.Context, input service.Crea
 
 func (s *generationHTTPServiceFake) Activate(context.Context, service.ActivateIndexGenerationInput) (*dto.IndexGeneration, error) {
 	return s.created, nil
+}
+
+func (s *generationHTTPServiceFake) Reindex(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ value.WorkspaceRole) (*service.ReindexResult, error) {
+	return &service.ReindexResult{GenerationID: uuid.New()}, nil
 }

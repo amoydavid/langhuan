@@ -71,6 +71,29 @@ func NewIndexGenerationService(deps IndexGenerationServiceDeps) *IndexGeneration
 	return &IndexGenerationService{store: deps.Store, models: deps.Models, queue: deps.Queue}
 }
 
+// ReindexResult 是 reindex 返回给接口层的结果（新 building Generation）。
+type ReindexResult struct {
+	GenerationID uuid.UUID `json:"generation_id"`
+	JobID        uuid.UUID `json:"job_id"`
+}
+
+// Reindex 用当前 active Generation 的相同配置创建一个新的 building Generation 并入队构建。
+// 配置（embedding/chunking/retrieval/rerank）全部继承 active base；用户后续显式 activate 切换。
+// 已存在 building Generation 时返回 ErrGenerationBuildInProgress。
+// 角色校验由中间件保证（admin/owner）。
+func (s *IndexGenerationService) Reindex(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID, role value.WorkspaceRole) (*ReindexResult, error) {
+	gen, err := s.Create(ctx, CreateIndexGenerationInput{
+		WorkspaceID:     workspaceID,
+		KnowledgeBaseID: knowledgeBaseID,
+		ActorRole:       role,
+		// EmbeddingModelID / ChunkingConfig / RetrievalConfig / Rerank 全部零值 → 继承 active base
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ReindexResult{GenerationID: gen.ID}, nil
+}
+
 // List returns newest generations first inside one Workspace/KB lineage.
 func (s *IndexGenerationService) List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*dto.IndexGeneration, error) {
 	if s.store == nil || workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil {

@@ -16,7 +16,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-func TestNewServerRegistersSixTools(t *testing.T) {
+func TestNewServerRegistersAllTools(t *testing.T) {
 	srv := NewServer(minimalDeps())
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Handler())
@@ -31,7 +31,7 @@ func TestNewServerRegistersSixTools(t *testing.T) {
 	names := toolNames(result.Tools)
 	require.ElementsMatch(t, []string{
 		"knowledge_base_create", "document_ingest", "document_status",
-		"knowledge_search", "document_delete", "chunk_get",
+		"knowledge_search", "document_delete", "document_retry", "chunk_get",
 	}, names)
 }
 
@@ -286,7 +286,7 @@ func TestToolsMarshalWithoutSchemaConflict(t *testing.T) {
 	require.True(t, ok)
 	result, ok := jsonResp.Result.(mcplib.ListToolsResult)
 	require.True(t, ok)
-	require.Len(t, result.Tools, 6, "应注册 6 个工具")
+	require.Len(t, result.Tools, 7, "应注册 7 个工具")
 
 	for _, tool := range result.Tools {
 		t.Run(tool.Name, func(t *testing.T) {

@@ -1,14 +1,18 @@
 package http
 
 import (
+	"context"
 	"io/fs"
 	stdhttp "net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	metricspkg "github.com/dajee/langhuan/internal/infrastructure/metrics"
 )
 
 // Dependencies wires all HTTP handler dependencies. Auth services + session
@@ -44,6 +48,7 @@ type Dependencies struct {
 	ModelConnectionTests      ModelConnectionTestHTTPService
 	DocumentIngest            DocumentIngestService
 	Documents                 DocumentQueryService
+	DocumentRetry             DocumentRetryService
 	DocumentAssets            DocumentAssetListService
 	AssetGetter               DocumentAssetGetter
 	AssetContentStore         AssetContentStore
@@ -58,6 +63,29 @@ type Dependencies struct {
 	MCPHandler                stdhttp.Handler
 	SPA                       fs.FS
 	MaxFileSizeBytes          int64
+
+	// observability
+	ReadyChecker ReadinessChecker           // /readyz 依赖探活；nil 时不挂
+	MetricsPath  string                     // /metrics 暴露路径；空时不挂
+	HTTPMetrics  *metricspkg.Metrics        // HTTP 指标采集；nil 时不挂中间件
+	QueueAdmin   *service.QueueAdminService // 队列监控（platform admin）；nil 时不挂
+}
+
+// ReadinessChecker 探活依赖（PostgreSQL/Redis/队列），供 /readyz。
+type ReadinessChecker interface {
+	Check(ctx context.Context) ReadinessReport
+}
+
+// ReadinessReport 是依赖就绪检查结果。
+type ReadinessReport struct {
+	Ready  bool                      `json:"ready"`
+	Checks map[string]ReadinessCheck `json:"checks"`
+}
+
+// ReadinessCheck 是单个依赖的检查结果。
+type ReadinessCheck struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message,omitempty"`
 }
 
 // NewRouter builds the gin engine wiring:
@@ -77,12 +105,25 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(RequestID())
+	// OTel HTTP 入站 tracing：traces 未启用时 TracerProvider 为 noop，零开销。
+	router.Use(otelgin.Middleware("langhuan"))
+	if deps.HTTPMetrics != nil {
+		router.Use(MetricsMiddleware(deps.HTTPMetrics))
+	}
 
 	cookieName := deps.SessionConfig.CookieName
 	api := router.Group("/api/v1")
 
-	// --- healthz + MCP ---
+	// --- healthz + readyz + MCP ---
 	api.GET("/healthz", healthz)
+	if deps.ReadyChecker != nil {
+		api.GET("/readyz", readyz(deps.ReadyChecker))
+	}
+
+	// --- /metrics（Prometheus scrape，无鉴权，依赖网络层隔离）---
+	if deps.MetricsPath != "" {
+		router.GET(deps.MetricsPath, gin.WrapH(promhttp.Handler()))
+	}
 
 	// --- OpenAPI 文档端点（登录后可见）---
 	// spec 在启动时反射 struct 生成一次；UI 与 spec JSON 挂在 SessionAuth 之后，
@@ -164,7 +205,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 	// --- platform-admin routes ---
 	adminReady := deps.Auth != nil && (deps.Workspaces != nil || deps.Invitations != nil || deps.Users != nil ||
-		deps.ModelProviders != nil || deps.Models != nil || deps.ModelConnectionTests != nil)
+		deps.ModelProviders != nil || deps.Models != nil || deps.ModelConnectionTests != nil || deps.QueueAdmin != nil)
 	if adminReady {
 		admin := api.Group("")
 		admin.Use(SessionAuth(deps.Auth, cookieName), RequirePlatformAdmin())
@@ -202,6 +243,13 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		if deps.ModelConnectionTests != nil {
 			modelH := modelHandler{models: deps.Models, connections: deps.ModelConnectionTests}
 			admin.POST("/admin/models/:model_id/test", modelH.testPlatform)
+		}
+		if deps.QueueAdmin != nil {
+			queueH := queueAdminHandler{svc: deps.QueueAdmin}
+			admin.GET("/admin/queues", queueH.list)
+			admin.GET("/admin/queues/:queue/dead", queueH.listDead)
+			admin.POST("/admin/queues/:queue/dead/:task_id/retry", queueH.retryDead)
+			admin.DELETE("/admin/queues/:queue/dead/:task_id", queueH.deleteDead)
 		}
 	}
 
@@ -364,11 +412,19 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		// Bearer callers, the document service verifies that the document's
 		// knowledge base belongs to the API key's allowed binding set.
 		if deps.Documents != nil {
-			doc := documentHandler{ingestService: deps.DocumentIngest, queryService: deps.Documents, maxFileSizeBytes: deps.MaxFileSizeBytes}
+			doc := documentHandler{ingestService: deps.DocumentIngest, queryService: deps.Documents, retryService: deps.DocumentRetry, maxFileSizeBytes: deps.MaxFileSizeBytes}
 			status := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
 			status.GET("/documents/:document_id", doc.get)
 			del := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsWrite))
 			del.DELETE("/documents/:document_id", doc.delete)
+			// retry 要求 admin/owner（Session），API Key 仍由 ScopeDocumentsWrite + 绑定集合控制。
+			// 不能并入 del 组（member 级），需单独加 RequireAdminForSession。
+			if deps.DocumentRetry != nil {
+				retryGroup := progGroup.Group("",
+					RequireScopeForAPIKey(value.ScopeDocumentsWrite),
+					RequireAdminForSession())
+				retryGroup.POST("/documents/:document_id/retry", doc.retryDocument)
+			}
 		}
 		if deps.ChunkRevisions != nil {
 			chunks := chunkRevisionHandler{service: deps.ChunkRevisions}
@@ -395,6 +451,14 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			// Session callers still pass (Unrestricted access).
 			jobGroup := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
 			jobGroup.GET("/jobs/:id", job.get)
+			// Job retry 要求 admin/owner（Session），API Key 仍由 ScopeDocumentsWrite + 绑定集合控制。
+			if deps.DocumentRetry != nil {
+				retryJob := documentHandler{retryService: deps.DocumentRetry}
+				jobRetryGroup := progGroup.Group("",
+					RequireScopeForAPIKey(value.ScopeDocumentsWrite),
+					RequireAdminForSession())
+				jobRetryGroup.POST("/jobs/:id/retry", retryJob.retryJob)
+			}
 		}
 		// API Key self-introspection: Bearer-only. Returns the authenticated
 		// key's scope strings (no key value, no user data). Used by downstream
@@ -436,6 +500,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				generations := indexGenerationHandler{service: deps.IndexGenerations}
 				adminGroup.POST("/knowledge-bases/:id/index-generations", generations.create)
 				adminGroup.POST("/knowledge-bases/:id/index-generations/:generation_id/activate", generations.activate)
+				adminGroup.POST("/knowledge-bases/:id/reindex", generations.reindex)
 			}
 		}
 

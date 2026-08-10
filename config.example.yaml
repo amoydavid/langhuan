@@ -21,6 +21,10 @@ redis:
 
 log:
   level: info
+  # 结构化日志的敏感字段脱敏（默认 true）。
+  # 开启时对 authorization/bearer/api_key/token/password/secret/dsn 等字段做 mask，
+  # 防止 API key、OIDC client_secret、数据库 DSN 等意外泄漏到日志。本地 debug 可关闭。
+  redact: true
 
 storage:
   # 存储后端：local（本地文件系统）或 s3（S3-compatible 对象存储）。
@@ -55,6 +59,14 @@ ingest:
     - csv
     - xlsx
     - docx
+  # 单篇文档分块数量上限。超过此值的文档在分块阶段直接标记为 failed，
+  # 不继续进入 embedding/index，避免超大文档拖垮索引流水线。
+  max_chunks_per_document: 50000
+
+# 文档向量化阶段的批量与并发限制。
+embedding:
+  batch_size: 64       # 单次 embedding API 调用的文本条数
+  max_concurrency: 4   # 并发 embedding 调用上限（errgroup + semaphore 控制）
 
 # MinerU Cloud PDF 解析运行参数。
 # MinerU token 属于敏感凭证，不在此配置；启用前先在 model_providers 表
@@ -151,3 +163,37 @@ source_sync:
   # 超过该上限的文档会被标记为 oversize 并跳过（保留旧版本），避免单篇巨型文档
   # 拖垮同步或解析流水线。必须 >0。
   max_content_bytes: 52428800
+
+# asynq 异步队列治理参数。
+#
+# 背景：文档解析、向量化、索引、飞书同步等耗时任务都走 asynq + Redis。
+# 默认 asynq 库的 MaxRetry=25 且无超时，坏任务会长时间反复占用 worker。
+# 本配置收敛重试次数、退避区间与单任务超时，并提供任务保留时长供 Inspector 可见。
+queue:
+  concurrency: 8                  # worker 并发数（同时处理的任务数）
+  retry:
+    max_attempts: 5               # 含首次执行的总尝试次数（覆盖库默认 25）
+    min_backoff_seconds: 30       # 指数退避下界
+    max_backoff_seconds: 3600     # 指数退避上界（1 小时）
+  task_timeout_seconds: 1800      # 单任务最大执行时长（30 分钟），超时自动失败可重试
+  retention_seconds: 86400        # completed/failed 任务在 asynq 的保留时长（24 小时），供队列监控与死信查看
+
+# 可观测性端点。
+observability:
+  metrics:
+    enabled: true                 # 是否暴露 Prometheus /metrics 端点（OTel Prometheus exporter）
+    path: /metrics                # metrics 暴露路径
+  traces:
+    enabled: true                 # 是否启用分布式追踪（OTel TracerProvider）
+    sample_rate: 1.0              # 基于 traceID 的采样比例（0~1），1.0 = 全采样
+  readiness:
+    # /readyz 在 asynq pending 总数超过此阈值时返回 not ready，
+    # 防止积压任务在 unhealthy worker 上继续接收。0 表示不检查队列。
+    queue_pending_threshold: 80
+  otlp:
+    # OTLP exporter：启用后把 metrics + traces 推送到 OTel Collector。
+    # 默认关闭；启用时必须配置 endpoint。
+    enabled: false
+    endpoint: ""                  # 例：otel-collector:4317（grpc）或 otel-collector:4318（http）
+    protocol: grpc                # grpc（默认）或 http
+    insecure: true                # 本地/内网 Collector 禁用 TLS

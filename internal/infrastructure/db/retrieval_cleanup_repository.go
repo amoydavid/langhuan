@@ -22,6 +22,45 @@ func NewRetrievalCleanupRepository(database *gorm.DB) *RetrievalCleanupRepositor
 	return &RetrievalCleanupRepository{db: database}
 }
 
+// CleanupGlobal removes one bounded batch of expired data across all workspaces.
+// 与 Cleanup 不同，它不走 WithinWorkspace 事务，而是直接批量删除过期的 staging/failed/retired 投影，
+// 供定时调度周期性收敛全库的 rebuildable 投影。FOR UPDATE SKIP LOCKED 保证并发安全。
+func (r *RetrievalCleanupRepository) CleanupGlobal(
+	ctx context.Context,
+	request appservice.RetrievalCleanupGlobalRequest,
+) (appservice.RetrievalCleanupResult, error) {
+	if request.FailedStagingBefore.IsZero() || request.RetiredBefore.IsZero() ||
+		request.BatchSize < 1 || request.BatchSize > 10000 {
+		return appservice.RetrievalCleanupResult{}, fmt.Errorf("%w: Retrieval cleanup global 请求无效", domainerrors.ErrValidation)
+	}
+	var result appservice.RetrievalCleanupResult
+	// 过期 staging/failed entries（跨 workspace）。
+	deletedEntries := r.db.WithContext(ctx).
+		Where("state IN (?, ?) AND created_at < ?",
+			value.RetrievalEntryStaging, value.RetrievalEntryFailed, request.FailedStagingBefore).
+		Limit(request.BatchSize).
+		Delete(&RetrievalEntryRow{})
+	if deletedEntries.Error != nil {
+		return appservice.RetrievalCleanupResult{}, translateDBError(deletedEntries.Error, "全局删除过期 RetrievalEntry 失败")
+	}
+	result.DeletedEntries = deletedEntries.RowsAffected
+
+	// 过期 retired entries（跨 workspace）。
+	remaining := request.BatchSize - int(deletedEntries.RowsAffected)
+	if remaining > 0 {
+		deletedRetired := r.db.WithContext(ctx).
+			Where("state = ? AND COALESCE(retired_at, created_at) < ?",
+				value.RetrievalEntryRetired, request.RetiredBefore).
+			Limit(remaining).
+			Delete(&RetrievalEntryRow{})
+		if deletedRetired.Error != nil {
+			return appservice.RetrievalCleanupResult{}, translateDBError(deletedRetired.Error, "全局删除过期 retired RetrievalEntry 失败")
+		}
+		result.DeletedEntries += deletedRetired.RowsAffected
+	}
+	return result, nil
+}
+
 // Cleanup removes one bounded batch inside a transaction-local Workspace context.
 func (r *RetrievalCleanupRepository) Cleanup(
 	ctx context.Context,

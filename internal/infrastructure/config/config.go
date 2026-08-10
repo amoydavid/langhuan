@@ -13,20 +13,127 @@ import (
 )
 
 type Config struct {
-	Server      ServerConfig      `yaml:"server"`
-	Database    DatabaseConfig    `yaml:"database"`
-	Redis       RedisConfig       `yaml:"redis"`
-	Log         LogConfig         `yaml:"log"`
-	Storage     StorageConfig     `yaml:"storage"`
-	Ingest      IngestConfig      `yaml:"ingest"`
-	MinerU      MinerUConfig      `yaml:"mineru"`
-	Auth        AuthConfig        `yaml:"auth"`
-	Credentials CredentialsConfig `yaml:"credentials"`
-	Retrieval   RetrievalConfig   `yaml:"retrieval"`
-	APIKey      APIKeyConfig      `yaml:"api_key"`
-	MCP         MCPConfig         `yaml:"mcp"`
-	Search      SearchConfig      `yaml:"search"`
-	SourceSync  SourceSyncConfig  `yaml:"source_sync"`
+	Server        ServerConfig        `yaml:"server"`
+	Database      DatabaseConfig      `yaml:"database"`
+	Redis         RedisConfig         `yaml:"redis"`
+	Log           LogConfig           `yaml:"log"`
+	Storage       StorageConfig       `yaml:"storage"`
+	Ingest        IngestConfig        `yaml:"ingest"`
+	Embedding     EmbeddingConfig     `yaml:"embedding"`
+	MinerU        MinerUConfig        `yaml:"mineru"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Credentials   CredentialsConfig   `yaml:"credentials"`
+	Retrieval     RetrievalConfig     `yaml:"retrieval"`
+	APIKey        APIKeyConfig        `yaml:"api_key"`
+	MCP           MCPConfig           `yaml:"mcp"`
+	Search        SearchConfig        `yaml:"search"`
+	SourceSync    SourceSyncConfig    `yaml:"source_sync"`
+	Queue         QueueConfig         `yaml:"queue"`
+	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// QueueConfig 描述 asynq 异步队列的重试、退避、超时、并发与保留策略。
+// 这些参数覆盖 asynq 库默认值（默认 MaxRetry=25、无超时），避免长任务无限占用 worker。
+type QueueConfig struct {
+	Concurrency        int              `yaml:"concurrency"`
+	Retry              QueueRetryConfig `yaml:"retry"`
+	TaskTimeoutSeconds int              `yaml:"task_timeout_seconds"`
+	RetentionSeconds   int              `yaml:"retention_seconds"`
+}
+
+// QueueRetryConfig 描述任务重试的尝试次数与指数退避边界。
+type QueueRetryConfig struct {
+	MaxAttempts       int `yaml:"max_attempts"`
+	MinBackoffSeconds int `yaml:"min_backoff_seconds"`
+	MaxBackoffSeconds int `yaml:"max_backoff_seconds"`
+}
+
+// TaskTimeout 返回单任务最大执行时长。
+func (q QueueConfig) TaskTimeout() time.Duration {
+	if q.TaskTimeoutSeconds <= 0 {
+		return 30 * time.Minute
+	}
+	return time.Duration(q.TaskTimeoutSeconds) * time.Second
+}
+
+// Retention 返回 completed/failed 任务在 asynq 中的保留时长（供 Inspector 可见）。
+func (q QueueConfig) Retention() time.Duration {
+	if q.RetentionSeconds <= 0 {
+		return 24 * time.Hour
+	}
+	return time.Duration(q.RetentionSeconds) * time.Second
+}
+
+// MinBackoff 返回重试退避的下界。
+func (q QueueConfig) MinBackoff() time.Duration {
+	if q.Retry.MinBackoffSeconds <= 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(q.Retry.MinBackoffSeconds) * time.Second
+}
+
+// MaxBackoff 返回重试退避的上界。
+func (q QueueConfig) MaxBackoff() time.Duration {
+	if q.Retry.MaxBackoffSeconds <= 0 {
+		return time.Hour
+	}
+	return time.Duration(q.Retry.MaxBackoffSeconds) * time.Second
+}
+
+// MaxRetry 返回 asynq MaxRetry（不含首次执行的重试次数）。
+func (q QueueConfig) MaxRetry() int {
+	if q.Retry.MaxAttempts <= 0 {
+		return 4 // max_attempts 默认 5，asynq MaxRetry = max_attempts - 1
+	}
+	if q.Retry.MaxAttempts == 1 {
+		return 0
+	}
+	return q.Retry.MaxAttempts - 1
+}
+
+// ObservabilityConfig 描述 metrics、traces、健康检查等可观测性端点的运行参数。
+type ObservabilityConfig struct {
+	Metrics   MetricsConfig   `yaml:"metrics"`
+	Traces    TracesConfig    `yaml:"traces"`
+	Readiness ReadinessConfig `yaml:"readiness"`
+	OTLP      OTLPConfig      `yaml:"otlp"`
+}
+
+// MetricsConfig 描述 Prometheus metrics 端点的开关与路径。
+type MetricsConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
+}
+
+// TracesConfig 描述分布式追踪的采样参数。
+type TracesConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// SampleRate 是基于 traceID 的采样比例（0~1）。applyDefaults 保证 <=0 时回退为 1.0。
+	SampleRate float64 `yaml:"sample_rate"`
+}
+
+// OTLPConfig 描述 OTLP exporter（推送 metrics+traces 到 Collector）的参数。
+// Enabled 默认 false；启用时必须配置 Endpoint。
+type OTLPConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint"`
+	// Protocol 为 "grpc"（默认）或 "http"。
+	Protocol string `yaml:"protocol"`
+	// Insecure 为 true 时禁用 TLS（本地/内网 Collector 常用）。
+	Insecure bool `yaml:"insecure"`
+}
+
+// ReadinessConfig 描述 /readyz 依赖就绪探活的阈值。
+type ReadinessConfig struct {
+	// QueuePendingThreshold：asynq pending 总数超过此值时 /readyz 返回 not ready，
+	// 防止积压任务在 unhealthy worker 上继续接收。0 表示不检查队列。
+	QueuePendingThreshold int `yaml:"queue_pending_threshold"`
+}
+
+// EmbeddingConfig 描述文档向量化阶段的批量与并发限制。
+type EmbeddingConfig struct {
+	BatchSize      int `yaml:"batch_size"`
+	MaxConcurrency int `yaml:"max_concurrency"`
 }
 
 // SourceSyncConfig 描述飞书同步 Meta Scheduler 的非敏感运行参数。
@@ -91,6 +198,9 @@ type RedisConfig struct {
 
 type LogConfig struct {
 	Level string `yaml:"level"`
+	// Redact 控制结构化日志的敏感字段脱敏（默认 true）。
+	// 开启时对 authorization/bearer/api_key/token/password/secret/dsn 等字段做 mask。
+	Redact bool `yaml:"redact"`
 }
 
 // StorageConfig 描述原始文件、解析产物与图片资产的存储后端。
@@ -134,8 +244,9 @@ type MinerUConfig struct {
 }
 
 type IngestConfig struct {
-	MaxFileSizeBytes int64    `yaml:"max_file_size_bytes"`
-	AllowedFileTypes []string `yaml:"allowed_file_types"`
+	MaxFileSizeBytes     int64    `yaml:"max_file_size_bytes"`
+	AllowedFileTypes     []string `yaml:"allowed_file_types"`
+	MaxChunksPerDocument int      `yaml:"max_chunks_per_document"`
 }
 
 // RetrievalConfig controls bounded cleanup of rebuildable search projections.
@@ -143,6 +254,9 @@ type RetrievalConfig struct {
 	FailedStagingRetention     time.Duration `yaml:"failed_staging_retention"`
 	RetiredGenerationRetention time.Duration `yaml:"retired_generation_retention"`
 	CleanupBatchSize           int           `yaml:"cleanup_batch_size"`
+	// CleanupIntervalSeconds 是定时清理过期投影的周期（秒）。
+	// <=0 时由 applyDefaults 兜底为 3600（1 小时）。
+	CleanupIntervalSeconds int `yaml:"cleanup_interval_seconds"`
 }
 
 // CredentialsConfig 描述持久化敏感凭证所使用的主密钥。
@@ -241,7 +355,7 @@ func defaultConfig() Config {
 		},
 		Database: DatabaseConfig{Driver: "postgres", AutoMigrate: true},
 		Redis:    RedisConfig{Addr: "127.0.0.1:6379"},
-		Log:      LogConfig{Level: "info"},
+		Log:      LogConfig{Level: "info", Redact: true},
 		Storage: StorageConfig{
 			Driver:         "local",
 			RawDocumentDir: "./data/raw-documents",
@@ -262,20 +376,67 @@ func defaultConfig() Config {
 				"xlsx",
 				"docx",
 			},
+			MaxChunksPerDocument: 50000,
 		},
-		MinerU: defaultMinerUConfig(),
-		Auth:   defaultAuthConfig(),
+		Embedding: defaultEmbeddingConfig(),
+		MinerU:    defaultMinerUConfig(),
+		Auth:      defaultAuthConfig(),
 		Retrieval: RetrievalConfig{
 			FailedStagingRetention:     24 * time.Hour,
 			RetiredGenerationRetention: 168 * time.Hour,
 			CleanupBatchSize:           1000,
+			CleanupIntervalSeconds:     3600,
 		},
 		APIKey: defaultAPIKeyConfig(),
 		MCP: MCPConfig{
 			InlineIngestMaxFileSizeBytes: 8 * 1024 * 1024,
 		},
-		Search:     defaultSearchConfig(),
-		SourceSync: defaultSourceSyncConfig(),
+		Search:        defaultSearchConfig(),
+		SourceSync:    defaultSourceSyncConfig(),
+		Queue:         defaultQueueConfig(),
+		Observability: defaultObservabilityConfig(),
+	}
+}
+
+// defaultEmbeddingConfig 返回文档向量化阶段的默认批量与并发限制。
+func defaultEmbeddingConfig() EmbeddingConfig {
+	return EmbeddingConfig{
+		BatchSize:      64,
+		MaxConcurrency: 4,
+	}
+}
+
+// defaultQueueConfig 返回 asynq 队列治理的默认策略。
+// max_attempts=5 覆盖 asynq 库默认的 25 次，避免坏任务长时间占用队列；
+// 退避 30s~1h 指数增长，给瞬时故障恢复时间又不至于过慢。
+func defaultQueueConfig() QueueConfig {
+	return QueueConfig{
+		Concurrency: 8,
+		Retry: QueueRetryConfig{
+			MaxAttempts:       5,
+			MinBackoffSeconds: 30,
+			MaxBackoffSeconds: 3600,
+		},
+		TaskTimeoutSeconds: 1800,
+		RetentionSeconds:   86400,
+	}
+}
+
+// defaultObservabilityConfig 返回可观测性端点的默认配置。
+func defaultObservabilityConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		Metrics: MetricsConfig{
+			Enabled: true,
+			Path:    "/metrics",
+		},
+		Traces: TracesConfig{
+			Enabled:    true,
+			SampleRate: 1.0,
+		},
+		Readiness: ReadinessConfig{
+			QueuePendingThreshold: 80,
+		},
+		OTLP: OTLPConfig{Protocol: "grpc"},
 	}
 }
 
@@ -422,6 +583,45 @@ func (c *Config) applyDefaults() {
 	if c.SourceSync.MaxContentBytes <= 0 {
 		c.SourceSync.MaxContentBytes = 50 * 1024 * 1024
 	}
+	if c.Queue.Concurrency <= 0 {
+		c.Queue.Concurrency = 8
+	}
+	if c.Queue.Retry.MaxAttempts <= 0 {
+		c.Queue.Retry.MaxAttempts = 5
+	}
+	if c.Queue.Retry.MinBackoffSeconds <= 0 {
+		c.Queue.Retry.MinBackoffSeconds = 30
+	}
+	if c.Queue.Retry.MaxBackoffSeconds <= 0 {
+		c.Queue.Retry.MaxBackoffSeconds = 3600
+	}
+	if c.Queue.TaskTimeoutSeconds <= 0 {
+		c.Queue.TaskTimeoutSeconds = 1800
+	}
+	if c.Queue.RetentionSeconds <= 0 {
+		c.Queue.RetentionSeconds = 86400
+	}
+	if c.Embedding.BatchSize <= 0 {
+		c.Embedding.BatchSize = 64
+	}
+	if c.Embedding.MaxConcurrency <= 0 {
+		c.Embedding.MaxConcurrency = 4
+	}
+	if c.Ingest.MaxChunksPerDocument <= 0 {
+		c.Ingest.MaxChunksPerDocument = 50000
+	}
+	if c.Observability.Metrics.Path == "" {
+		c.Observability.Metrics.Path = "/metrics"
+	}
+	if c.Retrieval.CleanupIntervalSeconds <= 0 {
+		c.Retrieval.CleanupIntervalSeconds = 3600
+	}
+	if c.Observability.Traces.SampleRate <= 0 {
+		c.Observability.Traces.SampleRate = 1.0
+	}
+	if c.Observability.OTLP.Protocol == "" {
+		c.Observability.OTLP.Protocol = "grpc"
+	}
 }
 
 // 注：认证默认值在 defaultConfig() 中提供。yaml.Unmarshal 在 auth 块缺失时
@@ -473,8 +673,49 @@ func (c *Config) validate() error {
 	if err := c.validateSourceSync(); err != nil {
 		return err
 	}
+	if err := c.validateQueue(); err != nil {
+		return err
+	}
+	if err := c.validateObservability(); err != nil {
+		return err
+	}
 	if _, err := c.Credentials.DecodeEncryptionKey(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateObservability 校验 OTLP exporter 参数。
+func (c *Config) validateObservability() error {
+	otlp := c.Observability.OTLP
+	if otlp.Enabled && strings.TrimSpace(otlp.Endpoint) == "" {
+		return errors.New("observability.otlp.enabled=true 时 endpoint 不能为空")
+	}
+	if otlp.Protocol != "" && otlp.Protocol != "grpc" && otlp.Protocol != "http" {
+		return fmt.Errorf("observability.otlp.protocol 必须是 grpc 或 http，当前为 %q", otlp.Protocol)
+	}
+	return nil
+}
+
+// validateQueue 校验 asynq 队列治理参数的取值范围。
+func (c *Config) validateQueue() error {
+	if c.Queue.Concurrency < 1 {
+		return errors.New("queue.concurrency 必须大于等于 1")
+	}
+	if c.Queue.Retry.MaxAttempts < 1 {
+		return errors.New("queue.retry.max_attempts 必须大于等于 1")
+	}
+	if c.Queue.Retry.MinBackoffSeconds < 1 {
+		return errors.New("queue.retry.min_backoff_seconds 必须大于等于 1")
+	}
+	if c.Queue.Retry.MaxBackoffSeconds < c.Queue.Retry.MinBackoffSeconds {
+		return errors.New("queue.retry.max_backoff_seconds 不能小于 min_backoff_seconds")
+	}
+	if c.Queue.TaskTimeoutSeconds < 1 {
+		return errors.New("queue.task_timeout_seconds 必须大于等于 1")
+	}
+	if c.Queue.RetentionSeconds < 1 {
+		return errors.New("queue.retention_seconds 必须大于等于 1")
 	}
 	return nil
 }

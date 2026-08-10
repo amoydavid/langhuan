@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/application/dto"
+	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -68,12 +69,17 @@ type MCPChunkGetService interface {
 	Get(ctx context.Context, workspaceID, knowledgeBaseID, chunkID uuid.UUID) (*dto.Chunk, error)
 }
 
+// MCPDocumentRetryService 是 MCP document_retry 工具所需的重试端口。
+type MCPDocumentRetryService interface {
+	RetryDocument(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) (*service.RetryResult, error)
+}
+
 // toolScopeRequirement 返回每个工具所需的 scope；未注册的工具返回 (_, false)。
 func toolScopeRequirement(name string) (value.APIScope, bool) {
 	switch name {
 	case "knowledge_base_create":
 		return value.ScopeKnowledgeBasesWrite, true
-	case "document_ingest", "document_delete":
+	case "document_ingest", "document_delete", "document_retry":
 		return value.ScopeDocumentsWrite, true
 	case "document_status", "chunk_get":
 		return value.ScopeDocumentsRead, true

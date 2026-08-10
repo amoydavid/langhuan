@@ -21,6 +21,7 @@ type Dependencies struct {
 	DocumentIngest MCPDocumentIngestService
 	DocumentStatus *service.ProgrammaticDocumentStatusService
 	DocumentDelete MCPDocumentDeleteService
+	DocumentRetry  MCPDocumentRetryService
 	ChunkGet       MCPChunkGetService
 	MultiSearch    *service.MultiKnowledgeSearchService
 	InlineLimit    int64

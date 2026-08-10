@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { Plus } from 'lucide-react'
+import { Plus, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -10,6 +10,7 @@ import { meQueryOptions } from '@/features/auth/queries'
 import {
   activateIndexGeneration,
   createIndexGeneration,
+  reindexKnowledgeBase,
 } from '@/features/index-generations/api'
 import { invalidateGenerationExperience } from '@/features/index-generations/cache'
 import { GenerationForm } from '@/features/index-generations/generation-form'
@@ -78,6 +79,13 @@ function IndexesPage() {
       toast.success(t('routes.workspaces.kb.indexes.activatedToast'))
     },
   })
+  const reindexMutation = useMutation({
+    mutationFn: () => reindexKnowledgeBase(workspaceSlug, kbId),
+    onSuccess: async () => {
+      await invalidateGenerationExperience(queryClient, workspaceSlug, kbId)
+      toast.success(t('routes.workspaces.kb.indexes.reindexStartedToast'))
+    },
+  })
 
   if (search.create && !canManage) {
     return (
@@ -99,10 +107,20 @@ function IndexesPage() {
           </p>
         </div>
         {canManage && !search.create && (
-          <Button onClick={() => void navigate({ search: { create: true } })}>
-            <Plus />
-            {t('routes.workspaces.kb.indexes.buildButton')}
-          </Button>
+          <div className='flex gap-2'>
+            <Button
+              variant='outline'
+              onClick={() => void reindexMutation.mutateAsync()}
+              disabled={reindexMutation.isPending}
+            >
+              <RefreshCw />
+              {t('routes.workspaces.kb.indexes.reindexButton')}
+            </Button>
+            <Button onClick={() => void navigate({ search: { create: true } })}>
+              <Plus />
+              {t('routes.workspaces.kb.indexes.buildButton')}
+            </Button>
+          </div>
         )}
       </div>
 

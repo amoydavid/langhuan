@@ -17,13 +17,14 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-// registerTools 注册六个 typed tools。
+// registerTools 注册七个 typed tools。
 func registerTools(srv *mcpserver.MCPServer, deps Dependencies) {
 	registerKnowledgeBaseCreate(srv, deps)
 	registerDocumentIngest(srv, deps)
 	registerDocumentStatus(srv, deps)
 	registerKnowledgeSearch(srv, deps)
 	registerDocumentDelete(srv, deps)
+	registerDocumentRetry(srv, deps)
 	registerChunkGet(srv, deps)
 }
 
@@ -406,6 +407,56 @@ type documentDeleteInput struct {
 type documentDeleteOutput struct {
 	DocumentID string `json:"document_id"`
 	Deleted    bool   `json:"deleted"`
+}
+
+// ===== document_retry =====
+
+type documentRetryInput struct {
+	KnowledgeBaseID string `json:"knowledge_base_id" jsonschema:"知识库 ID"`
+	DocumentID      string `json:"document_id" jsonschema:"要重试的文档 ID"`
+}
+
+type documentRetryOutput struct {
+	DocumentID string `json:"document_id"`
+	RevisionID string `json:"revision_id"`
+	JobID      string `json:"job_id"`
+}
+
+func registerDocumentRetry(srv *mcpserver.MCPServer, deps Dependencies) {
+	tool := mcp.NewTool("document_retry",
+		mcp.WithDescription("重试一个导入失败的文档。将其最新修订重置为待解析并重新入队，完整重跑解析→分块→索引链路。仅 failed 状态可重试；重复调用幂等。"),
+		withRawInputSchema[documentRetryInput](),
+		withRawOutputSchema[documentRetryOutput](),
+	)
+	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in documentRetryInput) (*mcp.CallToolResult, error) {
+		auth, err := authFromRequest(ctx)
+		if err != nil {
+			return toErrorResult(err), nil
+		}
+		if !auth.HasScope(value.ScopeDocumentsWrite) {
+			return toErrorResult(domainerrors.ErrInsufficientScope), nil
+		}
+		kbID, err := uuid.Parse(in.KnowledgeBaseID)
+		if err != nil {
+			return toErrorResult(fmt.Errorf("knowledge_base_id 必须是有效 UUID")), nil
+		}
+		if !auth.ResourceAccess().AllowsKnowledgeBase(kbID) {
+			return toErrorResult(domainerrors.ErrNotFound), nil
+		}
+		docID, err := uuid.Parse(in.DocumentID)
+		if err != nil {
+			return toErrorResult(fmt.Errorf("document_id 必须是有效 UUID")), nil
+		}
+		result, err := deps.DocumentRetry.RetryDocument(ctx, auth.ResourceAccess(), docID)
+		if err != nil {
+			return toErrorResult(err), nil
+		}
+		return jsonResult(documentRetryOutput{
+			DocumentID: result.DocumentID.String(),
+			RevisionID: result.RevisionID.String(),
+			JobID:      result.JobID.String(),
+		}), nil
+	}))
 }
 
 func registerDocumentDelete(srv *mcpserver.MCPServer, deps Dependencies) {

@@ -62,4 +62,8 @@ var (
 
 	// ErrIdempotencyConflict 表示同一 Idempotency-Key 携带了不同的请求体，统一映射为 409。
 	ErrIdempotencyConflict = stderrors.New("幂等键与已有请求冲突")
+
+	// ErrNotRetryable 表示目标资源当前不在可重试状态（如 revision 非 failed）。
+	// 用于失败重试入口，统一映射为 409。
+	ErrNotRetryable = stderrors.New("当前状态不可重试")
 )

@@ -43,3 +43,21 @@ export async function activateIndexGeneration(
   )
   return indexGenerationSchema.parse(response.data)
 }
+
+export interface ReindexResult {
+  generation_id: string
+}
+
+export async function reindexKnowledgeBase(
+  workspaceSlug: string,
+  kbId: string
+) {
+  const response = await apiClient.post<ReindexResult>(
+    `${workspacePath(workspaceSlug)}/knowledge-bases/${encodeURIComponent(kbId)}/reindex`
+  )
+  return response.data
+}
+
+function workspacePath(workspaceSlug: string) {
+  return `/workspaces/${encodeURIComponent(workspaceSlug)}`
+}

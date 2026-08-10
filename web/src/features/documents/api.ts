@@ -69,6 +69,19 @@ export async function deleteDocument(
   )
 }
 
+export interface RetryDocumentResult {
+  job_id: string
+  revision_id: string
+  document_id: string
+}
+
+export async function retryDocument(workspaceSlug: string, documentId: string) {
+  const response = await apiClient.post<RetryDocumentResult>(
+    `${workspacePath(workspaceSlug)}/documents/${encodeURIComponent(documentId)}/retry`
+  )
+  return response.data
+}
+
 export async function getJob(workspaceSlug: string, jobId: string) {
   const response = await apiClient.get<Job>(
     `${workspacePath(workspaceSlug)}/jobs/${encodeURIComponent(jobId)}`

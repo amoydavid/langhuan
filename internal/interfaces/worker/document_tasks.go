@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/pipeline"
@@ -50,6 +53,12 @@ type DocumentPipeline interface {
 	RunIndex(ctx context.Context, workspaceID, generationID, chunkSetID uuid.UUID) ([]*model.RetrievalEntry, error)
 }
 
+// StageRecorder 记录导入链路各阶段耗时与状态，供 metrics 采集。
+// nil 时跳过打点（测试友好）。接口定义在使用方（worker），实现由 metrics 包注入。
+type StageRecorder interface {
+	ObserveStage(ctx context.Context, stage, status string, duration time.Duration)
+}
+
 // AsyncParseSupport 是 DocumentPipeline 的可选扩展，支持异步解析完成。
 type AsyncParseSupport interface {
 	CompleteAsyncParse(
@@ -71,7 +80,30 @@ type DocumentHandlers struct {
 	Pipeline          DocumentPipeline
 	ParserRegistry    ParserRegistry
 	AssetStoreFactory func(workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver
+	Recorder          StageRecorder // 可选；nil 时跳过阶段耗时打点
 	Logger            *slog.Logger
+}
+
+// recordStage 记录一个阶段的耗时与状态：既写 metric，也写一条 OTel span event。
+// traces 未启用时 tracer 为 noop，零开销。lineage 属性（workspace/document/revision/job）
+// 由调用处的 ctx 继承自 otelgin/worker 根 span，无需在此重复注入。
+func (h DocumentHandlers) recordStage(ctx context.Context, stage string, start time.Time, failed bool) {
+	status := "ok"
+	if failed {
+		status = "fail"
+	}
+	if h.Recorder != nil {
+		h.Recorder.ObserveStage(ctx, stage, status, time.Since(start))
+	}
+	// 记录一条 span event，便于在 trace 中看到各阶段耗时拆分。
+	span := trace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		span.AddEvent("document.stage", trace.WithAttributes(
+			attribute.String("stage", stage),
+			attribute.String("status", status),
+			attribute.Int64("duration_ms", time.Since(start).Milliseconds()),
+		))
+	}
 }
 
 // logger 返回注入的 logger，未注入时回退到 slog.Default（测试友好）。
@@ -197,9 +229,12 @@ func (h DocumentHandlers) HandleDocumentParsePoll(ctx context.Context, task *asy
 			return h.succeedRunningJob(ctx, payload.WorkspaceID, payload.JobID)
 		}
 		// 同步解析路径
+		parseStart := time.Now()
 		if err := h.Pipeline.RunParse(ctx, payload.WorkspaceID, payload.DocumentRevisionID); err != nil {
+			h.recordStage(ctx, "parse", parseStart, true)
 			return h.failPipelineRun(ctx, payload, err)
 		}
+		h.recordStage(ctx, "parse", parseStart, false)
 		h.logger().LogAttrs(ctx, slog.LevelInfo, "同步解析完成，提交索引任务", lineageAttrs(payload)...)
 	}
 	if _, err := h.createAndEnqueue(ctx, payload, TaskDocumentIndex, uuid.Nil); err != nil {
@@ -332,17 +367,23 @@ func (h DocumentHandlers) HandleDocumentIndex(ctx context.Context, task *asynq.T
 	}
 	chunkSetID := payload.ChunkSetID
 	if chunkSetID == uuid.Nil {
+		chunkStart := time.Now()
 		chunkSetID, err = h.Pipeline.RunChunk(
 			ctx, payload.WorkspaceID, payload.DocumentRevisionID, payload.GenerationID,
 		)
 		if err != nil {
+			h.recordStage(ctx, "chunk", chunkStart, true)
 			return h.failPipelineRun(ctx, payload, err)
 		}
+		h.recordStage(ctx, "chunk", chunkStart, false)
 	}
+	indexStart := time.Now()
 	entries, err := h.Pipeline.RunIndex(ctx, payload.WorkspaceID, payload.GenerationID, chunkSetID)
 	if err != nil {
+		h.recordStage(ctx, "index", indexStart, true)
 		return h.failPipelineRun(ctx, payload, err)
 	}
+	h.recordStage(ctx, "index", indexStart, false)
 	h.logger().LogAttrs(ctx, slog.LevelInfo, "文档索引完成",
 		append(lineageAttrs(payload),
 			slog.String("chunk_set_id", chunkSetID.String()),

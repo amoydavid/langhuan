@@ -150,9 +150,11 @@ export const routes = {
         breadcrumb: '索引',
         buildStartedToast: '索引版本已开始构建',
         activatedToast: '索引版本已激活',
+        reindexStartedToast: '重建索引已开始，构建完成后需手动激活',
         title: '索引版本',
         description: '新版本构建期间，检索继续使用当前生效版本。',
         buildButton: '构建新索引版本',
+        reindexButton: '重建索引',
         candidateTitle: '构建候选索引版本',
       },
       settings: {

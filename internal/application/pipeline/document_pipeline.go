@@ -63,19 +63,24 @@ type AssetRepository interface {
 
 // DocumentPipelineDeps contains the revision-scoped pipeline dependencies.
 type DocumentPipelineDeps struct {
-	Documents         RevisionDocumentGetter
-	Revisions         DocumentRevisionRepository
-	Generations       IndexGenerationGetter
-	ChunkSets         ChunkSetRepository
-	FAQRevisions      FAQRevisionGetter
-	IndexSources      indexport.SourceRepository
-	EmbeddingResolver appservice.EmbeddingClientResolver
-	RetrievalIndex    indexport.RetrievalIndex
-	Publisher         appservice.DocumentPublishStore
-	Parser            parserport.DocumentParser
-	RawStore          RawDocumentReader
-	Assets            AssetRepository
-	MaxFileSizeBytes  int64
+	Documents            RevisionDocumentGetter
+	Revisions            DocumentRevisionRepository
+	Generations          IndexGenerationGetter
+	ChunkSets            ChunkSetRepository
+	FAQRevisions         FAQRevisionGetter
+	IndexSources         indexport.SourceRepository
+	EmbeddingResolver    appservice.EmbeddingClientResolver
+	RetrievalIndex       indexport.RetrievalIndex
+	Publisher            appservice.DocumentPublishStore
+	Parser               parserport.DocumentParser
+	RawStore             RawDocumentReader
+	Assets               AssetRepository
+	MaxFileSizeBytes     int64
+	MaxChunksPerDocument int // 单文档 chunk 数量上限；<=0 不限制
+	// EmbeddingConcurrency 是 embedding 阶段的并发 batch 上限；<=1 串行。
+	EmbeddingConcurrency int
+	// EmbeddingBatchLimit 是单次 embedding batch 上限，与模型级 batch 取 min；<=0 不限制。
+	EmbeddingBatchLimit int
 }
 
 // DocumentPipeline coordinates parse and standard chunk stages.
@@ -92,12 +97,12 @@ type DocumentPipeline struct {
 func NewDocumentPipeline(deps DocumentPipelineDeps) *DocumentPipeline {
 	return &DocumentPipeline{
 		parse: NewParseStage(deps.Revisions, deps.Documents, deps.RawStore, deps.Parser, deps.MaxFileSizeBytes),
-		chunk: NewChunkStage(deps.Revisions, deps.Documents, deps.Generations, deps.ChunkSets, NewChunker()),
+		chunk: NewChunkStage(deps.Revisions, deps.Documents, deps.Generations, deps.ChunkSets, NewChunker()).WithMaxChunksPerDocument(deps.MaxChunksPerDocument),
 		faq:   NewFAQChunkStage(deps.FAQRevisions, deps.ChunkSets),
 		index: NewIndexStage(IndexStageDeps{
 			Generations: deps.Generations, Sources: deps.IndexSources,
 			Resolver: deps.EmbeddingResolver, Index: deps.RetrievalIndex, Publisher: deps.Publisher,
-		}),
+		}).WithEmbeddingLimits(deps.EmbeddingConcurrency, deps.EmbeddingBatchLimit),
 		revisions: deps.Revisions,
 		assets:    deps.Assets,
 	}

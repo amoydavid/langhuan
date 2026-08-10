@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/dajee/langhuan/internal/adapters/httpclient"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -100,9 +102,11 @@ func ValidateEmbeddingModel(name string, dimensions int) error {
 
 // NewHTTPClient selects the public Workspace policy only for custom endpoints.
 // Official SDK endpoints and all platform-managed endpoints remain trusted.
+// 返回的 client 统一包裹 otelhttp transport，使所有 embedding/rerank 出站调用产生 OTel span。
 func NewHTTPClient(scope value.ModelScope, baseURL string, timeout time.Duration, headers map[string]string) (*http.Client, error) {
+	var client *http.Client
 	if scope == value.ModelScopeWorkspace && strings.TrimSpace(baseURL) != "" {
-		client, err := httpclient.NewPublicHTTPSClient(httpclient.PublicClientConfig{
+		c, err := httpclient.NewPublicHTTPSClient(httpclient.PublicClientConfig{
 			BaseURL: baseURL,
 			Timeout: timeout,
 			Headers: headers,
@@ -110,11 +114,18 @@ func NewHTTPClient(scope value.ModelScope, baseURL string, timeout time.Duration
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", domainerrors.ErrInvalidProviderConfig, err)
 		}
-		return client, nil
+		client = c
+	} else {
+		c, err := httpclient.NewTrustedClient(timeout, headers)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", domainerrors.ErrInvalidProviderConfig, err)
+		}
+		client = c
 	}
-	client, err := httpclient.NewTrustedClient(timeout, headers)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", domainerrors.ErrInvalidProviderConfig, err)
+	// 在既有 transport 外层叠加 otelhttp transport，保留 SSRF 防护与 header 注入。
+	// noop tracer 时零开销。
+	if client.Transport != nil {
+		client.Transport = otelhttp.NewTransport(client.Transport)
 	}
 	return client, nil
 }

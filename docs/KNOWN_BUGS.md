@@ -48,3 +48,36 @@ internal/infrastructure/db/document_revision_repository.go:42  CompleteParse
 ```
 
 ---
+
+## KB-002：S3 对象存储出站调用未接入 OTel traces
+
+**位置：** `internal/adapters/storage/s3/store.go` `NewStore`
+
+**引入版本：** v0.8.0 OTel 可观测性重构
+
+**背景：**
+
+v0.8.0 的 OTel traces instrumentation 覆盖了 HTTP 入站（otelgin）、RAG 检索链路（retrieval/embedding span）、导入阶段（worker span event）、embedding/rerank/mineru 出站调用（otelhttp transport）。但 **S3 对象存储的出站调用未接入**——它走 AWS SDK v2（`s3.NewFromConfig`），不经过 `http.Client`，无法被 `otelhttp` 统一覆盖。
+
+**影响：**
+
+- S3 的 `PutObject`/`GetObject`/`DeleteObject`（原始文件、解析产物、图片资产的读写）**不产生 OTel span**。
+- 当 `storage.driver=s3` 时，trace 中缺失对象存储这一段，无法观测 S3 延迟（在 S3 模式下这是导入链路的重要耗时来源）。
+- `storage.driver=local` 不受影响（本地文件操作不走网络）。
+
+**现状评估：** 非阻塞。多数开发/测试环境用 local 模式；生产 S3 部署的 trace 会缺失对象存储 span，但不影响功能与其它链路的可观测性。
+
+**建议修复方向：**
+
+- 在 `store.go:54` `config.LoadDefaultConfig` 后注入 `otelaws.AppendMiddlewares`，并为 S3 client 调用包 OTel span name。
+- 依赖：`go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws`。
+- 参考 otelaws 官方文档，在 NewStore 中 `awsCfg.APIOptions = append(awsCfg.APIOptions, otelaws.AppendMiddlewares())`。
+
+**相关代码：**
+
+```
+internal/adapters/storage/s3/store.go:54  LoadDefaultConfig（注入点）
+internal/adapters/storage/s3/store.go:61  s3.NewFromConfig
+```
+
+---

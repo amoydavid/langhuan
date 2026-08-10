@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
@@ -64,8 +68,37 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		return nil, fmt.Errorf("%w: Search dependencies 不能为空", domainerrors.ErrValidation)
 	}
 	stats := &searchRunStats{startedAt: time.Now(), queryChars: len([]rune(query))}
+	// RAG retrieval 根 span：gen_ai.operation.name=retrieval。traces 未启用时为 noop span。
+	tracer := otel.Tracer("langhuan.rag")
+	ctx, span := tracer.Start(ctx, "retrieval",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "retrieval"),
+			attribute.String("gen_ai.data_source.id", input.KnowledgeBaseID.String()),
+			attribute.String("knowledge_base_id", input.KnowledgeBaseID.String()),
+			attribute.Int("query_chars", stats.queryChars),
+		),
+	)
 	defer func() {
 		stats.err = err
+		// 检索结果作为 span event（非 attribute），便于采样/脱敏。
+		if query != "" {
+			span.AddEvent("query", trace.WithAttributes(attribute.String("query", query)))
+		}
+		span.SetAttributes(
+			attribute.Bool("rag.retrieval.empty_result", len(results) == 0),
+			attribute.Int("result_count", len(results)),
+			attribute.Int("vector_candidate_count", stats.vectorCandidateCount),
+			attribute.Int("keyword_candidate_count", stats.keywordCandidateCount),
+			attribute.Int("fused_candidate_count", stats.fusedCandidateCount),
+			attribute.Int("grouped_candidate_count", stats.groupedCandidateCount),
+			attribute.Bool("rerank_applied", stats.rerankApplied),
+		)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
 		s.logTerminal(ctx, stats, input, query)
 	}()
 	generation, err := s.activeGeneration(ctx, input.WorkspaceID, input.KnowledgeBaseID)
@@ -115,7 +148,17 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 			return nil, domainerrors.ErrRerankSnapshotMismatch
 		}
 	}
+	// query embedding 子 span：gen_ai.operation.name=embeddings。
+	_, embedSpan := tracer.Start(ctx, "embeddings",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "embeddings"),
+			attribute.String("embedding.model_name", resolved.ModelName),
+			attribute.Int("embedding.dimensions", resolved.Dimensions),
+		),
+	)
 	embedded, err := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: []string{query}})
+	embedSpan.End()
 	if err != nil {
 		return nil, err
 	}

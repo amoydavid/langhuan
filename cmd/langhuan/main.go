@@ -51,8 +51,9 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
-	"github.com/dajee/langhuan/internal/infrastructure/logger"
+	metricspkg "github.com/dajee/langhuan/internal/infrastructure/metrics"
 	"github.com/dajee/langhuan/internal/infrastructure/migrate"
+	otelinfra "github.com/dajee/langhuan/internal/infrastructure/otel"
 	"github.com/dajee/langhuan/internal/infrastructure/version"
 	langhttp "github.com/dajee/langhuan/internal/interfaces/http"
 	langmcp "github.com/dajee/langhuan/internal/interfaces/mcp"
@@ -78,15 +79,17 @@ var (
 )
 
 type appRuntime struct {
-	cfg          *config.Config
-	httpServer   *http.Server
-	workerServer *hibikenasynq.Server
-	workerMux    *hibikenasynq.ServeMux
-	asynqClient  *hibikenasynq.Client
-	redisClient  *redis.Client
-	gormDB       *gorm.DB
-	jobQueue     queueport.JobQueue
-	services     *runtimeServices
+	cfg            *config.Config
+	httpServer     *http.Server
+	workerServer   *hibikenasynq.Server
+	workerMux      *hibikenasynq.ServeMux
+	asynqClient    *hibikenasynq.Client
+	queueInspector *queueadapter.QueueInspector
+	otelProviders  *otelinfra.Providers
+	redisClient    *redis.Client
+	gormDB         *gorm.DB
+	jobQueue       queueport.JobQueue
+	services       *runtimeServices
 }
 
 type runtimeServices struct {
@@ -132,6 +135,7 @@ type runtimeServices struct {
 	documentAssets          *service.DocumentAssetService
 	jobs                    *service.JobService
 	documentIngest          *service.DocumentIngestService
+	documentRetry           *service.DocumentRetryService
 	faqDocuments            *service.FAQDocumentService
 	embeddingResolver       service.EmbeddingClientResolver
 	fileTree                *service.FileTreeService
@@ -156,6 +160,10 @@ type runtimeServices struct {
 	apiKeys                 *service.APIKeyService
 	mcpInlineLimit          int64
 	mcpHostProtection       bool
+	readiness               langhttp.ReadinessChecker
+	metricsPath             string
+	httpMetrics             *metricspkg.Metrics
+	queueAdmin              *service.QueueAdminService
 }
 
 type embeddingFactoryCatalog interface {
@@ -211,7 +219,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	log := logger.New(cfg.Log.Level)
+	log := newLogger(cfg)
 	log.Info("starting langhuan", slog.String("version", version.Version()))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -281,7 +289,12 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			return nil, fmt.Errorf("连接 Redis 失败: %w", err)
 		}
 		app.asynqClient = newAsynqClient(redisOpt)
-		app.jobQueue = queueadapter.NewQueue(app.asynqClient)
+		app.jobQueue = queueadapter.NewQueueWithDefaults(app.asynqClient, queueDefaults(cfg.Queue))
+		insp, err := queueadapter.NewQueueInspectorFromRedis(redisOpt)
+		if err != nil {
+			return nil, fmt.Errorf("创建 asynq Inspector 失败: %w", err)
+		}
+		app.queueInspector = insp
 	}
 
 	if needsWorkerServer(cfg) {
@@ -291,9 +304,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			DB:       cfg.Redis.DB,
 		}
 		app.workerMux = hibikenasynq.NewServeMux()
-		app.workerServer = hibikenasynq.NewServer(redisOpt, hibikenasynq.Config{
-			Queues: map[string]int{"default": 1},
-		})
+		app.workerServer = hibikenasynq.NewServer(redisOpt, asynqServerConfig(cfg.Queue, log))
 	}
 
 	embeddingRegistry, err := buildRuntimeEmbeddingRegistry()
@@ -313,6 +324,37 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 		return nil, err
 	}
 
+	// 可观测性：初始化 OTel providers（TracerProvider + MeterProvider + Prometheus/OTLP exporter）。
+	otelProviders, err := otelinfra.Setup(ctx, cfg.Observability, log)
+	if err != nil {
+		return nil, fmt.Errorf("初始化 OTel 失败: %w", err)
+	}
+	app.otelProviders = otelProviders
+	// 指标经 OTel Meter 产出，由 Prometheus exporter 暴露 /metrics，可选 OTLP 推送。
+	app.services.httpMetrics = metricspkg.New(otelProviders.MeterProvider)
+	app.services.readiness = newReadinessChecker(
+		gormPinger{ping: func(ctx context.Context) error {
+			sqlDB, err := gormDB.DB()
+			if err != nil {
+				return err
+			}
+			return sqlDB.PingContext(ctx)
+		}},
+		redisPingerImpl{ping: func(ctx context.Context) error {
+			return app.redisClient.Ping(ctx).Err()
+		}},
+		app.queueInspector,
+		cfg.Observability,
+	)
+	if cfg.Observability.Metrics.Enabled {
+		app.services.metricsPath = cfg.Observability.Metrics.Path
+	}
+	if app.queueInspector != nil {
+		app.services.queueAdmin = service.NewQueueAdminService(service.QueueAdminDeps{
+			Inspector: inspectorPortAdapter{inspector: app.queueInspector},
+		})
+	}
+
 	if cfg.Server.RunHTTP {
 		app.httpServer = &http.Server{Addr: cfg.Server.HTTPAddr, Handler: buildHTTPRouter(app.services)}
 	}
@@ -324,6 +366,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			Queue:          app.jobQueue,
 			Pipeline:       app.services.pipeline,
 			ParserRegistry: app.services.parserRegistry,
+			Recorder:       app.services.httpMetrics,
 			AssetStoreFactory: func(workspaceID, knowledgeBaseID, documentID, revisionID uuid.UUID) *pipeline.AssetResolver {
 				resolver := pipeline.NewAssetResolver(
 					app.services.assetStore, http.DefaultClient, cfg.Storage.Assets,
@@ -509,19 +552,22 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	embeddingResolver := service.NewEmbeddingClientResolver(modelRepo, credentialCipher, embeddingRegistry)
 	rerankResolver := service.NewRerankClientResolver(modelRepo, credentialCipher, rerankRegistry)
 	documentPipeline := pipeline.NewDocumentPipeline(pipeline.DocumentPipelineDeps{
-		Documents:         documentRepo,
-		Revisions:         documentRevisionRepo,
-		Generations:       indexGenerationRepo,
-		ChunkSets:         chunkSetRepo,
-		FAQRevisions:      faqRepo,
-		IndexSources:      chunkSetRepo,
-		EmbeddingResolver: embeddingResolver,
-		RetrievalIndex:    retrievalRepo,
-		Publisher:         documentPublisher,
-		Parser:            runtimeParser,
-		RawStore:          rawStore,
-		Assets:            db.NewDocumentAssetRepository(gormDB),
-		MaxFileSizeBytes:  cfg.Ingest.MaxFileSizeBytes,
+		Documents:            documentRepo,
+		Revisions:            documentRevisionRepo,
+		Generations:          indexGenerationRepo,
+		ChunkSets:            chunkSetRepo,
+		FAQRevisions:         faqRepo,
+		IndexSources:         chunkSetRepo,
+		EmbeddingResolver:    embeddingResolver,
+		RetrievalIndex:       retrievalRepo,
+		Publisher:            documentPublisher,
+		Parser:               runtimeParser,
+		RawStore:             rawStore,
+		Assets:               db.NewDocumentAssetRepository(gormDB),
+		MaxFileSizeBytes:     cfg.Ingest.MaxFileSizeBytes,
+		MaxChunksPerDocument: cfg.Ingest.MaxChunksPerDocument,
+		EmbeddingConcurrency: cfg.Embedding.MaxConcurrency,
+		EmbeddingBatchLimit:  cfg.Embedding.BatchSize,
 	})
 	chunkRevisions := service.NewChunkRevisionService(chunkRevisionStore, jobQueue)
 	chunkRevisionIndexer := service.NewChunkRevisionIndexService(
@@ -651,6 +697,11 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		documentAssets:          service.NewDocumentAssetService(db.NewDocumentAssetRepository(gormDB), documentRepo),
 		jobs:                    service.NewJobService(jobRepo),
 		documentIngest:          newDocumentIngestService(gormDB, rawStore, jobQueue, cfg),
+		documentRetry: service.NewDocumentRetryService(service.DocumentRetryServiceDeps{
+			Store:  db.NewDocumentRetryStore(gormDB),
+			Queue:  jobQueue,
+			Logger: log,
+		}),
 		faqDocuments: service.NewFAQDocumentService(service.FAQDocumentServiceDeps{
 			Store: faqRepo,
 			Queue: jobQueue,
@@ -826,6 +877,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		}),
 		DocumentDelete:            langmcp.NewMCPDocumentDeleteService(services.documents),
 		ChunkGet:                  langmcp.NewMCPChunkGetService(services.chunkRevisions),
+		DocumentRetry:             services.documentRetry,
 		MultiSearch:               services.multiSearch,
 		InlineLimit:               services.mcpInlineLimit,
 		EnableLocalhostProtection: services.mcpHostProtection,
@@ -859,6 +911,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		ModelConnectionTests:      services.modelConnectionTests,
 		DocumentIngest:            services.documentIngest,
 		Documents:                 services.documents,
+		DocumentRetry:             services.documentRetry,
 		DocumentAssets:            services.documentAssets,
 		AssetGetter:               services.documentAssets,
 		AssetContentStore:         services.assetStore,
@@ -874,6 +927,10 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		MCPHandler:                mcpServer.Handler(),
 		SPA:                       webspa.SPA,
 		MaxFileSizeBytes:          services.maxFileSize,
+		ReadyChecker:              services.readiness,
+		MetricsPath:               services.metricsPath,
+		HTTPMetrics:               services.httpMetrics,
+		QueueAdmin:                services.queueAdmin,
 	})
 }
 
@@ -935,6 +992,12 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 				_ = a.services.sourceCleanupScheduler.Run(ctx)
 			}()
 		}
+		// Retrieval 投影定时清理：周期性删除过期的 staging/failed/retired 投影，
+		// 避免 rebuildable 数据无限增长。ctx 取消即停（随 shutdown）。
+		if a.services != nil && a.services.retrievalCleanup != nil && a.cfg.Retrieval.CleanupIntervalSeconds > 0 {
+			interval := time.Duration(a.cfg.Retrieval.CleanupIntervalSeconds) * time.Second
+			go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, interval, log)
+		}
 		readyCh <- struct{}{}
 	}
 	if a.httpServer != nil {
@@ -980,6 +1043,14 @@ func (a *appRuntime) shutdown(ctx context.Context) error {
 	}
 	if a.asynqClient != nil {
 		capture(a.asynqClient.Close())
+	}
+	if a.queueInspector != nil {
+		capture(a.queueInspector.Close())
+	}
+	if a.otelProviders != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		capture(a.otelProviders.Shutdown(shutdownCtx))
 	}
 	if a.redisClient != nil {
 		capture(a.redisClient.Close())

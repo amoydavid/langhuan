@@ -52,6 +52,8 @@ export const documents = {
   detail: {
     eyebrow: 'Document details',
     viewJobButton: 'View processing job',
+    retryButton: 'Retry',
+    retryStartedToast: 'Parsing task resubmitted',
     failedTitle: 'Processing failed',
     fileInfoTitle: 'File information',
     fileTypeLabel: 'File type',

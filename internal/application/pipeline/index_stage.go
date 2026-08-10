@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	appservice "github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
@@ -32,11 +33,13 @@ type IndexStageDeps struct {
 
 // IndexStage builds one Generation's staging projection from active ChunkRevisions.
 type IndexStage struct {
-	generations IndexGenerationGetter
-	sources     indexport.SourceRepository
-	resolver    appservice.EmbeddingClientResolver
-	index       indexport.RetrievalIndex
-	publisher   appservice.DocumentPublishStore
+	generations          IndexGenerationGetter
+	sources              indexport.SourceRepository
+	resolver             appservice.EmbeddingClientResolver
+	index                indexport.RetrievalIndex
+	publisher            appservice.DocumentPublishStore
+	embeddingConcurrency int // 并发 embedding batch 数上限；<=1 时串行
+	embeddingBatchLimit  int // 单次 embedding batch 上限（与模型级 batch 取 min）；<=0 不限制
 }
 
 // NewIndexStage creates a revision-aware index stage.
@@ -46,6 +49,14 @@ func NewIndexStage(deps IndexStageDeps) IndexStage {
 		resolver: deps.Resolver, index: deps.Index,
 		publisher: deps.Publisher,
 	}
+}
+
+// WithEmbeddingLimits 设置 embedding 阶段的并发上限与单次 batch 上限。
+// concurrency<=1 表示串行；batchLimit<=0 表示不覆盖模型级 batch size。
+func (s IndexStage) WithEmbeddingLimits(concurrency, batchLimit int) IndexStage {
+	s.embeddingConcurrency = concurrency
+	s.embeddingBatchLimit = batchLimit
+	return s
 }
 
 // Run embeds only search content, stages FTS/vector entries, then publishes atomically.
@@ -112,7 +123,7 @@ func (s IndexStage) Run(
 		})
 		texts = append(texts, searchContent)
 	}
-	vectors, err := embedIndexTexts(ctx, resolved, texts)
+	vectors, err := embedIndexTexts(ctx, resolved, texts, s.embeddingConcurrency, s.embeddingBatchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -208,30 +219,91 @@ func generationFTSConfig(generation *model.IndexGeneration) (string, error) {
 	return config, nil
 }
 
+// embedIndexTexts 把文本分批 embedding，返回与 texts 顺序对齐的向量。
+// concurrency<=1 时串行；>1 时用 errgroup + semaphore 并发执行。
+// batchLimit>0 时与模型级 resolved.BatchSize 取 min，作为实际单批大小上限。
 func embedIndexTexts(
 	ctx context.Context,
 	resolved *appservice.ResolvedEmbeddingClient,
 	texts []string,
+	concurrency int,
+	batchLimit int,
 ) ([][]float32, error) {
 	if len(texts) == 0 {
 		return make([][]float32, 0), nil
 	}
-	vectors := make([][]float32, 0, len(texts))
-	for start := 0; start < len(texts); start += resolved.BatchSize {
-		end := min(start+resolved.BatchSize, len(texts))
-		result, err := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: texts[start:end]})
-		if err != nil {
-			return nil, err
+	batchSize := resolved.BatchSize
+	if batchLimit > 0 && (batchSize <= 0 || batchLimit < batchSize) {
+		batchSize = batchLimit
+	}
+	if batchSize <= 0 {
+		batchSize = len(texts)
+	}
+
+	// 切分批次。
+	type batch struct {
+		start int
+		texts []string
+	}
+	batches := make([]batch, 0, (len(texts)+batchSize-1)/batchSize)
+	for start := 0; start < len(texts); start += batchSize {
+		end := start + batchSize
+		if end > len(texts) {
+			end = len(texts)
 		}
-		if result == nil || len(result.Vectors) != end-start {
-			return nil, domainerrors.ErrInvalidEmbeddingResponse
+		batches = append(batches, batch{start: start, texts: texts[start:end]})
+	}
+
+	// results 按 batch 索引存放，保证最终顺序与输入一致。
+	results := make([][][]float32, len(batches))
+	embedOne := func(ctx context.Context, b batch) error {
+		result, err := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: b.texts})
+		if err != nil {
+			return err
+		}
+		if result == nil || len(result.Vectors) != len(b.texts) {
+			return domainerrors.ErrInvalidEmbeddingResponse
 		}
 		for _, vector := range result.Vectors {
 			if len(vector) != resolved.Dimensions || !finiteVector(vector) {
-				return nil, domainerrors.ErrDimensionMismatch
+				return domainerrors.ErrDimensionMismatch
 			}
-			vectors = append(vectors, vector)
 		}
+		results[b.start/batchSize] = result.Vectors
+		return nil
+	}
+
+	if concurrency <= 1 || len(batches) <= 1 {
+		for _, b := range batches {
+			if err := embedOne(ctx, b); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// errgroup + semaphore 限制并发。
+		group, groupCtx := errgroup.WithContext(ctx)
+		sem := make(chan struct{}, concurrency)
+		for _, b := range batches {
+			select {
+			case sem <- struct{}{}:
+			case <-groupCtx.Done():
+				group.Wait()
+				return nil, groupCtx.Err()
+			}
+			bb := b
+			group.Go(func() error {
+				defer func() { <-sem }()
+				return embedOne(groupCtx, bb)
+			})
+		}
+		if err := group.Wait(); err != nil {
+			return nil, err
+		}
+	}
+
+	vectors := make([][]float32, 0, len(texts))
+	for _, vec := range results {
+		vectors = append(vectors, vec...)
 	}
 	return vectors, nil
 }

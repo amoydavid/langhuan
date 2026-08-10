@@ -17,6 +17,13 @@ type JobRequest struct {
 	Queue   string
 	TaskID  string
 	Delay   Delay
+	// MaxRetry 覆盖队列全局默认的重试次数（不含首次执行）。
+	// 零值表示用适配器注入的全局默认。
+	MaxRetry int
+	// Timeout 覆盖队列全局默认的单任务超时。零值表示用全局默认。
+	Timeout time.Duration
+	// Retention 覆盖队列全局默认的任务保留时长。零值表示用全局默认。
+	Retention time.Duration
 }
 
 type JobHandle struct {

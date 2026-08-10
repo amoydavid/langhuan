@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // ClientConfig 描述 MinerU HTTP client 的连接参数。
@@ -28,6 +30,7 @@ type Client struct {
 }
 
 // NewClient 创建 MinerU HTTP client。
+// client 统一包裹 otelhttp transport，使 MinerU 出站调用产生 OTel span（noop tracer 时零开销）。
 func NewClient(cfg ClientConfig) *Client {
 	timeout := cfg.HTTPTimeout
 	if timeout == 0 {
@@ -37,7 +40,10 @@ func NewClient(cfg ClientConfig) *Client {
 		baseURL:      cfg.BaseURL,
 		token:        cfg.Token,
 		modelVersion: cfg.ModelVersion,
-		httpClient:   &http.Client{Timeout: timeout},
+		httpClient: &http.Client{
+			Timeout:   timeout,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		},
 	}
 }
 

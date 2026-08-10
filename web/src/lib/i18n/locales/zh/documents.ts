@@ -39,6 +39,8 @@ export const documents = {
   detail: {
     eyebrow: '文档详情',
     viewJobButton: '查看处理任务',
+    retryButton: '重试',
+    retryStartedToast: '已重新提交解析任务',
     failedTitle: '处理失败',
     fileInfoTitle: '文件信息',
     fileTypeLabel: '文件类型',

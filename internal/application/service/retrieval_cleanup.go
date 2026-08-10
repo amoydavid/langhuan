@@ -31,9 +31,18 @@ type RetrievalCleanupResult struct {
 	DeletedGenerations int64
 }
 
+// RetrievalCleanupGlobalRequest 是一次跨 workspace 的全局清理请求。
+type RetrievalCleanupGlobalRequest struct {
+	FailedStagingBefore time.Time
+	RetiredBefore       time.Time
+	BatchSize           int
+}
+
 // RetrievalCleanupStore physically removes expired rebuildable data.
 type RetrievalCleanupStore interface {
 	Cleanup(context.Context, RetrievalCleanupRequest) (RetrievalCleanupResult, error)
+	// CleanupGlobal 跨 workspace 批量清理过期投影，供定时调度使用。
+	CleanupGlobal(context.Context, RetrievalCleanupGlobalRequest) (RetrievalCleanupResult, error)
 }
 
 // RetrievalCleanupService applies configured retention windows to one Workspace.
@@ -74,4 +83,21 @@ func (s *RetrievalCleanupService) Cleanup(
 		return RetrievalCleanupResult{}, fmt.Errorf("清理 Retrieval 投影失败: %w", err)
 	}
 	return result, nil
+}
+
+// CleanupGlobal 跨 workspace 批量清理过期投影，供定时调度使用。
+func (s *RetrievalCleanupService) CleanupGlobal(ctx context.Context) (RetrievalCleanupResult, error) {
+	if s == nil || s.store == nil {
+		return RetrievalCleanupResult{}, fmt.Errorf("%w: Retrieval cleanup store 不能为空", domainerrors.ErrValidation)
+	}
+	if s.options.FailedStagingRetention <= 0 || s.options.RetiredGenerationRetention <= 0 ||
+		s.options.BatchSize < 1 || s.options.BatchSize > 10000 {
+		return RetrievalCleanupResult{}, fmt.Errorf("%w: Retrieval cleanup 配置无效", domainerrors.ErrValidation)
+	}
+	now := s.now().UTC()
+	return s.store.CleanupGlobal(ctx, RetrievalCleanupGlobalRequest{
+		FailedStagingBefore: now.Add(-s.options.FailedStagingRetention),
+		RetiredBefore:       now.Add(-s.options.RetiredGenerationRetention),
+		BatchSize:           s.options.BatchSize,
+	})
 }

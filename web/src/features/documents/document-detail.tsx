@@ -1,12 +1,16 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
-import { Braces, FileText, HardDrive, Workflow } from 'lucide-react'
+import { Braces, FileText, HardDrive, RotateCw, Workflow } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { meQueryOptions } from '@/features/auth/queries'
+import { canManageIndex } from '@/features/knowledge-bases/permissions'
 import { formatDateTime } from '@/lib/i18n/datetime'
+import { retryDocument } from './api'
 import { DocumentStatusBadge } from './document-list'
 import { documentPollInterval, useDocumentVisibility } from './polling'
 import { documentQueryOptions } from './queries'
@@ -40,6 +44,21 @@ export function DocumentDetail({ jobId }: { jobId?: string }) {
   const queryClient = useQueryClient()
   const pollState = useRef<PollState>({ updatedAt: 0, stableCount: 0 })
   const wasVisible = useRef(visible)
+  const retryMutation = useMutation({
+    mutationFn: () => retryDocument(workspaceSlug, documentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['document', workspaceSlug, documentId],
+      })
+      await queryClient.invalidateQueries({
+        queryKey: ['documents', workspaceSlug],
+      })
+      toast.success(t('documents.detail.retryStartedToast'))
+    },
+  })
+  const { data: me } = useQuery(meQueryOptions())
+  const role = me?.workspaces.find((item) => item.slug === workspaceSlug)?.role
+  const canManage = canManageIndex(role)
   const options = documentQueryOptions(workspaceSlug, documentId)
   const { data: item } = useQuery({
     ...options,
@@ -94,6 +113,16 @@ export function DocumentDetail({ jobId }: { jobId?: string }) {
               <Workflow />
               {t('documents.detail.viewJobButton')}
             </Link>
+          </Button>
+        )}
+        {item.status === 'failed' && canManage && (
+          <Button
+            variant='outline'
+            onClick={() => void retryMutation.mutateAsync()}
+            disabled={retryMutation.isPending}
+          >
+            <RotateCw />
+            {t('documents.detail.retryButton')}
           </Button>
         )}
       </div>

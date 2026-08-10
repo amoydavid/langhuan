@@ -20,11 +20,19 @@ import (
 
 // ChunkStage materializes one deterministic standard ChunkSet.
 type ChunkStage struct {
-	revisions   DocumentRevisionRepository
-	documents   RevisionDocumentGetter
-	generations IndexGenerationGetter
-	chunkSets   ChunkSetRepository
-	chunker     Chunker
+	revisions            DocumentRevisionRepository
+	documents            RevisionDocumentGetter
+	generations          IndexGenerationGetter
+	chunkSets            ChunkSetRepository
+	chunker              Chunker
+	maxChunksPerDocument int // >0 时启用单文档 chunk 数量上限校验
+}
+
+// WithMaxChunksPerDocument 设置单文档 chunk 数量上限；超过时分块阶段返回 terminal 错误。
+// 0 或负值表示不限制。返回 stage 自身便于链式构造。
+func (s ChunkStage) WithMaxChunksPerDocument(n int) ChunkStage {
+	s.maxChunksPerDocument = n
+	return s
 }
 
 // legacyStandardChunkerVersion is the last flat-only standard chunking contract.
@@ -113,6 +121,11 @@ func (s ChunkStage) Run(ctx context.Context, workspaceID, revisionID, generation
 	}, config)
 	if err != nil {
 		return uuid.Nil, err
+	}
+	// 单文档 chunk 数量上限：超限直接 terminal 失败，避免超大文档拖垮 embedding/index。
+	if s.maxChunksPerDocument > 0 && len(chunks) > s.maxChunksPerDocument {
+		return uuid.Nil, fmt.Errorf("%w: 文档分块数 %d 超过上限 %d",
+			domainerrors.ErrValidation, len(chunks), s.maxChunksPerDocument)
 	}
 	completed, err := s.chunkSets.Complete(ctx, workspaceID, chunkSet.ID, chunks, revisions)
 	if err != nil {

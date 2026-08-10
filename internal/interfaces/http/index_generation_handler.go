@@ -12,11 +12,12 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-// IndexGenerationHTTPService is the Generation list/create/activate contract.
+// IndexGenerationHTTPService is the Generation list/create/activate/reindex contract.
 type IndexGenerationHTTPService interface {
 	List(context.Context, uuid.UUID, uuid.UUID) ([]*dto.IndexGeneration, error)
 	Create(context.Context, service.CreateIndexGenerationInput) (*dto.IndexGeneration, error)
 	Activate(context.Context, service.ActivateIndexGenerationInput) (*dto.IndexGeneration, error)
+	Reindex(context.Context, uuid.UUID, uuid.UUID, value.WorkspaceRole) (*service.ReindexResult, error)
 }
 
 type indexGenerationHandler struct{ service IndexGenerationHTTPService }
@@ -131,6 +132,25 @@ func (h indexGenerationHandler) activate(c *gin.Context) {
 		return
 	}
 	c.JSON(stdhttp.StatusOK, result)
+}
+
+// reindex 用当前 active Generation 的相同配置创建一个新 building Generation 并入队构建。
+// 不就地重跑 active，保证检索始终可用、可回退；用户后续显式 activate。
+func (h indexGenerationHandler) reindex(c *gin.Context) {
+	authCtx, knowledgeBaseID, ok := generationRouteContext(c)
+	if !ok {
+		return
+	}
+	if !authCtx.Role.AtLeast(value.RoleAdmin) {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	result, err := h.service.Reindex(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID, authCtx.Role)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusAccepted, result)
 }
 
 func generationRouteContext(c *gin.Context) (value.AuthContext, uuid.UUID, bool) {

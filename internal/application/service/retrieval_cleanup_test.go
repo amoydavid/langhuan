@@ -91,3 +91,7 @@ func (s *fakeRetrievalCleanupStore) Cleanup(_ context.Context, request Retrieval
 	s.request = request
 	return s.result, s.err
 }
+
+func (s *fakeRetrievalCleanupStore) CleanupGlobal(_ context.Context, _ RetrievalCleanupGlobalRequest) (RetrievalCleanupResult, error) {
+	return s.result, s.err
+}

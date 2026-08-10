@@ -171,10 +171,13 @@ export const routes = {
         breadcrumb: 'Indexes',
         buildStartedToast: 'Index version build started',
         activatedToast: 'Index version activated',
+        reindexStartedToast:
+          'Index rebuild started — activate it manually after the build completes',
         title: 'Index Versions',
         description:
           'While a new version builds, retrieval keeps using the currently active version.',
         buildButton: 'Build New Index Version',
+        reindexButton: 'Rebuild Index',
         candidateTitle: 'Build Candidate Index Version',
       },
       settings: {
