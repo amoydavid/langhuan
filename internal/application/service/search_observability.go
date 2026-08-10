@@ -76,38 +76,10 @@ func (s *SearchService) logTerminal(ctx context.Context, stats *searchRunStats, 
 }
 
 // errorClassOf 把领域错误映射为稳定、脱敏的 error class。
+// 与 SearchRun 记录器复用同一 classifier，保证协议和日志一致。
+// 日志记录发生在检索结束后，阶段不可恢复时按 retrieval 兜底分类。
 func errorClassOf(err error) string {
-	if err == nil {
-		return ""
-	}
-	switch {
-	case errors.Is(err, domainerrors.ErrRerankConfigurationConflict):
-		return "rerank_configuration_conflict"
-	case errors.Is(err, domainerrors.ErrRerankSnapshotMismatch):
-		return "rerank_snapshot_mismatch"
-	case errors.Is(err, domainerrors.ErrEmbeddingSnapshotMismatch):
-		return "embedding_snapshot_mismatch"
-	case errors.Is(err, domainerrors.ErrRerankUnavailable):
-		return "rerank_unavailable"
-	case errors.Is(err, domainerrors.ErrRerankRateLimited):
-		return "rerank_rate_limited"
-	case errors.Is(err, domainerrors.ErrInvalidRerankResponse):
-		return "invalid_rerank_response"
-	case errors.Is(err, domainerrors.ErrRerankInputTooLarge):
-		return "rerank_input_too_large"
-	case errors.Is(err, domainerrors.ErrValidation):
-		return "validation_error"
-	case errors.Is(err, domainerrors.ErrGenerationNotReady):
-		return "generation_not_ready"
-	case errors.Is(err, domainerrors.ErrGenerationStale):
-		return "generation_stale"
-	case errors.Is(err, domainerrors.ErrForbidden), errors.Is(err, domainerrors.ErrUnauthorized):
-		return "forbidden"
-	case errors.Is(err, domainerrors.ErrNotFound):
-		return "not_found"
-	default:
-		return "internal_error"
-	}
+	return classifySearchFailure(err, searchFailurePhaseRetrieval)
 }
 
 // isInternalError 判断是否为不可恢复的内部错误（应记 Error）。
