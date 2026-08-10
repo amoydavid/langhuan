@@ -66,4 +66,10 @@ var (
 	// ErrNotRetryable 表示目标资源当前不在可重试状态（如 revision 非 failed）。
 	// 用于失败重试入口，统一映射为 409。
 	ErrNotRetryable = stderrors.New("当前状态不可重试")
+
+	// ErrSearchQueryMismatch 表示回放提交的 query 与原 SearchRun 记录的 query_hash 不一致。
+	ErrSearchQueryMismatch = stderrors.New("回放 query 与原始检索不一致")
+
+	// ErrGenerationNotAvailable 表示回放所需的 Generation 或其 published projection 已被清理。
+	ErrGenerationNotAvailable = stderrors.New("索引代次或其投影已不可用")
 )

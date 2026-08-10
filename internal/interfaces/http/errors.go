@@ -171,6 +171,8 @@ func modelErrorDetails(err error) (int, string, string, bool) {
 		{domainerrors.ErrWorkspaceLimitReached, stdhttp.StatusConflict, "workspace_limit_reached"},
 		{domainerrors.ErrIdempotencyConflict, stdhttp.StatusConflict, "idempotency_conflict"},
 		{domainerrors.ErrNotRetryable, stdhttp.StatusConflict, "not_retryable"},
+		{domainerrors.ErrSearchQueryMismatch, stdhttp.StatusConflict, "search_query_mismatch"},
+		{domainerrors.ErrGenerationNotAvailable, stdhttp.StatusConflict, "generation_not_available"},
 	}
 	for _, mapping := range mappings {
 		if errors.Is(err, mapping.err) {
