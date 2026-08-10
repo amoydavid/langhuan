@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dajee/langhuan/internal/application/dto"
+	"github.com/dajee/langhuan/internal/application/requestmeta"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -33,20 +34,24 @@ type SearchInput struct {
 
 // SearchServiceDeps contains hybrid-search persistence and embedding dependencies.
 type SearchServiceDeps struct {
-	Repository     indexport.SearchRepository
-	Resolver       EmbeddingClientResolver
-	RerankResolver RerankClientResolver
-	SearchProfile  SearchProfileResolver
-	Logger         *slog.Logger
+	Repository        indexport.SearchRepository
+	Resolver          EmbeddingClientResolver
+	RerankResolver    RerankClientResolver
+	SearchProfile     SearchProfileResolver
+	SearchRuns        SearchRunStore
+	SearchRunRetention time.Duration
+	Logger            *slog.Logger
 }
 
 // SearchService executes active-Generation vector/FTS retrieval and RRF fusion.
 type SearchService struct {
-	repository     indexport.SearchRepository
-	resolver       EmbeddingClientResolver
-	rerankResolver RerankClientResolver
-	searchProfile  SearchProfileResolver
-	logger         *slog.Logger
+	repository         indexport.SearchRepository
+	resolver           EmbeddingClientResolver
+	rerankResolver     RerankClientResolver
+	searchProfile      SearchProfileResolver
+	searchRuns         SearchRunStore
+	searchRunRetention time.Duration
+	logger             *slog.Logger
 }
 
 // NewSearchService creates the hybrid-search use case.
@@ -55,11 +60,25 @@ func NewSearchService(deps SearchServiceDeps) *SearchService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SearchService{repository: deps.Repository, resolver: deps.Resolver, rerankResolver: deps.RerankResolver, searchProfile: deps.SearchProfile, logger: logger}
+	retention := deps.SearchRunRetention
+	if retention <= 0 {
+		retention = defaultSearchRunRetention
+	}
+	return &SearchService{
+		repository: deps.Repository, resolver: deps.Resolver,
+		rerankResolver: deps.RerankResolver, searchProfile: deps.SearchProfile,
+		searchRuns: deps.SearchRuns, searchRunRetention: retention, logger: logger,
+	}
 }
 
+const defaultSearchRunRetention = 168 * time.Hour
+
+// DefaultSearchRunRetention 是 SearchRun 默认保留期（168 小时）。
+const DefaultSearchRunRetention = defaultSearchRunRetention
+
 // Search returns evidence from the active Generation without generating an answer.
-func (s *SearchService) Search(ctx context.Context, input SearchInput) (results []*dto.SearchResult, err error) {
+// 返回 *dto.SearchResponse；SearchRun 创建后发生的错误返回非空 response + error。
+func (s *SearchService) Search(ctx context.Context, input SearchInput) (response *dto.SearchResponse, err error) {
 	query := strings.TrimSpace(input.Query)
 	if input.WorkspaceID == uuid.Nil || input.KnowledgeBaseID == uuid.Nil || query == "" {
 		return nil, fmt.Errorf("%w: Search Workspace/KnowledgeBase/query 无效", domainerrors.ErrValidation)
@@ -68,6 +87,36 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		return nil, fmt.Errorf("%w: Search dependencies 不能为空", domainerrors.ErrValidation)
 	}
 	stats := &searchRunStats{startedAt: time.Now(), queryChars: len([]rune(query))}
+	queryHash := searchQueryHash(query)
+	// 基础输入校验通过后创建 SearchRun recorder。
+	meta := requestmeta.From(ctx)
+	recorder := newSearchRunRecorder(
+		s.searchRuns, s.logger, time.Now, s.searchRunRetention,
+		input.WorkspaceID, queryHash, stats.queryChars,
+		0, 0, 0, // topK 在读取 Generation 后补全
+		value.SearchScopeSelected, meta.Transport, meta.RequestID, meta.PrincipalKind,
+		nil,
+	)
+	var failurePhase searchFailurePhase = searchFailurePhaseRetrieval
+	var runGeneration *model.IndexGeneration
+	var runOptions searchOptions
+	var runRankingStage value.RankingStage
+	var runResultCount int
+	var runGenerationSnapshot model.SearchRunGeneration
+	defer func() {
+		stats.err = err
+		if err != nil {
+			failureClass := classifySearchFailure(err, failurePhase)
+			stage := runRankingStage
+			if !stage.IsValid() {
+				stage = value.RankingStageRRF
+			}
+			recorder.Finish(ctx, value.RetrievalStatusFailed, failureClass, stage, runResultCount, nil)
+			summary := recorder.buildSummary(value.RetrievalStatusFailed, failureClass, stage, 0, nil, nil, value.SearchScopeSelected)
+			summary.CompletedAt = ptrTime(time.Now())
+			response = &dto.SearchResponse{Run: summary, Results: nil}
+		}
+	}()
 	// RAG retrieval 根 span：gen_ai.operation.name=retrieval。traces 未启用时为 noop span。
 	tracer := otel.Tracer("langhuan.rag")
 	ctx, span := tracer.Start(ctx, "retrieval",
@@ -84,9 +133,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		// 注意：不把 query 原文写入 span（attribute 或 event）——OTel event 与 attribute
 		// 一样随 OTLP 完整导出，无法单独采样/脱敏。与日志层 allowlist（不记录 query）
 		// 保持一致，只记录 query_chars 元信息。
+		resultCount := len(resultsOf(response))
 		span.SetAttributes(
-			attribute.Bool("rag.retrieval.empty_result", len(results) == 0),
-			attribute.Int("result_count", len(results)),
+			attribute.Bool("rag.retrieval.empty_result", resultCount == 0 && err == nil),
+			attribute.Int("result_count", resultCount),
 			attribute.Int("vector_candidate_count", stats.vectorCandidateCount),
 			attribute.Int("keyword_candidate_count", stats.keywordCandidateCount),
 			attribute.Int("fused_candidate_count", stats.fusedCandidateCount),
@@ -102,12 +152,22 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 	}()
 	generation, err := s.activeGeneration(ctx, input.WorkspaceID, input.KnowledgeBaseID)
 	if err != nil {
+		failurePhase = searchFailurePhaseRetrieval
 		return nil, err
 	}
+	runGeneration = generation
 	options, err := searchOptionsFromGeneration(generation, input)
 	if err != nil {
+		failurePhase = searchFailurePhaseValidation
 		return nil, err
 	}
+	runOptions = options
+	// 补全 recorder 的 topK 字段用于摘要。
+	recorder.vectorTopK = options.vectorTopK
+	recorder.keywordTopK = options.keywordTopK
+	recorder.finalTopK = options.finalTopK
+	runGenerationSnapshot = recorder.generationSnapshot(generation)
+	failurePhase = searchFailurePhaseEmbedding
 	resolved, err := s.resolver.Resolve(ctx, input.WorkspaceID, generation.EmbeddingModelID)
 	if err != nil {
 		return nil, err
@@ -134,8 +194,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		stats.rerankModelID = rerankSnapshot.ModelID
 		stats.rerankProviderID = rerankSnapshot.ProviderID
 		if s.rerankResolver == nil {
+			failurePhase = searchFailurePhaseRerank
 			return nil, fmt.Errorf("%w: Rerank resolver 不能为空", domainerrors.ErrValidation)
 		}
+		failurePhase = searchFailurePhaseRerank
 		rerankClient, err = s.rerankResolver.Resolve(ctx, input.WorkspaceID, rerankSnapshot.ModelID)
 		if err != nil {
 			return nil, err
@@ -147,6 +209,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 			return nil, domainerrors.ErrRerankSnapshotMismatch
 		}
 	}
+	failurePhase = searchFailurePhaseEmbedding
 	// query embedding 子 span：gen_ai.operation.name=embeddings。
 	_, embedSpan := tracer.Start(ctx, "embeddings",
 		trace.WithSpanKind(trace.SpanKindClient),
@@ -174,7 +237,8 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		Dimension:  generation.EmbeddingDimension,
 		VectorTopK: options.vectorTopK, KeywordTopK: options.keywordTopK,
 	}
-	results = nil
+	var results []*dto.SearchResult
+	failurePhase = searchFailurePhaseRetrieval
 	err = s.repository.WithinWorkspace(ctx, input.WorkspaceID, func(txCtx context.Context, reader indexport.SearchReader) error {
 		current, err := reader.GetActiveGeneration(txCtx, input.KnowledgeBaseID)
 		if err != nil {
@@ -254,6 +318,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 			rankables := buildRankablesWithContent(results, groupedSearchContent)
 			candidateTopK := rerankSnapshot.CandidateTopK
 			rerankStarted := time.Now()
+			failurePhase = searchFailurePhaseRerank
 			ranked, stage, rerankErr := applyRerank(txCtx, rerankClient, query, rankables, candidateTopK, rerankClient.MaxDocumentChars)
 			rerankMS := time.Since(rerankStarted).Milliseconds()
 			rerankCandidateCount := len(rankables)
@@ -301,8 +366,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 		for _, result := range results {
 			result.RankingStage = rankingStage
 		}
+		runRankingStage = rankingStage
 		stats.rankingStage = string(rankingStage)
 		stats.resultCount = len(results)
+		runResultCount = len(results)
 		if len(results) > options.finalTopK {
 			results = results[:options.finalTopK]
 		}
@@ -311,7 +378,32 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (results 
 	if err != nil {
 		return nil, err
 	}
-	return results, nil
+	runResultCount = len(results)
+	// 状态映射：empty/degraded/available。
+	status := value.RetrievalStatusAvailable
+	if len(results) == 0 {
+		status = value.RetrievalStatusEmpty
+	} else if runRankingStage == value.RankingStageRRFFallback {
+		status = value.RetrievalStatusDegraded
+	}
+	gens := []model.SearchRunGeneration{runGenerationSnapshot}
+	recorder.Finish(ctx, status, "", runRankingStage, runResultCount, gens)
+	summary := recorder.buildSummary(status, "", runRankingStage, runResultCount, []uuid.UUID{input.KnowledgeBaseID}, gens, value.SearchScopeSelected)
+	summary.CompletedAt = ptrTime(time.Now())
+	_ = runOptions
+	_ = runGeneration
+	return &dto.SearchResponse{Run: summary, Results: results}, nil
+}
+
+func resultsOf(response *dto.SearchResponse) []*dto.SearchResult {
+	if response == nil {
+		return nil
+	}
+	return response.Results
+}
+
+func ptrTime(t time.Time) *time.Time {
+	return &t
 }
 
 func (s *SearchService) activeGeneration(

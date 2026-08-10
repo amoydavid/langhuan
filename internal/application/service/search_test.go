@@ -142,8 +142,9 @@ func TestSearchUsesActiveGenerationDefaultsAndReturnsFusedEvidence(t *testing.T)
 	if len(embedder.inputs) != 1 || len(embedder.inputs[0].Texts) != 1 || embedder.inputs[0].Texts[0] != "如何退款" {
 		t.Fatalf("embedding inputs = %#v", embedder.inputs)
 	}
-	if len(got) != 3 || got[0].ChunkRevisionID != repository.evidence[b].ChunkRevisionID ||
-		got[0].Content != "answer" || got[0].DocumentName != "退款 FAQ" || got[0].DocumentKind != value.DocumentKindFAQ {
+	results := got.Results
+	if len(results) != 3 || results[0].ChunkRevisionID != repository.evidence[b].ChunkRevisionID ||
+		results[0].Content != "answer" || results[0].DocumentName != "退款 FAQ" || results[0].DocumentKind != value.DocumentKindFAQ {
 		t.Fatalf("results = %#v", got)
 	}
 }
@@ -162,8 +163,9 @@ func TestSearchGroupsChildrenUnderReturnedParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ChunkID != parentID || got[0].Content != "完整父块" || len(got[0].MatchedChildren) != 2 {
-		t.Fatalf("results=%#v", got)
+	results := got.Results
+	if len(results) != 1 || results[0].ChunkID != parentID || results[0].Content != "完整父块" || len(results[0].MatchedChildren) != 2 {
+		t.Fatalf("results=%#v", results)
 	}
 }
 
