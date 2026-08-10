@@ -342,13 +342,18 @@ type knowledgeSearchInput struct {
 }
 
 type knowledgeSearchOutput struct {
+	SearchID                 string              `json:"search_id"`
+	RequestedScope           string              `json:"requested_scope"`
+	EffectiveScope           string              `json:"effective_scope"`
+	RetrievalStatus          string              `json:"retrieval_status"`
+	GenerationIDs            []string            `json:"generation_ids"`
 	SearchedKnowledgeBaseIDs []string            `json:"searched_knowledge_base_ids"`
 	Results                  []*dto.SearchResult `json:"results"`
 }
 
 func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("knowledge_search",
-		mcp.WithDescription("知识库检索工具。当需要基于用户的问题从知识库中查找相关资料、回答事实性问题时调用：返回最相关的文档片段（含内容、来源、相关性评分）。同时使用向量语义匹配和关键词匹配，可能根据当前索引配置对结果执行重排（ranking_stage 标识实际排序阶段，fallback 时仍返回 RRF 顺序结果）。knowledge_base_ids 留空则检索当前 API Key 绑定的全部知识库。"),
+		mcp.WithDescription("知识库检索工具。当需要基于用户的问题从知识库中查找相关资料、回答事实性问题时调用：返回最相关的文档片段（含内容、来源、相关性评分）。同时使用向量语义匹配和关键词匹配，可能根据当前索引配置对结果执行重排（ranking_stage 标识实际排序阶段，fallback 时仍返回 RRF 顺序结果）。knowledge_base_ids 留空只代表当前 API Key 绑定的全部知识库，不代表 Workspace 全量知识库。"),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		withRawInputSchema[knowledgeSearchInput](),
@@ -370,32 +375,69 @@ func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 			}
 			kbIDs = append(kbIDs, id)
 		}
-		// 未指定 knowledge_base_ids 时，默认检索当前 API Key 绑定的全部知识库。
+		// 未指定 knowledge_base_ids 时，默认检索当前 API Key 绑定的全部知识库（api_key_bound_all）。
 		// MCP 入口仅接受 API Key 主体，其 KnowledgeBaseIDs 即绑定的知识库集合。
+		requestedScope := value.SearchScopeSelected
 		if len(kbIDs) == 0 {
 			if len(auth.KnowledgeBaseIDs) == 0 {
 				return toErrorResult(fmt.Errorf("%w: 未指定 knowledge_base_ids 且当前 API Key 未绑定任何知识库", domainerrors.ErrValidation)), nil
 			}
 			kbIDs = append(kbIDs, auth.KnowledgeBaseIDs...)
+			requestedScope = value.SearchScopeAPIKeyBoundAll
 		}
 		response, err := deps.MultiSearch.Search(ctx, service.MultiKnowledgeSearchInput{
 			WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
 			KnowledgeBaseIDs: kbIDs, Query: in.Query,
 			VectorTopK: in.VectorTopK, KeywordTopK: in.KeywordTopK, FinalTopK: in.FinalTopK,
+			RequestedScope: requestedScope,
 		})
 		if err != nil {
-			return toErrorResult(err), nil
+			return toSearchErrorResult(err, response), nil
 		}
 		searched := make([]string, 0, len(kbIDs))
 		for _, id := range kbIDs {
 			searched = append(searched, id.String())
 		}
 		results := []*dto.SearchResult{}
+		out := knowledgeSearchOutput{SearchedKnowledgeBaseIDs: searched}
 		if response != nil {
 			results = response.Results
+			out.SearchID = response.Run.SearchID.String()
+			out.RequestedScope = string(response.Run.RequestedScope)
+			out.EffectiveScope = string(response.Run.EffectiveScope)
+			out.RetrievalStatus = string(response.Run.RetrievalStatus)
+			genIDs := make([]string, 0, len(response.Run.GenerationSnapshots))
+			for _, snap := range response.Run.GenerationSnapshots {
+				genIDs = append(genIDs, snap.GenerationID.String())
+			}
+			out.GenerationIDs = genIDs
 		}
-		return jsonResult(knowledgeSearchOutput{SearchedKnowledgeBaseIDs: searched, Results: results}), nil
+		out.Results = results
+		return jsonResult(out), nil
 	}))
+}
+
+// toSearchErrorResult 在 SearchRun 创建后发生错误时，把 search_id 和 failure_class
+// 放入 isError=true 的稳定错误对象；response 为空（创建前失败）时退化为 toErrorResult。
+func toSearchErrorResult(err error, response *dto.SearchResponse) *mcp.CallToolResult {
+	if response == nil {
+		return toErrorResult(err)
+	}
+	mcpErr := mapDomainError(err)
+	extra := map[string]any{
+		"search_id": response.Run.SearchID.String(),
+	}
+	if response.Run.FailureClass != "" {
+		extra["failure_class"] = response.Run.FailureClass
+	}
+	mcpErr.Error.Details = extra
+	data, marshalErr := json.Marshal(mcpErr)
+	if marshalErr != nil {
+		return toErrorResult(err)
+	}
+	result := mcp.NewToolResultText(string(data))
+	result.IsError = true
+	return result
 }
 
 // ===== document_delete =====

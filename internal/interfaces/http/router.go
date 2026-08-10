@@ -58,6 +58,7 @@ type Dependencies struct {
 	IndexGenerations          IndexGenerationHTTPService
 	Search                    SearchHTTPService
 	MultiSearch               MultiSearchHTTPService
+	SearchReplay             SearchReplayHTTPService
 	Jobs                      JobQueryService
 	SourceConnections         SourceConnectionService
 	MCPHandler                stdhttp.Handler
@@ -433,7 +434,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			chunk.GET("/chunks/:chunk_id", chunks.get)
 		}
 		if deps.Search != nil {
-			search := searchHandler{service: deps.Search, multiSearchSvc: deps.MultiSearch}
+			search := searchHandler{service: deps.Search, multiSearchSvc: deps.MultiSearch, replaySvc: deps.SearchReplay}
 			searchGroup := progGroup.Group("/knowledge-bases/:id",
 				RequireScopeForAPIKey(value.ScopeSearchRead), RequireKnowledgeBaseForAPIKey("id"))
 			searchGroup.POST("/search", search.search)
@@ -502,6 +503,14 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				adminGroup.POST("/knowledge-bases/:id/index-generations/:generation_id/activate", generations.activate)
 				adminGroup.POST("/knowledge-bases/:id/reindex", generations.reindex)
 			}
+		}
+
+		// 检索回放：POST /workspaces/:workspace_slug/search-runs/:search_id/replay
+		// 仅 Session owner/admin 可调用；Bearer API Key 在 handler 返回 403。
+		if deps.SearchReplay != nil {
+			replayGroup := wsGroup.Group("", RequireWorkspaceRole(value.RoleAdmin))
+			replayHandler := searchHandler{replaySvc: deps.SearchReplay}
+			replayGroup.POST("/search-runs/:search_id/replay", replayHandler.replayHandler)
 		}
 
 		// admin+ routes.

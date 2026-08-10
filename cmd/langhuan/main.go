@@ -151,6 +151,7 @@ type runtimeServices struct {
 	sourceConnections       *service.SourceConnectionService
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
+	searchReplay            *service.SearchReplayService
 	retrievalCleanup        *service.RetrievalCleanupService
 	searchRunCleanup        *service.SearchRunCleanupService
 	pipeline                *pipeline.DocumentPipeline
@@ -604,6 +605,11 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		retrievalRepo, embeddingResolver, rerankResolver, workspaceSearchSettings,
 		apiKeyNameStore, cfg.Search, log, searchRunRepo, searchRunRetention,
 	)
+	searchReplay := service.NewSearchReplayService(service.SearchReplayDeps{
+		Runs: searchRunRepo, Repository: retrievalRepo, Resolver: embeddingResolver,
+		RerankResolver: rerankResolver, SearchProfile: workspaceSearchSettings,
+		SearchRunRetention: searchRunRetention,
+	})
 	retrievalCleanup := service.NewRetrievalCleanupService(retrievalCleanupRepo, service.RetrievalCleanupOptions{
 		FailedStagingRetention:     cfg.Retrieval.FailedStagingRetention,
 		RetiredGenerationRetention: cfg.Retrieval.RetiredGenerationRetention,
@@ -738,6 +744,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		sourceConnections:      sourceConnectionService,
 		search:                 search,
 		multiSearch:            multiSearch,
+		searchReplay:           searchReplay,
 		retrievalCleanup:       retrievalCleanup,
 		searchRunCleanup:       searchRunCleanup,
 		pipeline:               documentPipeline,
@@ -941,6 +948,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		IndexGenerations:          services.indexGenerations,
 		Search:                    services.search,
 		MultiSearch:               services.multiSearch,
+		SearchReplay:              services.searchReplay,
 		Jobs:                      services.jobs,
 		SourceConnections:         services.sourceConnections,
 		MCPHandler:                mcpServer.Handler(),

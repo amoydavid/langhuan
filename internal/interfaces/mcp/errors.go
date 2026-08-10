@@ -14,9 +14,10 @@ type mcpError struct {
 }
 
 type mcpErrorBody struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	Code      string         `json:"code"`
+	Message   string         `json:"message"`
+	Retryable bool           `json:"retryable"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 // mapDomainError 把领域错误映射为稳定 MCP 错误。未识别错误统一 internal_error，
