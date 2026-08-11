@@ -32,7 +32,7 @@
 - 在 SQLite 中复刻 pgvector HNSW 的近似索引性能。
 - SQLite RLS、事务 GUC、advisory lock 或 PostgreSQL 扩展兼容层。
 - 在 PostgreSQL 和 SQLite 数据文件之间自动转换或在线迁移数据。
-- 持久化内存队列；standalone 进程退出时尚未执行的队列项允许丢失，数据库 Job 状态与现有 scheduler 负责可恢复任务的补偿派发。
+- 持久化内存队列；standalone 进程退出时尚未执行的队列项允许丢失，仅由已有 source cleanup/force latch 补偿路径和用户触发的 retry/reindex 恢复可重建任务。
 - 改变领域模型、HTTP/MCP 业务合同或引入新的检索 port。
 
 ## 2. 已确认的产品合同
@@ -43,11 +43,11 @@
 
 1. **显式 `-config <path>`**：严格读取指定 YAML。文件不存在、不可读、解析失败或校验失败时立即退出。
 2. **未显式传 `-config` 且当前目录存在 `config.yaml`**：继续读取该文件，兼容现有部署。
-3. **未显式传 `-config` 且当前目录不存在 `config.yaml`**：使用内建 standalone profile。
+3. **未显式传 `-config` 且 `config.yaml` 明确不存在**：使用内建 standalone profile。
 
 程序必须区分 flag 的默认值和用户是否显式传参，不能把“默认字符串为 `config.yaml`”当成显式选择。可通过 `FlagSet.Visit` 或返回结构化 `ConfigSelection{Path, Explicit}` 实现。
 
-显式配置错误绝不回退 standalone；否则拼错生产配置路径可能静默启动一个新的空 SQLite 实例。
+显式配置错误绝不回退 standalone；默认 `config.yaml` 的 `Stat` 若返回权限、I/O 或其它非 `IsNotExist` 错误也必须失败。否则拼错生产配置路径或暂时不可读的生产配置可能静默启动一个新的空 SQLite 实例。
 
 ### 2.2 Standalone profile
 
@@ -77,12 +77,13 @@ auth.oidc.enabled       = false
 
 - 数据根目录与 raw document 目录以 `0700` 创建。
 - `credential.key` 以 `0600` 创建。
-- 新 SQLite 文件创建后收紧为 `0600`；已有文件权限过宽时记录警告并尝试收紧，失败则拒绝启动。
+- 新 SQLite 文件在 driver 打开前以 `O_CREATE|O_EXCL`、`0600` 预创建；已有文件权限过宽时尝试收紧，失败则拒绝启动，避免数据库曾以宽权限短暂存在。
+- Unix 平台严格执行并校验权限；Windows 没有等价 POSIX mode，只执行可用的用户目录隔离并在文档中说明边界。
 - 日志可显示数据目录和数据库路径，但仍通过现有脱敏规则禁止输出 DSN query、密钥或文档内容。
 
 ### 2.4 自动凭证主密钥
 
-standalone 首次启动生成 32 个加密随机字节并以 Base64 文本写入 `credential.key`。写入流程必须使用 `O_CREATE|O_EXCL` 和 `0600`，处理并发首次启动时的 `EEXIST`：生成失败的一方读取胜出进程创建的文件，不覆盖。
+standalone 首次启动生成 32 个加密随机字节并以 Base64 文本写入 `credential.key`。写入流程必须使用 `O_CREATE|O_EXCL` 和 `0600`，写完后 `fsync` 并关闭。并发首次启动时，创建失败的一方遇到 `EEXIST` 后做有界重读，直到胜出进程写完有效内容；不会覆盖对方文件。若创建者崩溃留下空文件，后续启动按损坏密钥 fail-fast，不能擅自轮换。
 
 后续启动只读取并严格校验已有密钥。文件为空、Base64 非法、解码长度不是 32 字节、权限无法收紧或读取失败时立即退出；绝不能自动生成新密钥覆盖，否则数据库内 Provider、飞书连接和 Workspace API Key 密文将永久不可恢复。
 
@@ -92,16 +93,18 @@ standalone 首次启动生成 32 个加密随机字节并以 Base64 文本写入
 
 | 能力 | 选型 | 约束 |
 |---|---|---|
-| GORM SQLite | `github.com/glebarez/sqlite` v1.11.0 | 纯 Go；启用 `TranslateError` |
-| SQLite SQL driver | `modernc.org/sqlite` v1.56.0 | 根模块显式锁定版本，覆盖 glebarez 的旧间接版本 |
+| GORM SQLite Dialector | 项目内 `internal/infrastructure/db/sqlitedialect` | 只实现项目使用的 GORM Dialector/错误翻译，底层只打开 modernc driver |
+| SQLite SQL driver | `modernc.org/sqlite` v1.56.0 | 业务连接、迁移和 vec 共用唯一 driver/lib |
 | Vector functions | `_ "modernc.org/sqlite/vec"` | 内嵌 sqlite-vec v0.1.9，自动注册到新连接 |
 | SQLite migration | `github.com/golang-migrate/migrate/v4/database/sqlite` v4.19.1 | 禁止 import cgo 的 `database/sqlite3` |
-| 中文分词 | `github.com/go-ego/gse` | 使用内嵌词典，查询与写入共用同一 tokenizer |
-| 全文索引 | SQLite FTS5 + BM25 | token 由应用层 gse 生成 |
+| 中文分词 | `github.com/go-ego/gse` v1.0.2 | 使用内嵌词典，查询与写入共用同一 tokenizer |
+| 全文索引 | SQLite FTS5 + BM25 | token 由注入的 gse adapter 生成 |
 | 队列 | 进程内有界优先队列 + worker pool | 实现现有 `queue.JobQueue`，重用现有 worker handler |
 | 登录限流/OIDC state | mutex 保护的内存实现 | 单进程 TTL 语义 |
 
-依赖升级必须先做最小兼容验证：glebarez/sqlite v1.11.0 的 `go.mod` 仍声明 modernc.org/sqlite v1.23.1，而 sqlite/vec 来自 v1.56.0；根模块提升后必须验证 GORM CRUD、约束翻译、时间扫描、迁移、FTS5 和 vec 函数，而不能只以编译通过作为兼容证据。
+评审已排除 `github.com/glebarez/sqlite`：它会经 `github.com/glebarez/go-sqlite` 注册名为 `sqlite` 的 `database/sql` driver，而 golang-migrate 的纯 Go `database/sqlite` 又 blank-import `modernc.org/sqlite` 并注册同名 driver；同一进程同时导入会在 init 阶段重复注册。项目内 Dialector 参考其 MIT/GORM SQLite clause 行为，但直接使用唯一的 `modernc.org/sqlite` driver。若借鉴第三方实现，必须保留其版权与许可证声明。
+
+项目内 Dialector 的边界固定为实现 GORM `Dialector` 所需的 `Name`、`Initialize`、`Migrator`、`DataTypeOf`、`DefaultValueOf`、`BindVarTo`、`QuoteTo`、`Explain`，注册 SQLite 所需的 INSERT/LIMIT/FOR clause builder，并实现 `SavePoint`、`RollbackTo` 与 `ErrorTranslator`。错误翻译只处理 `*modernc.org/sqlite.Error` 的稳定 extended code：`2067`/`1555` 映射 `gorm.ErrDuplicatedKey`，`787` 映射 `gorm.ErrForeignKeyViolated`，其它错误原样返回。实现前必须先以 compatibility test 验证 GORM CRUD、约束翻译、时间扫描、事务 savepoint、迁移、FTS5 和 vec 函数，不能只以编译通过作为证据。
 
 ## 4. 数据库边界与方言设计
 
@@ -151,6 +154,7 @@ _pragma=busy_timeout(5000)
 _pragma=synchronous(NORMAL)
 _txlock=immediate
 _time_format=sqlite
+_timezone=UTC
 ```
 
 连接建立后执行并断言 `PRAGMA foreign_keys=1`、`journal_mode=wal` 和 `busy_timeout>=5000`。SQLite 连接池固定 `SetMaxOpenConns(1)`、`SetMaxIdleConns(1)`，使所有写事务串行并避免连接级 PRAGMA 漂移。该取舍符合单机体验定位；并行读性能不是本版本目标。
@@ -189,7 +193,7 @@ SQLite 当前是全新安装能力，因此迁移从 PostgreSQL 000023 的最终
 | PostgreSQL | SQLite |
 |---|---|
 | `uuid` | `TEXT`，UUID 仍由 Go 生成 |
-| `timestamptz` | 统一 RFC3339 UTC `TEXT` |
+| `timestamptz` | SQLite datetime UTC `TEXT`，driver 统一扫描为 `time.Time` |
 | `jsonb` | canonical JSON `TEXT` + 必要的 `json_valid/json_type` CHECK |
 | `bytea` | `BLOB` |
 | `text[]` | canonical JSON array `TEXT` |
@@ -197,7 +201,7 @@ SQLite 当前是全新安装能力，因此迁移从 PostgreSQL 000023 的最终
 | `tsvector` | 独立 FTS5 表 |
 | `inet` | `TEXT` |
 
-所有 ID、时间和 JSON codec 必须有双方言 round-trip 测试。不得依赖 `gorm:"type:jsonb"` 在 SQLite 的偶然 affinity 行为作为 schema 合同；迁移 SQL 是真实 schema 来源，Row tag 只负责扫描/写入。
+所有 ID、时间和 JSON codec 必须有双方言 round-trip 测试。SQLite DSN 的 `_time_format=sqlite&_timezone=UTC` 负责普通时间列写入和读取；JSON 内时间仍显式规范化为 UTC RFC3339Nano。不得依赖 `gorm:"type:jsonb"` 在 SQLite 的偶然 affinity 行为作为 schema 合同；迁移 SQL是真实 schema 来源，Row tag 只负责扫描/写入。
 
 ### 5.2 约束与 lineage
 
@@ -226,10 +230,10 @@ JSON 局部更新按方言分发：
 
 实施前对 `internal/infrastructure/db` 全量扫描，建立受测清单。当前已确认至少包括：
 
-- JSON：`knowledge_base_repository.go`、`source_sync_store.go`、`document_retry_store.go`、`document_chunks_repository.go`。
+- JSON：`knowledge_base_repository.go`、`source_sync_store.go`（含 `jsonb_set`、`LATERAL`、`set_config` 与 force latch/result 更新）、`document_retry_store.go`、`document_chunks_repository.go`。
 - 数组：`document_publish_store.go`、`index_generation_build_store.go`、`workspace_api_key_rows.go`。
 - 聚合/CTE：`knowledge_base_summary_repository.go`、`model_provider_repository.go`、`index_generation_store.go`、`index_generation_stats.go`、`workspace_readiness_repository.go`。
-- PostgreSQL 时间/错误：`session_repository.go`、`repository_errors.go`、`retrieval_errors.go`。
+- PostgreSQL 时间/错误：`session_repository.go`、`invitation_repository.go`、`repository_errors.go`、`retrieval_errors.go`。
 - 锁与租户上下文：`workspace_tx.go`、`workspace_repository.go`、`oidc_auth_tx_runner.go`、`retrieval_cleanup_repository.go`。
 - 检索：`retrieval_repository.go`、`retrieval_search_repository.go`、`retrieval_rows.go`。
 
@@ -296,17 +300,17 @@ PG 路径保留四条固定 `halfvec(N) <=> halfvec(N)` SQL 和 HNSW 索引表�
 
 ### 8.1 Tokenizer
 
-新增 application 使用方端口：
+Tokenizer 只被 SQLite retrieval infrastructure 消费，因此接口定义在使用方 `internal/infrastructure/db`，不把 SQLite 实现细节抬升到 application：
 
 ```go
-type Tokenizer interface {
-    Tokenize(text string) (string, error)
+type SearchTokenizer interface {
+    Tokens(text string) []string
 }
 ```
 
-SQLite 装配 gse adapter，启动时一次加载内嵌词典；PG 不构造该依赖，继续使用 generation 快照中的 `fts_config` 与 zhparser/simple。
+SQLite 由 `cmd/langhuan` 注入 gse adapter，构造时调用 `gse.NewEmbed()` 一次加载内嵌词典；PG 不构造该依赖，继续使用 generation 快照中的 `fts_config` 与 zhparser/simple。segmenter 完成构造后只读使用，并用 `go test -race` 验证并发切词路径。
 
-Tokenize 输出经过规范化、去空 token、空格连接的字符串。写入和查询必须使用同一实现和版本；切换分词规则视为索引配置变化，需要重建 Generation。
+索引文本把规范化、去空 token 以单空格连接。MATCH 查询不能直接拼接原始 query：每个 token 必须双引号包裹、内部 `"` 转义为 `""`，再以 ` AND ` 连接，模拟 PostgreSQL `plainto_tsquery` 的 plain-text AND 语义并阻止 FTS5 操作符注入。无 token 时直接返回空候选。写入和查询使用同一 tokenizer/version；切换分词规则视为索引配置变化，需要重建 Generation。
 
 ### 8.2 FTS5 投影
 
@@ -315,9 +319,6 @@ Tokenize 输出经过规范化、去空 token、空格连接的字符串。写�
 ```sql
 CREATE VIRTUAL TABLE retrieval_fts USING fts5(
     entry_id UNINDEXED,
-    workspace_id UNINDEXED,
-    knowledge_base_id UNINDEXED,
-    index_generation_id UNINDEXED,
     search_content_tokenized,
     tokenize = 'unicode61 remove_diacritics 2'
 );
@@ -357,7 +358,7 @@ PG advisory lock 保留。SQLite 的 workspace 数量上限与 OIDC bootstrap �
 
 ### 10.1 配置
 
-`RedisConfig` 增加 `Enabled bool`。YAML 加载兼容规则：旧配置未写 `enabled` 时视为 `true`；standalone profile 明确为 `false`。`enabled=true` 时继续严格要求 addr 并装配 Redis/asynq；`enabled=false` 时不创建或 ping Redis client。
+`RedisConfig` 增加 `Enabled bool`。YAML 加载兼容规则：在 `yaml.Unmarshal` 前构造 `Enabled: true` 的完整 YAML 默认配置，旧配置未写 `enabled` 时因而保持 `true`；standalone profile 在另一条显式构造路径中设置为 `false`。不使用 `*bool` 把三态复杂度扩散到装配层。`enabled=true` 时继续严格要求 addr 并装配 Redis/asynq；`enabled=false` 时不创建或 ping Redis client。
 
 ### 10.2 内存队列
 
@@ -365,28 +366,30 @@ PG advisory lock 保留。SQLite 的 workspace 数量上限与 OIDC bootstrap �
 
 - `queue.JobQueue.Enqueue`
 - worker handler 注册与调度
-- 最小 Queue Inspector 统计
+- 完整 Queue Inspector 管理能力
 - 生命周期启动、取消与排空
 
 不重写现有 handler payload。现有 handler 已统一接收 `*asynq.Task`，因此抽出最小注册接口，例如：
 
 ```go
 type TaskRegistrar interface {
-    HandleFunc(pattern string, handler asynq.HandlerFunc)
+    HandleFunc(pattern string, handler func(context.Context, *asynq.Task) error)
 }
 ```
 
-`*asynq.ServeMux` 和内存 runtime 都实现该接口。内存 runtime 仍构造 `asynq.NewTask(type,payload)` 调用 handler，从而复用解码、`SkipRetry` 和业务幂等逻辑。Asynq 的 retry metadata context key 是内部实现，不能由 memory adapter 伪造；因此新增 worker-owned `TaskExecutionMetadata` context helper，现有 handler 通过 helper 读取 retry count/max retry，helper 在真实 asynq context 下回退到 `asynq.GetRetryCount/GetMaxRetry`，在 memory context 下读取 adapter 注入的值。任务协议和 payload 不变。
+接口参数必须保留未命名函数类型；若写成 `asynq.HandlerFunc`，其方法签名与 `*asynq.ServeMux.HandleFunc` 不完全一致，mux 不能实现接口。内存 runtime 仍构造 `asynq.NewTask(type,payload)` 调用 handler，从而复用解码、`SkipRetry` 和业务幂等逻辑。Asynq 的 retry metadata context key 是内部实现，不能由 memory adapter 伪造；因此新增 worker-owned `TaskExecutionMetadata` context helper，现有 handler 通过 helper 读取 retry count/max retry，helper 在真实 asynq context 下回退到 `asynq.GetRetryCount/GetMaxRetry`，在 memory context 下读取 adapter 注入的值。任务协议和 payload 不变。
 
-队列必须是有界的，容量由具名默认值或配置派生，不能无限增长。行为合同：
+`QueueConfig` 新增 `capacity`，默认 1024，必须大于等于 `concurrency`。容量限制 pending/scheduled/retry/active 的非终态任务总数；completed/dead 只保留轻量 metadata，不占 active capacity，但受 retention 清理。行为合同：
 
-- `TaskID` 对 pending/running task 去重；成功或终态失败后释放。
+- `TaskID` 在 pending/scheduled/retry/active 以及 terminal metadata retention 期间保持占用，与 asynq 的显式 TaskID 语义一致；terminal metadata 被清理或管理员删除后释放。
 - 支持 Delay、MaxRetry、Timeout、Retention。
 - 延迟项使用单 scheduler/heap，不为每个任务启动一个 goroutine。
 - worker 数由 `queue.concurrency` 控制。
 - `errors.Is(err, asynq.SkipRetry)` 立即终止；其它错误按现有指数退避重试。
 - context 取消后停止接收，取消 delay scheduler，等待运行中任务到 shutdown deadline。
 - completed/failed/pending 计数通过 application 的 Queue Inspector port 暴露；不把 memory 类型泄漏到 service。
+
+内存 inspector 必须完整实现现有 `service.QueueInspectorPort`：`Snapshots` 返回 pending/active/scheduled/retry/dead/processed/failed 统计，`ListDead` 分页返回脱敏 dead metadata，`RetryDead` 把指定 dead task 重新放入可执行队列，`DeleteDead` 删除 metadata 并释放其 `TaskID`。不能只为 readiness 实现计数而让现有队列管理 API 在 standalone 下退化。
 
 ### 10.3 内存限流和 OIDC state
 
@@ -409,7 +412,7 @@ config selection
   -> start schedulers/worker/http
 ```
 
-迁移应在业务连接和服务启动前完成，避免 SQLite migration connection 与业务连接竞争。若现有测试依赖“先 open 后 migrate”，同步调整测试 helper，不在生产路径保留不必要顺序。启动时增加一次受限的 pending/running Job recovery pass：把可恢复的数据库任务重新投递到当前队列；memory queue 重启丢失的普通 document task 不得永久停在 running。
+迁移应在业务连接和服务启动前完成，避免 SQLite migration connection 与业务连接竞争。若现有测试依赖“先 open 后 migrate”，同步调整测试 helper，不在生产路径保留不必要顺序。内存队列不承诺跨进程持久化；本次只保留现有 source cleanup/force latch 等已有补偿扫描和用户可见的 retry/reindex 恢复入口，不额外发明无法从现有 Job payload 安全重建的通用 startup requeue。进程崩溃时普通内存任务可能需要用户重试，这一边界必须写入 README。
 
 Readiness 使用端口而非 concrete `*asynq.QueueInspector`：
 
@@ -519,12 +522,13 @@ git diff --check
 
 | 风险 | 缓解 |
 |---|---|
-| glebarez 与 modernc 新版本组合不兼容 | 先做最小 driver/vec/FTS/migrate compatibility test，锁定全部版本 |
+| 两个纯 Go SQLite 包重复注册 `sqlite` driver | 不引入 glebarez/go-sqlite；项目内 GORM Dialector 与 migrate 统一使用 modernc v1.56.0 |
 | SQLite migration 漏掉 PG 最终约束 | schema 清单 + 关键约束负向集成测试，不只比较表名 |
 | 去掉 GUC 后查询漏 workspace | 两 Workspace 干扰数据测试覆盖 CRUD、检索、cleanup 与 sync |
 | 向量先 KNN 后过滤导致召回不足 | 本设计改为 scope 过滤后 `vec_distance_cosine` 精确排序 |
 | FTS 双写漂移 | 同事务显式写/删，重建一致性测试与孤儿检查 |
-| 内存队列重启丢任务 | 明确 standalone 边界；复用 DB Job 幂等与 scheduler 补偿，不声称持久队列 |
+| 用户 query 被解释为 FTS5 语法 | tokenizer 输出逐 token 安全引用并以 AND 组合；特殊符号与空 token 测试 |
+| 内存队列重启丢任务 | 明确 standalone 边界；只复用现有可证明安全的补偿与用户重试入口，不声称持久队列或通用自动重建 |
 | 自动密钥丢失 | 0600 sidecar、损坏 fail-fast、README/备份文档强提示，绝不自动覆盖 |
 | 默认 Secure Cookie 导致 localhost 登录失败 | standalone profile 显式 false；生产 YAML 保持 true |
 | 现有 YAML 被静默切到 SQLite | 当前目录存在默认配置即读取；显式配置失败不回退 |
