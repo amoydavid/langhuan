@@ -420,7 +420,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - 远程资源下载通过 DNS/IP/redirect 全链路 SSRF 防护，异常资源受大小、数量和超时限制。
 - 解析失败保存可诊断错误，重复 poll/index 不产生重复 Revision、Chunk 或 Asset。
 
-### v0.8.0 - 可靠性与运维能力
+### v0.8.0 - 可靠性与运维能力（已完成）
 
 目标：让服务具备长期内部运行和进入 v1.0.0 发布验收所需的可观测、可恢复和资源保护能力。
 
@@ -440,7 +440,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - 失败文档可安全重试，重复请求和 worker 重启不破坏 active Generation。
 - 在空数据库与空对象存储上可重复完成安装、备份、恢复和单二进制 smoke。
 
-### v0.9.0 - 检索证据血缘与可回放检索
+### v0.9.0 - 检索证据血缘与可回放检索（已完成）
 
 目标：为每次检索建立稳定 SearchRun 身份、完整 Evidence lineage、可验证 CitationRef，并提供不向公开 API 暴露 Generation ID 的 Workspace 管理员回放入口。
 

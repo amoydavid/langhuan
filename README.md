@@ -2,6 +2,8 @@
 
 # 琅嬛 Langhuan
 
+**简体中文** | [English](README.en.md)
+
 **把知识库变成可被 MCP 调用的检索服务 —— 单二进制、中文友好的 RAG 知识处理层**
 
 *Turn your knowledge base into an MCP-callable retrieval service — a single-binary, Chinese-friendly knowledge processing layer for RAG.*
@@ -10,6 +12,9 @@
 [![Go](https://img.shields.io/badge/Go-1.26-blue.svg)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17%2B-4169E1.svg)](https://www.postgresql.org/)
 [![MCP](https://img.shields.io/badge/MCP-over%20HTTP-000000.svg)](https://modelcontextprotocol.io/)
+[![Website](https://img.shields.io/badge/website-langhuan.dev-FF6B35.svg)](https://langhuan.dev)
+
+🌐 **官网 Website**: [https://langhuan.dev](https://langhuan.dev)
 
 </div>
 
@@ -17,11 +22,11 @@
 
 ## 这是什么？ What is Langhuan?
 
-琅嬛是一个**知识转化与检索服务**，位于 RAG 工程中的知识处理层。它把 `markdown / txt / csv / xlsx / docx` 等文档转成可检索、可向量化、可追溯的结构，并通过 **REST** 与 **MCP over HTTP** 对外提供导入、检索与删除能力。
+琅嬛是一个**知识转化与检索服务**，位于 RAG 工程中的知识处理层。它把 `pdf / docx / markdown / txt / csv / xlsx` 等文档转成可检索、可向量化、可追溯的结构，并通过 **REST** 与 **MCP over HTTP** 对外提供导入、检索与删除能力。PDF 解析基于 [MinerU Cloud](https://mineru.net)，开箱即用。
 
 **琅嬛不做的事**：不生成 LLM 答案、不编排 Chat/Agent。它专注于把「文档 → 检索服务」这一段做到生产级——这让它可以作为任何 LLM 应用、MCP 客户端或 Agent 的知识底座，而不是又一个大而全的平台。
 
-> Langhuan is a **knowledge processing layer** for RAG. It turns documents into retrievable, vectorizable, traceable structures and serves them over REST and **MCP over HTTP**. It does **not** generate LLM answers or orchestrate chat — it is the knowledge foundation your LLM app, MCP client, or agent calls into.
+> Langhuan is a **knowledge processing layer** for RAG. It turns documents (`pdf / docx / markdown / txt / csv / xlsx`) into retrievable, vectorizable, traceable structures and serves them over REST and **MCP over HTTP**. PDF parsing is powered by MinerU Cloud. It does **not** generate LLM answers or orchestrate chat — it is the knowledge foundation your LLM app, MCP client, or agent calls into.
 
 ## 特性 Highlights
 
@@ -31,8 +36,8 @@
   *First-class MCP over HTTP — expose your knowledge base as MCP tools out of the box.*
 - **📦 单二进制全栈** — REST + MCP + worker + Web Console 内嵌于一个二进制（`go:embed`），无 Node 运行时、无微服务。
   *Single binary: REST + MCP + async worker + embedded Web Console. Zero runtime dependencies.*
-- **🧭 全程可追溯** — 每个 chunk 都能回到源文档、版本与页码/行列/偏移锚点；导入、分块、索引全链路幂等。
-  *Every chunk traces back to source document, revision and anchor (page/row/offset). Idempotent async pipeline.*
+- **🧭 全程可追溯** — 每个 chunk 都能回到源文档、版本与页码/行列/偏移锚点；导入、分块、索引全链路幂等。每次检索生成稳定 `search_id` 与可校验 citation，管理员可在保留期内按原 query 回放。
+  *Every chunk traces back to source document, revision and anchor (page/row/offset). Idempotent async pipeline. Each retrieval yields a stable `search_id` with verifiable citations, replayable by admins within the retention window.*
 - **🏢 多租户** — Workspace 即租户边界，成员角色 + Workspace API Key 细粒度鉴权。
   *Workspace-scoped isolation with role-based access and scoped API keys.*
 
@@ -58,7 +63,7 @@ File / Web / FAQ 导入
 docker compose up -d --build
 ```
 
-打开 **http://localhost:8080**，完成首次初始化（创建管理员账号）→ 创建工作区 → 创建知识库 → 导入文档 → 在检索页验证中英文混合检索。
+打开 **[http://localhost:8080](http://localhost:8080)** ，完成首次初始化（创建管理员账号）→ 创建工作区 → 创建知识库 → 导入文档 → 在检索页验证中英文混合检索。
 
 > Requires only Docker. One command brings up the full stack: `docker compose up -d --build`, then open http://localhost:8080.
 
@@ -81,12 +86,17 @@ docker compose up -d --build
 
 ## 路线图 Roadmap
 
-- **v0.7.0**：MinerU Cloud PDF 解析
-- 见 [ROADMAP.md](ROADMAP.md) 完整规划
+v0.7.0 ~ v0.9.0 已全部完成：PDF 解析（MinerU Cloud）、可靠性与可观测性（重试 / reindex / OTel）、检索证据血缘与可回放检索。
+
+下一里程碑：**v1.0.0 首次对外发布** —— 冻结 REST / MCP / 认证 / 错误码兼容基线，完善安装、运维与安全文档。详见 [ROADMAP.md](ROADMAP.md)。
 
 ## 贡献 Contributing
 
 欢迎 Issue 与 PR。开发指南见 [AGENTS.md](AGENTS.md)（面向贡献者与 AI Agent）。提交请遵循 Conventional Commits，主题与内容以中文为主。
+
+## 作者 Author
+
+**Liu Wei** · [https://liuw.net](https://liuw.net), 你也可以叫我 **amoydavid**
 
 ## License
 
