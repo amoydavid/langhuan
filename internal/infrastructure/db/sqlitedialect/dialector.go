@@ -15,6 +15,8 @@ package sqlitedialect
 
 import (
 	"database/sql"
+	"fmt"
+	"regexp"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/callbacks"
@@ -24,6 +26,10 @@ import (
 	"gorm.io/gorm/schema"
 	_ "modernc.org/sqlite" // 注册 database/sql driver "sqlite"
 )
+
+// savePointNamePattern 限定 savepoint 名称字符集（GORM 生成 "sp"+数字，合法）。
+// name 直接拼入 SAVEPOINT SQL，必须白名单校验以防注入。
+var savePointNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // Dialector 是基于 modernc.org/sqlite 的 GORM SQLite 方言。
 type Dialector struct {
@@ -110,11 +116,18 @@ func (d Dialector) Explain(sql string, vars ...any) string {
 }
 
 // SavePoint 在事务内创建保存点。SQLite 原生支持 SAVEPOINT 语法。
+// name 直接拼入 SQL，必须匹配白名单（GORM 生成 "sp"+数字），非法 name 返回 error。
 func (d Dialector) SavePoint(tx *gorm.DB, name string) error {
+	if !savePointNamePattern.MatchString(name) {
+		return fmt.Errorf("非法 savepoint 名称: %q", name)
+	}
 	return tx.Exec("SAVEPOINT " + name).Error
 }
 
-// RollbackTo 回滚到命名保存点。
+// RollbackTo 回滚到命名保存点。name 同样需通过白名单校验。
 func (d Dialector) RollbackTo(tx *gorm.DB, name string) error {
+	if !savePointNamePattern.MatchString(name) {
+		return fmt.Errorf("非法 savepoint 名称: %q", name)
+	}
 	return tx.Exec("ROLLBACK TO SAVEPOINT " + name).Error
 }
