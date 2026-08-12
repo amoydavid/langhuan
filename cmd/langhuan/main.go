@@ -90,6 +90,7 @@ type appRuntime struct {
 	otelProviders  *otelinfra.Providers
 	redisClient    *redis.Client
 	gormDB         *gorm.DB
+	dialect        db.Dialect
 	jobQueue       queueport.JobQueue
 	services       *runtimeServices
 }
@@ -302,20 +303,18 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 		return app, nil
 	}
 
-	gormDB, err := openDatabase(cfg.Database.DSN)
+	// spec §11：迁移先于业务连接，避免 SQLite migration connection 与业务连接竞争。
+	if shouldRunMigrations(cfg) {
+		if err := migrate.Run(ctx, cfg.Database); err != nil {
+			return nil, err
+		}
+	}
+	gormDB, dialect, err := openDatabase(cfg.Database)
 	if err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
 	app.gormDB = gormDB
-	if shouldRunMigrations(cfg) {
-		if err := migrate.Run(ctx, cfg.Database.DSN); err != nil {
-			return nil, err
-		}
-		// Task 8: 不再调用 EnsureDefaultWorkspace——多租户认证启用后由首位
-		// platform admin 通过 /api/v1/auth/register + /api/v1/workspaces 显式建立
-		// 自有租户；这里只保留 migrate.Run（为旧库回填 workspace.slug）。
-		// EnsureDefaultWorkspace helper 仍保留，仅供旧库迁移兼容测试使用。
-	}
+	app.dialect = dialect
 
 	if needsQueueClient(cfg) {
 		redisOpt := hibikenasynq.RedisClientOpt{

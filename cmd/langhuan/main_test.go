@@ -23,6 +23,7 @@ import (
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/db"
 )
 
 func TestPrintStartupBanner(t *testing.T) {
@@ -594,8 +595,8 @@ func stubRuntimeFactories(t *testing.T) func() {
 	previousNewRedisClient := newRedisClient
 	previousPingRedis := pingRedis
 
-	openDatabase = func(string) (*gorm.DB, error) {
-		return nil, nil
+	openDatabase = func(config.DatabaseConfig) (*gorm.DB, db.Dialect, error) {
+		return nil, "", nil
 	}
 	newRedisClient = func(*redis.Options) *redis.Client {
 		return redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
