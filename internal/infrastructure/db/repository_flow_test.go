@@ -21,7 +21,7 @@ import (
 func TestV021AuthFlow(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := testsupport.NewMigratedPostgres(t)
-	gormDB, err := Open(databaseURL)
+	gormDB, _, err := Open(config.DatabaseConfig{Driver: "postgres", DSN: databaseURL})
 	if err != nil {
 		t.Fatal(err)
 	}
