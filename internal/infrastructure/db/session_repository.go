@@ -35,8 +35,12 @@ func (r *SessionRepository) Create(ctx context.Context, session *model.Session) 
 // 不向调用方区分“不存在/已过期/已撤销”以避免信息泄漏。
 func (r *SessionRepository) FindActive(ctx context.Context, id uuid.UUID) (*model.Session, error) {
 	var row SessionRow
+	expiresCmp := "expires_at > now()"
+	if r.db.Dialector.Name() == "sqlite" {
+		expiresCmp = "expires_at > datetime('now')"
+	}
 	if err := r.db.WithContext(ctx).
-		Where("id = ? AND revoked_at IS NULL AND expires_at > now()", id).
+		Where("id = ? AND revoked_at IS NULL AND "+expiresCmp, id).
 		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRepositoryNotFound

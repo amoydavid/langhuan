@@ -62,8 +62,12 @@ func (r *InvitationRepository) FindByID(ctx context.Context, id uuid.UUID) (*mod
 // 其余情形一律返回 ErrNotFound，不向调用方区分状态以避免信息泄漏。
 func (r *InvitationRepository) FindPendingByTokenHash(ctx context.Context, tokenHash string) (*model.Invitation, error) {
 	var row InvitationRow
+	expiresCmp := "expires_at > now()"
+	if r.db.Dialector.Name() == "sqlite" {
+		expiresCmp = "expires_at > datetime('now')"
+	}
 	if err := r.db.WithContext(ctx).
-		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()", tokenHash).
+		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND "+expiresCmp, tokenHash).
 		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRepositoryNotFound

@@ -202,13 +202,22 @@ func (r *ModelProviderRepository) CountModelsByProvider(ctx context.Context, pro
 		Rerank     int64
 	}
 	var rows []countRow
-	err := r.db.WithContext(ctx).
-		Model(&ModelRow{}).
-		Select(`provider_id,
+	// SQLite 不支持 COUNT(*) FILTER，改用 SUM(CASE WHEN ...)。占位符 ? 顺序与参数一致。
+	modelCountSelect := `provider_id,
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE status = ?) AS active,
 			COUNT(*) FILTER (WHERE type = ?) AS embedding,
-			COUNT(*) FILTER (WHERE type = ?) AS rerank`,
+			COUNT(*) FILTER (WHERE type = ?) AS rerank`
+	if r.db.Dialector.Name() == "sqlite" {
+		modelCountSelect = `provider_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS active,
+			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) AS embedding,
+			SUM(CASE WHEN type = ? THEN 1 ELSE 0 END) AS rerank`
+	}
+	err := r.db.WithContext(ctx).
+		Model(&ModelRow{}).
+		Select(modelCountSelect,
 			value.ModelStatusActive, value.ModelTypeEmbedding, value.ModelTypeRerank).
 		Where("provider_id IN ?", providerIDs).
 		Group("provider_id").
