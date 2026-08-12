@@ -13,11 +13,19 @@ database:
   driver: postgres
   dsn: "postgres://localhost:5432/langhuan?sslmode=disable"
   auto_migrate: true
+  # SQLite 单机模式（零配置，无需 PostgreSQL）：
+  #   driver: sqlite
+  #   dsn: "file:langhuan.db?cache=shared"
+  # 首次无 config 启动时，langhuan 会自动在 ~/.langhuan-data/ 生成
+  # standalone profile（config.yaml + credential.key），无需手写本文件。
 
 redis:
   addr: "127.0.0.1:6379"
   password: ""
   db: 0
+  # enabled 默认 true（向后兼容）。SQLite 单机模式可禁用 Redis，
+  # 队列/限流/OIDC state 改用进程内内存实现（零外部依赖）：
+  #   enabled: false
 
 log:
   level: info
