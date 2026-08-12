@@ -170,7 +170,7 @@ func TestRuntimeServicesWireModelConfigurationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, rerankRegistry, nil, nil)
+	deps, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, rerankRegistry, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestRuntimeServicesWireFAQDocumentDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestRuntimeServicesWireChunkRevisionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestRuntimeServicesWireIndexGenerationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +305,7 @@ func TestBuildRuntimeServicesRejectsInvalidCredentialKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil); err == nil {
+	if _, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected invalid credential key error")
 	}
 }
@@ -321,7 +321,7 @@ func TestBuildAppHTTPOnlyWiresRuntimeServicesWithQueueClient(t *testing.T) {
 			DSN:         "postgres://stubbed/langhuan?sslmode=disable",
 			AutoMigrate: false,
 		},
-		Redis: config.RedisConfig{Addr: "127.0.0.1:6379"},
+		Redis: config.RedisConfig{Enabled: true, Addr: "127.0.0.1:6379"},
 		Storage: config.StorageConfig{
 			RawDocumentDir: t.TempDir(),
 		},
@@ -553,7 +553,7 @@ func buildTestRuntimeServices(t *testing.T, cfg *config.Config) *runtimeServices
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

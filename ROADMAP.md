@@ -10,8 +10,9 @@
 - YAML 配置文件：运行配置从 `config.yaml` 加载，不使用环境变量作为主配置入口
 - Gin: REST 与 MCP HTTP 入口
 - GORM: PostgreSQL 数据访问
-- PostgreSQL + pgvector: 主存储、向量索引、全文索引
+- PostgreSQL + pgvector: 生产主存储、向量索引、全文索引
 - asynq + Redis: 异步文档解析、轮询、索引任务
+- SQLite 零配置单机模式（v1.0.0 引入）：modernc.org/sqlite（纯 Go，CGO_ENABLED=0）+ sqlite-vec 向量 + FTS5 + gse 中文分词；进程内内存队列/限流/OIDC state 替代 Redis，单二进制 + 单 .db 文件零外部依赖部署，定位开发/演示/单机
 - MinerU Cloud: PDF 转 Markdown（v0.7.0 引入）
 - Embedding Provider Registry：支持五种 typed Provider，并已接入 Generation 构建、文档向量化与检索查询
 - OSS/对象存储: 保存解析得到的图片等资产
