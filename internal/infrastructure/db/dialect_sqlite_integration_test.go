@@ -21,12 +21,9 @@ import (
 
 // 这些测试验证 Repository 层 PG 专属 SQL 的 SQLite 方言分支。
 //
-// 注意：生产 SQLite DSN（db.Open）带 _time_format=sqlite，modernc 会把时间列以
-// 字符串返回，GORM 无法直接 Scan 进 time.Time。这是既有的 SQLite 基础设施限制
-// （与 _time_format pragma 相关），不属于本方言分发任务的范围。因此这些测试
-// 刻意只读取 source_config / scopes / 计数等不触发 time-scan 的列，专注于验证
-// json_set / json_remove / json_extract / json(?) / SUM(CASE WHEN) / datetime('now')
-// 等方言分支本身的正确性。
+// 时间扫描：schema 时间列声明为 DATETIME（非 TEXT），modernc 正确返回 time.Time，
+// GORM *time.Time 扫描正常（早期 _time_format=sqlite 已弃用，见 db.go buildSQLiteDSN
+// 注释；DATETIME 修复见 commit 55cf934）。
 
 // openSQLiteTestDB 打开一个临时 SQLite 库并迁移到最新 schema，返回可直接使用的连接。
 func openSQLiteTestDB(t *testing.T) *gorm.DB {
@@ -340,5 +337,27 @@ func TestSQLiteSumCaseAggregation(t *testing.T) {
 	}
 	if counts.Total != 5 || counts.File != 3 || counts.FAQ != 1 || counts.Web != 1 || counts.Ready != 3 {
 		t.Fatalf("聚合结果错误: %+v", counts)
+	}
+}
+
+// TestSQLiteZeroRowAggregationCoalesce 验证 H1 修复：空工作区（零行）下
+// SUM(CASE WHEN ...) 经 COALESCE 返回 0，不因 NULL 扫 int64 崩溃。
+func TestSQLiteZeroRowAggregationCoalesce(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	wsID := uuid.New().String()
+	var ready, processing, failed, total int64
+	// 模拟 workspace_readiness_repository 的 SQLite 聚合（COALESCE 已加）
+	err := database.Raw(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(CASE WHEN status IN ('ready','completed') THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status IN ('pending','processing') THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0)
+		FROM documents WHERE workspace_id = ? AND deleted_at IS NULL`, wsID).
+		Row().Scan(&total, &ready, &processing, &failed)
+	if err != nil {
+		t.Fatalf("零行聚合查询失败（COALESCE 未生效？）: %v", err)
+	}
+	if total != 0 || ready != 0 || processing != 0 || failed != 0 {
+		t.Fatalf("零行应全 0: total=%d ready=%d proc=%d failed=%d", total, ready, processing, failed)
 	}
 }
