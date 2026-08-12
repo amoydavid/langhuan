@@ -170,8 +170,15 @@ func (r *KnowledgeBaseRepository) ListDueFeishuKBs(ctx context.Context, now time
 		Select("workspace_id, id, source_connection_id").
 		Where("deleted_at IS NULL").
 		Where("source_type IN ?", []string{string(value.SourceTypeFeishuDrive), string(value.SourceTypeFeishuWiki)}).
-		Where("source_connection_id IS NOT NULL").
-		Where("(source_config->>'next_sync_at')::timestamptz <= ?", now.UTC())
+		Where("source_connection_id IS NOT NULL")
+	// next_sync_at 缺失时 json_extract / ->> 均返回 NULL，`NULL <= ?` 不匹配，
+	// 与 PG 行为一致（缺失键不视为到期，需显式设置 next_sync_at 才会被调度）。
+	if r.db.Dialector.Name() == "sqlite" {
+		// SQLite 把 next_sync_at 存为 UTC RFC3339Nano 字符串，字典序与时间序一致。
+		query = query.Where("json_extract(source_config, '$.next_sync_at') <= ?", now.UTC().Format(time.RFC3339Nano))
+	} else {
+		query = query.Where("(source_config->>'next_sync_at')::timestamptz <= ?", now.UTC())
+	}
 	if connectionID != uuid.Nil {
 		query = query.Where("source_connection_id = ?", connectionID)
 	}
@@ -197,11 +204,20 @@ func (r *KnowledgeBaseRepository) UpdateNextSyncAt(ctx context.Context, workspac
 		)
 		now := time.Now().UTC()
 		if nextSyncAt.IsZero() {
-			execSQL = "UPDATE knowledge_bases SET source_config = source_config - 'next_sync_at', updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			if tx.Dialector.Name() == "sqlite" {
+				execSQL = "UPDATE knowledge_bases SET source_config = json_remove(source_config, '$.next_sync_at'), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			} else {
+				execSQL = "UPDATE knowledge_bases SET source_config = source_config - 'next_sync_at', updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			}
 			args = []any{now, workspaceID, kbID}
 		} else {
-			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{next_sync_at}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
-			args = []any{nextSyncAt.UTC(), now, workspaceID, kbID}
+			if tx.Dialector.Name() == "sqlite" {
+				execSQL = "UPDATE knowledge_bases SET source_config = json_set(source_config, '$.next_sync_at', ?), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+				args = []any{nextSyncAt.UTC().Format(time.RFC3339Nano), now, workspaceID, kbID}
+			} else {
+				execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{next_sync_at}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+				args = []any{nextSyncAt.UTC(), now, workspaceID, kbID}
+			}
 		}
 		result := tx.WithContext(ctx).Exec(execSQL, args...)
 		if result.Error != nil {
@@ -224,11 +240,20 @@ func (r *KnowledgeBaseRepository) UpdateSyncCursor(ctx context.Context, workspac
 		)
 		now := time.Now().UTC()
 		if cursor.IsZero() {
-			execSQL = "UPDATE knowledge_bases SET source_config = source_config - 'sync_cursor', updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			if tx.Dialector.Name() == "sqlite" {
+				execSQL = "UPDATE knowledge_bases SET source_config = json_remove(source_config, '$.sync_cursor'), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			} else {
+				execSQL = "UPDATE knowledge_bases SET source_config = source_config - 'sync_cursor', updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			}
 			args = []any{now, workspaceID, kbID}
 		} else {
-			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_cursor}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
-			args = []any{cursor.UTC(), now, workspaceID, kbID}
+			if tx.Dialector.Name() == "sqlite" {
+				execSQL = "UPDATE knowledge_bases SET source_config = json_set(source_config, '$.sync_cursor', ?), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+				args = []any{cursor.UTC().Format(time.RFC3339Nano), now, workspaceID, kbID}
+			} else {
+				execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_cursor}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+				args = []any{cursor.UTC(), now, workspaceID, kbID}
+			}
 		}
 		result := tx.WithContext(ctx).Exec(execSQL, args...)
 		if result.Error != nil {
@@ -247,7 +272,12 @@ func (r *KnowledgeBaseRepository) UpdateSyncCursor(ctx context.Context, workspac
 func (r *KnowledgeBaseRepository) UpdateSourceDeletePolicy(ctx context.Context, workspaceID, kbID uuid.UUID, policy value.SourceDeletePolicy) error {
 	return NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
 		now := time.Now().UTC()
-		execSQL := "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{on_delete}', to_jsonb(?::text), true), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		var execSQL string
+		if tx.Dialector.Name() == "sqlite" {
+			execSQL = "UPDATE knowledge_bases SET source_config = json_set(source_config, '$.on_delete', ?), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		} else {
+			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{on_delete}', to_jsonb(?::text), true), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		}
 		args := []any{policy.String(), now, workspaceID, kbID}
 		result := tx.WithContext(ctx).Exec(execSQL, args...)
 		if result.Error != nil {

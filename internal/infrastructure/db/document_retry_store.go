@@ -143,6 +143,9 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 	if findErr == nil {
 		// 重置既有 Job 为 pending，并刷新 payload 的 index_generation_id 为当前 active
 		// generation（reindex 后重试必须指向新 generation，否则 worker 校验失败）。
+		// 重置既有 Job 为 pending，并刷新 payload 的 index_generation_id 为当前 active
+		// generation（reindex 后重试必须指向新 generation，否则 worker 校验失败）。
+		payloadExpr := jobPayloadGenerationIDExpr(tx.db, request.GenerationID.String())
 		jobReset := tx.db.WithContext(ctx).Model(&JobRow{}).
 			Where("workspace_id = ? AND id = ?", request.WorkspaceID, existingJob.ID).
 			Updates(map[string]any{
@@ -150,7 +153,7 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 				"error_class":   "",
 				"error_message": "",
 				"updated_at":    now,
-				"payload":       gorm.Expr("jsonb_set(COALESCE(payload, '{}'::jsonb), '{index_generation_id}', to_jsonb(?::text), true)", request.GenerationID.String()),
+				"payload":       payloadExpr,
 			})
 		if jobReset.Error != nil {
 			return uuid.Nil, translateDBError(jobReset.Error, "重置重试 parse Job 失败")
@@ -246,4 +249,14 @@ func derefUUID(p *uuid.UUID) uuid.UUID {
 		return uuid.Nil
 	}
 	return *p
+}
+
+// jobPayloadGenerationIDExpr 返回把 index_generation_id 写入 Job payload JSON 的 SQL 表达式。
+//   - PG：jsonb_set(... to_jsonb(?::text), true) 在键缺失时自动创建。
+//   - SQLite：json_set(... '$.index_generation_id', ?)，同样在键缺失时创建。
+func jobPayloadGenerationIDExpr(db *gorm.DB, generationID string) clause.Expr {
+	if db.Dialector.Name() == "sqlite" {
+		return gorm.Expr("json_set(COALESCE(payload, '{}'), '$.index_generation_id', ?)", generationID)
+	}
+	return gorm.Expr("jsonb_set(COALESCE(payload, '{}'::jsonb), '{index_generation_id}', to_jsonb(?::text), true)", generationID)
 }

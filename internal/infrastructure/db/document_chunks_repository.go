@@ -115,8 +115,14 @@ func loadEffectiveDocumentChunkSet(
 		if err != nil {
 			return nil, fmt.Errorf("编码 active Generation ChunkingConfig 失败: %w", err)
 		}
+		configCompare := "chunking_config = CAST(? AS jsonb)"
+		if tx.Dialector.Name() == "sqlite" {
+			// SQLite 把 chunking_config 当 JSON 文本存储，Go json.Marshal 产生确定性
+			//（键排序、紧凑）文本，可直接做相等比较。
+			configCompare = "chunking_config = ?"
+		}
 		query = query.Where(
-			"strategy = ? AND chunker_version = ? AND chunking_config = CAST(? AS jsonb)",
+			"strategy = ? AND chunker_version = ? AND "+configCompare,
 			value.ChunkStrategyStandard, lineage.ChunkerVersion, string(encoded),
 		).Order("created_at DESC, id DESC")
 	default:

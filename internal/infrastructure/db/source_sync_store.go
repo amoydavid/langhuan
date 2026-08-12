@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,12 +91,18 @@ func (s *SourceSyncDBStore) ListFeishuKBsWithForceLatchAndNoActiveJob(ctx contex
 		Where("jobs.knowledge_base_id = knowledge_bases.id").
 		Where("jobs.type = ?", model.SourceSyncJobType).
 		Where("jobs.status IN ?", []string{string(value.JobStatusPending), string(value.JobStatusRunning)})
-	err := s.db.WithContext(ctx).Table("knowledge_bases").
+	forceLatchQuery := s.db.WithContext(ctx).Table("knowledge_bases").
 		Select("workspace_id, id, source_connection_id").
 		Where("deleted_at IS NULL").
 		Where("source_type IN ?", []string{string(value.SourceTypeFeishuDrive), string(value.SourceTypeFeishuWiki)}).
-		Where("source_connection_id IS NOT NULL").
-		Where("(source_config->>'sync_requested_force')::boolean = true").
+		Where("source_connection_id IS NOT NULL")
+	// force latch 存为 JSON 布尔：PG 用 ->>::boolean，SQLite 用 json_extract（返回 1/0 整数）。
+	if s.db.Dialector.Name() == "sqlite" {
+		forceLatchQuery = forceLatchQuery.Where("json_extract(source_config, '$.sync_requested_force') = 1")
+	} else {
+		forceLatchQuery = forceLatchQuery.Where("(source_config->>'sync_requested_force')::boolean = true")
+	}
+	err := forceLatchQuery.
 		Where("NOT EXISTS (?)", activeSubquery).
 		Order("workspace_id, id").
 		Scan(&rows).Error
@@ -119,8 +126,15 @@ func (s *SourceSyncDBStore) UpdateSyncCursor(ctx context.Context, workspaceID, k
 	}
 	return NewWorkspaceTxRunner(s.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
 		now := time.Now().UTC()
-		execSQL := "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_cursor}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
-		args := []any{cursor.UTC(), now, workspaceID, kbID}
+		var execSQL string
+		var args []any
+		if tx.Dialector.Name() == "sqlite" {
+			execSQL = "UPDATE knowledge_bases SET source_config = json_set(source_config, '$.sync_cursor', ?), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			args = []any{cursor.UTC().Format(time.RFC3339Nano), now, workspaceID, kbID}
+		} else {
+			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_cursor}', to_jsonb(?::timestamptz)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+			args = []any{cursor.UTC(), now, workspaceID, kbID}
+		}
 		result := tx.WithContext(ctx).Exec(execSQL, args...)
 		if result.Error != nil {
 			return translateDBError(result.Error, "更新知识库 sync_cursor 失败")
@@ -986,10 +1000,17 @@ func readForceLatch(config JSONMap) bool {
 	return v
 }
 
-// setForceLatchTx 用 jsonb_set 把 sync_requested_force 写为 requestedForce。
+// setForceLatchTx 用 jsonb_set/json_set 把 sync_requested_force 写为 requestedForce。
 func setForceLatchTx(ctx context.Context, tx *gorm.DB, workspaceID, kbID uuid.UUID, requestedForce bool, now time.Time) error {
-	execSQL := "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_requested_force}', to_jsonb(?::boolean)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
-	result := tx.WithContext(ctx).Exec(execSQL, requestedForce, now, workspaceID, kbID)
+	var execSQL string
+	if tx.Dialector.Name() == "sqlite" {
+		// 用 json(?) 把 "true"/"false" 解析为 JSON 布尔，确保回读时 JSONMap 得到 bool
+		// （否则绑定整数会被存为 1/0，readForceLatch 的 .(bool) 断言失败）。
+		execSQL = "UPDATE knowledge_bases SET source_config = json_set(source_config, '$.sync_requested_force', json(?)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+	} else {
+		execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(source_config, '{sync_requested_force}', to_jsonb(?::boolean)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+	}
+	result := tx.WithContext(ctx).Exec(execSQL, strconv.FormatBool(requestedForce), now, workspaceID, kbID)
 	if result.Error != nil {
 		return translateDBError(result.Error, "更新 force latch 失败")
 	}
@@ -1210,9 +1231,15 @@ func (s *SourceSyncDBStore) UpdateSyncResult(
 	}
 	return NewWorkspaceTxRunner(s.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
 		now := time.Now().UTC()
-		// jsonb_set(source_config, '{sync_last_result}', ?::jsonb)：第二个参数直接传入 JSON 文本，
-		// 由 PG 解析为 jsonb；new_value_for_null_missing=true 保证 source_config 为 NULL 时也能写入。
-		execSQL := "UPDATE knowledge_bases SET source_config = jsonb_set(COALESCE(source_config, '{}'::jsonb), '{sync_last_result}', ?::jsonb, true), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		var execSQL string
+		if tx.Dialector.Name() == "sqlite" {
+			// json(?) 把 JSON 文本解析为 JSON 对象后写入，回读时 JSONMap 正常解码。
+			execSQL = "UPDATE knowledge_bases SET source_config = json_set(COALESCE(source_config, '{}'), '$.sync_last_result', json(?)), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		} else {
+			// jsonb_set(source_config, '{sync_last_result}', ?::jsonb)：第二个参数直接传入 JSON 文本，
+			// 由 PG 解析为 jsonb；new_value_for_null_missing=true 保证 source_config 为 NULL 时也能写入。
+			execSQL = "UPDATE knowledge_bases SET source_config = jsonb_set(COALESCE(source_config, '{}'::jsonb), '{sync_last_result}', ?::jsonb, true), updated_at = ? WHERE workspace_id = ? AND id = ? AND deleted_at IS NULL"
+		}
 		result := tx.WithContext(ctx).Exec(execSQL, string(payload), now, workspaceID, kbID)
 		if result.Error != nil {
 			return translateDBError(result.Error, "更新 sync_last_result 失败")
