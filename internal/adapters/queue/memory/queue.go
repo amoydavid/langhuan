@@ -34,11 +34,24 @@ type Queue struct {
 	minBackoff  time.Duration
 	maxBackoff  time.Duration
 
-	mu       sync.Mutex
-	inFlight map[string]struct{} // TaskID 去重（pending/active 期间占用）
-	wg       sync.WaitGroup
-	stop     chan struct{}
-	stopped  bool
+	mu        sync.Mutex
+	inFlight  map[string]struct{} // TaskID 去重（pending/active 期间占用）
+	dead      []deadEntry         // 超出重试次数的死信（供 Inspector 可见，spec §10.2）
+	processed int64               // 累计成功处理数
+	failed    int64               // 累计失败（进死信）数
+	wg        sync.WaitGroup
+	stop      chan struct{}
+	stopped   bool
+}
+
+// deadEntry 是死信的轻量 metadata（不含 payload，脱敏）。
+type deadEntry struct {
+	id        string // TaskID（可能为空）
+	typ       string
+	lastError string
+	retried   int
+	maxRetry  int
+	failedAt  time.Time
 }
 
 type item struct {
@@ -185,11 +198,22 @@ func (q *Queue) execute(ctx context.Context, it *item) {
 	task := hibikenasynq.NewTask(it.typ, it.payload)
 	err := q.mux.ProcessTask(taskCtx, task)
 	if err == nil || err == hibikenasynq.SkipRetry {
+		q.mu.Lock()
+		q.processed++
+		q.mu.Unlock()
 		return
 	}
 	// 失败：按指数退避重试
 	if it.attempts > it.maxRetry {
-		return // 超出重试次数，丢弃（standalone 边界）
+		// 超出重试次数，存入死信供 Inspector 可见（spec §10.2，不静默丢弃）
+		q.mu.Lock()
+		q.dead = append(q.dead, deadEntry{
+			id: it.taskID, typ: it.typ, lastError: err.Error(),
+			retried: it.attempts - 1, maxRetry: it.maxRetry, failedAt: time.Now(),
+		})
+		q.failed++
+		q.mu.Unlock()
+		return
 	}
 	backoff := q.backoff(it.attempts)
 	go func() {
@@ -254,4 +278,86 @@ func (q *Queue) Stop(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// Stats 返回当前队列状态快照（供 Inspector）。
+func (q *Queue) Stats() Stats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return Stats{
+		Pending:   len(q.pending),
+		Active:    len(q.inFlight) - len(q.pending),
+		Dead:      len(q.dead),
+		Processed: q.processed,
+		Failed:    q.failed,
+	}
+}
+
+// Stats 是队列计数快照。
+type Stats struct {
+	Pending   int
+	Active    int
+	Dead      int
+	Processed int64
+	Failed    int64
+}
+
+// ListDead 返回死信列表的分页副本。
+func (q *Queue) ListDead(page, pageSize int) []deadEntry {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if page < 1 {
+		page = 1
+	}
+	start := (page - 1) * pageSize
+	if start >= len(q.dead) {
+		return nil
+	}
+	end := start + pageSize
+	if end > len(q.dead) {
+		end = len(q.dead)
+	}
+	out := make([]deadEntry, end-start)
+	copy(out, q.dead[start:end])
+	return out
+}
+
+// RetryDead 把指定 taskID 的死信重新入队（若存在）。返回是否找到。
+func (q *Queue) RetryDead(taskID string) bool {
+	q.mu.Lock()
+	idx := -1
+	for i, d := range q.dead {
+		if d.id == taskID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		q.mu.Unlock()
+		return false
+	}
+	d := q.dead[idx]
+	q.dead = append(q.dead[:idx], q.dead[idx+1:]...)
+	q.mu.Unlock()
+	// 重新投递（重置 attempts）
+	q.reacquireAndPush(&item{
+		typ: d.typ, taskID: d.id, maxRetry: d.maxRetry, enqueuedAt: time.Now(),
+	})
+	return true
+}
+
+// DeleteDead 删除指定 taskID 的死信。返回是否找到。
+func (q *Queue) DeleteDead(taskID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i, d := range q.dead {
+		if d.id == taskID {
+			q.dead = append(q.dead[:i], q.dead[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
