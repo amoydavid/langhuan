@@ -44,10 +44,12 @@ type Queue struct {
 	stopped   bool
 }
 
-// deadEntry 是死信的轻量 metadata（不含 payload，脱敏）。
+// deadEntry 是死信记录，保留 payload 以支持 RetryDead 重投（spec §10.2）。
+// payload 不经 Inspector 暴露（ListDead 只取 metadata）。
 type deadEntry struct {
 	id        string // TaskID（可能为空）
 	typ       string
+	payload   []byte
 	lastError string
 	retried   int
 	maxRetry  int
@@ -139,7 +141,10 @@ func (q *Queue) Enqueue(ctx context.Context, job queueport.JobRequest) (*queuepo
 			defer t.Stop()
 			select {
 			case <-t.C:
-				q.push(it)
+				// M2: push 失败（pending 满）必须释放 TaskID 槽位，否则永久占位。
+				if !q.push(it) {
+					q.releaseSlot(it.taskID)
+				}
 			case <-q.stop:
 				q.releaseSlot(it.taskID)
 			}
@@ -186,8 +191,6 @@ func (q *Queue) runWorker(ctx context.Context) {
 }
 
 func (q *Queue) execute(ctx context.Context, it *item) {
-	defer q.releaseSlot(it.taskID)
-
 	taskCtx := ctx
 	var cancel context.CancelFunc
 	if it.timeout > 0 {
@@ -201,31 +204,53 @@ func (q *Queue) execute(ctx context.Context, it *item) {
 		q.mu.Lock()
 		q.processed++
 		q.mu.Unlock()
+		q.releaseSlot(it.taskID)
 		return
 	}
 	// 失败：按指数退避重试
 	if it.attempts > it.maxRetry {
-		// 超出重试次数，存入死信供 Inspector 可见（spec §10.2，不静默丢弃）
+		// 超出重试次数，存入死信（含 payload 供 RetryDead 重投，spec §10.2/H2）
 		q.mu.Lock()
 		q.dead = append(q.dead, deadEntry{
-			id: it.taskID, typ: it.typ, lastError: err.Error(),
+			id: it.taskID, typ: it.typ, payload: it.payload, lastError: err.Error(),
 			retried: it.attempts - 1, maxRetry: it.maxRetry, failedAt: time.Now(),
 		})
 		q.failed++
 		q.mu.Unlock()
+		q.releaseSlot(it.taskID)
 		return
 	}
+	// M1: retry 退避期间保持 TaskID 占用（不提前 releaseSlot），
+	// 保证「pending/active/retry 期间唯一占用」契约。停止时才释放。
 	backoff := q.backoff(it.attempts)
 	go func() {
 		t := time.NewTimer(backoff)
 		defer t.Stop()
 		select {
 		case <-t.C:
-			// 重新占用 TaskID 槽位后投递
-			q.reacquireAndPush(it)
+			q.repush(it)
 		case <-q.stop:
+			q.releaseSlot(it.taskID)
 		}
 	}()
+}
+
+// repush 把 retry 的任务重新投递（TaskID 仍占用，不重新占）。
+// push 失败（pending 满）则进死信并释放槽位。
+func (q *Queue) repush(it *item) {
+	if q.push(it) {
+		return
+	}
+	q.mu.Lock()
+	if !q.stopped {
+		q.dead = append(q.dead, deadEntry{
+			id: it.taskID, typ: it.typ, payload: it.payload, lastError: "retry 时队列已满",
+			retried: it.attempts - 1, maxRetry: it.maxRetry, failedAt: time.Now(),
+		})
+		q.failed++
+	}
+	q.mu.Unlock()
+	q.releaseSlot(it.taskID)
 }
 
 func (q *Queue) reacquireAndPush(it *item) {
@@ -342,9 +367,9 @@ func (q *Queue) RetryDead(taskID string) bool {
 	d := q.dead[idx]
 	q.dead = append(q.dead[:idx], q.dead[idx+1:]...)
 	q.mu.Unlock()
-	// 重新投递（重置 attempts）
+	// 重新投递（携带原 payload + 重置 attempts，H2）
 	q.reacquireAndPush(&item{
-		typ: d.typ, taskID: d.id, maxRetry: d.maxRetry, enqueuedAt: time.Now(),
+		typ: d.typ, payload: d.payload, taskID: d.id, maxRetry: d.maxRetry, enqueuedAt: time.Now(),
 	})
 	return true
 }

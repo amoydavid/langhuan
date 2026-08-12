@@ -376,9 +376,25 @@ func (s *SourceSyncDBStore) ListSourceDocuments(ctx context.Context, kbID uuid.U
 	workspaceID := kb.WorkspaceID
 
 	var rows []sourceDocRow
-	// 对每个文档 LEFT JOIN 其最新（按 revision_no 倒序）的 source revision（reason=crawl）。
-	// 用 DISTINCT ON 取每个 document 的最新 revision；非来源同步文档（无 crawl revision）也保留。
-	err := s.db.WithContext(ctx).Raw(`
+	// 对每个文档取其最新（按 revision_no 倒序）的 source revision（reason=crawl）。
+	// PG 用 LEFT JOIN LATERAL；SQLite 不支持 LATERAL，改用 SELECT 列表的相关子查询
+	// （每个字段一个 LIMIT 1 子查询，无 crawl revision 时返回 NULL，与 LEFT JOIN 语义一致）。
+	reason := string(value.DocumentRevisionReasonCrawl)
+	var err error
+	if s.db.Dialector.Name() == "sqlite" {
+		err = s.db.WithContext(ctx).Raw(`
+SELECT d.id AS document_id, d.external_id, d.content_hash, d.status,
+       d.active_revision_id, d.deleted_at,
+       (SELECT id FROM document_revisions WHERE workspace_id = d.workspace_id AND document_id = d.id AND revision_reason = ? ORDER BY revision_no DESC LIMIT 1) AS revision_id,
+       (SELECT revision_no FROM document_revisions WHERE workspace_id = d.workspace_id AND document_id = d.id AND revision_reason = ? ORDER BY revision_no DESC LIMIT 1) AS revision_no,
+       (SELECT status FROM document_revisions WHERE workspace_id = d.workspace_id AND document_id = d.id AND revision_reason = ? ORDER BY revision_no DESC LIMIT 1) AS revision_status
+FROM documents d
+WHERE d.workspace_id = ? AND d.knowledge_base_id = ?
+  AND d.external_id IS NOT NULL AND d.external_id <> ''
+ORDER BY d.id
+`, reason, reason, reason, workspaceID, kbID).Scan(&rows).Error
+	} else {
+		err = s.db.WithContext(ctx).Raw(`
 SELECT d.id AS document_id, d.external_id, d.content_hash, d.status,
        d.active_revision_id, d.deleted_at,
        r.id AS revision_id, r.revision_no, r.status AS revision_status
@@ -395,7 +411,8 @@ LEFT JOIN LATERAL (
 WHERE d.workspace_id = ? AND d.knowledge_base_id = ?
   AND d.external_id IS NOT NULL AND d.external_id <> ''
 ORDER BY d.id
-`, string(value.DocumentRevisionReasonCrawl), workspaceID, kbID).Scan(&rows).Error
+`, reason, workspaceID, kbID).Scan(&rows).Error
+	}
 	if err != nil {
 		return nil, translateDBError(err, "读取来源同步文档投影失败")
 	}
