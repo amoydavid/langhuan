@@ -4,8 +4,8 @@ CREATE TABLE workspaces (
     name       TEXT NOT NULL,
     slug       TEXT NOT NULL,
     metadata   TEXT NOT NULL DEFAULT '{}' CHECK (json_type(metadata) = 'object'),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX idx_workspaces_name ON workspaces(name);
 CREATE UNIQUE INDEX idx_workspaces_slug ON workspaces(slug);
@@ -17,21 +17,21 @@ CREATE TABLE users (
     nickname          TEXT NOT NULL,
     password_hash     TEXT NOT NULL,
     is_platform_admin INTEGER NOT NULL DEFAULT 0,         -- boolean
-    last_login_at     TEXT,
-    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    last_login_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 -- sessions：登录会话（ip_addr inet→TEXT）
 CREATE TABLE sessions (
     id           TEXT PRIMARY KEY,
     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at   TEXT NOT NULL,
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_seen_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     user_agent   TEXT NOT NULL DEFAULT '',
     ip_addr      TEXT,
-    revoked_at   TEXT
+    revoked_at DATETIME
 );
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
@@ -42,8 +42,8 @@ CREATE TABLE workspace_memberships (
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role         TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (workspace_id, user_id)
 );
 CREATE INDEX idx_memberships_user_id ON workspace_memberships(user_id);
@@ -57,12 +57,12 @@ CREATE TABLE workspace_invitations (
     role             TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner','admin','member')),
     token_hash       TEXT NOT NULL,
     token_prefix     TEXT NOT NULL,
-    expires_at       TEXT NOT NULL,
-    accepted_at      TEXT,
+    expires_at DATETIME NOT NULL,
+    accepted_at DATETIME,
     accepted_user_id TEXT REFERENCES users(id),
-    revoked_at       TEXT,
+    revoked_at DATETIME,
     created_by       TEXT NOT NULL REFERENCES users(id),
-    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (workspace_id, invited_email)
 );
 CREATE INDEX idx_invitations_token_hash ON workspace_invitations(token_hash);
@@ -80,8 +80,8 @@ CREATE TABLE model_providers (
     credentials_ciphertext BLOB,
     status                 TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
     created_by             TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     CHECK (
         (scope = 'platform' AND workspace_id IS NULL)
         OR (scope = 'workspace' AND workspace_id IS NOT NULL)
@@ -109,8 +109,8 @@ CREATE TABLE models (
     parameters   TEXT NOT NULL DEFAULT '{}' CHECK (json_type(parameters) = 'object'),
     status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
     created_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     CHECK (
         (type = 'embedding' AND dimensions IN (798,1024,2048,3584))
         OR (type IN ('llm','rerank') AND dimensions IS NULL)
@@ -130,9 +130,9 @@ CREATE TABLE external_identities (
     email          TEXT,
     email_verified INTEGER NOT NULL DEFAULT 0,
     raw_profile    TEXT NOT NULL DEFAULT '{}' CHECK (json_type(raw_profile) = 'object'),
-    last_auth_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_auth_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (issuer, subject)
 );
 CREATE INDEX idx_external_identities_user_id ON external_identities(user_id);
@@ -146,13 +146,13 @@ CREATE TABLE workspace_api_tokens (
     token_secret_ciphertext    BLOB NOT NULL,
     token_prefix               TEXT NOT NULL,
     scopes                     TEXT NOT NULL,                 -- JSON 数组串，枚举校验下沉应用层
-    expires_at                 TEXT,
-    last_used_at               TEXT,
-    revoked_at                 TEXT,
+    expires_at DATETIME,
+    last_used_at DATETIME,
+    revoked_at DATETIME,
     created_by                 TEXT REFERENCES users(id) ON DELETE SET NULL,
     revoked_by                 TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (id, workspace_id),
     -- 原 token_hash/token_prefix 正则 CHECK 移除（见跳过清单）；expiry CHECK 保留：
     CHECK (expires_at IS NULL OR expires_at > created_at)
@@ -168,7 +168,7 @@ CREATE TABLE workspace_api_token_knowledge_bases (
     api_token_id      TEXT NOT NULL,
     workspace_id      TEXT NOT NULL,
     knowledge_base_id TEXT NOT NULL,
-    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     PRIMARY KEY (api_token_id, knowledge_base_id),
     FOREIGN KEY (api_token_id, workspace_id)
         REFERENCES workspace_api_tokens(id, workspace_id) ON DELETE CASCADE,
@@ -187,8 +187,8 @@ CREATE TABLE workspace_search_settings (
     rerank_model_config_hash TEXT,
     rerank_config           TEXT NOT NULL DEFAULT '{}' CHECK (json_type(rerank_config) = 'object'),
     updated_by              TEXT REFERENCES users(id) ON DELETE SET NULL,
-    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX idx_workspace_search_settings_rerank_model
     ON workspace_search_settings (rerank_model_id) WHERE rerank_model_id IS NOT NULL;

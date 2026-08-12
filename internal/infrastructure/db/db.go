@@ -46,13 +46,14 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, Dialect, error) {
 // buildSQLiteDSN 在用户 DSN 上追加固定 pragma 与事务锁模式。
 // modernc 支持 ?_pragma=key(val) 形式，多个 _pragma 用 & 连接。
 func buildSQLiteDSN(raw string) string {
+	// 注意：不设 _time_format/_timezone。modernc 默认能把时间列 Scan 为 time.Time
+	//（compatibility test 验证 round-trip）；设 _time_format=sqlite 反而让 driver
+	// 返回字符串，破坏 GORM 的 *time.Time 扫描。
 	extra := "_pragma=foreign_keys(1)" +
 		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
 		"&_pragma=synchronous(NORMAL)" +
-		"&_txlock=immediate" +
-		"&_time_format=sqlite" +
-		"&_timezone=UTC"
+		"&_txlock=immediate"
 	sep := "?"
 	if strings.Contains(raw, "?") {
 		sep = "&"

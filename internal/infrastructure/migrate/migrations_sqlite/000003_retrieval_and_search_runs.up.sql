@@ -17,9 +17,9 @@ CREATE TABLE retrieval_entries (
     source_anchor            TEXT NOT NULL DEFAULT '{}' CHECK (json_type(source_anchor) = 'object'),
     metadata                 TEXT NOT NULL DEFAULT '{}' CHECK (json_type(metadata) = 'object'),
     dimension                INTEGER CHECK (dimension IS NULL OR dimension IN (798,1024,2048,3584)),
-    created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    published_at             TEXT,
-    retired_at               TEXT,
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    published_at DATETIME,
+    retired_at DATETIME,
     UNIQUE (workspace_id, id),
     CONSTRAINT retrieval_entries_generation_fk
         FOREIGN KEY (workspace_id, knowledge_base_id, index_generation_id)
@@ -71,9 +71,9 @@ CREATE TABLE search_runs (
     request_id        TEXT NOT NULL DEFAULT '',
     transport         TEXT NOT NULL DEFAULT '',
     principal_kind    TEXT NOT NULL DEFAULT '',
-    created_at        TEXT NOT NULL,
-    completed_at      TEXT,
-    expires_at        TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    completed_at DATETIME,
+    expires_at DATETIME NOT NULL,
     replay_of_id      TEXT,
     UNIQUE (workspace_id, id),
     CHECK (
