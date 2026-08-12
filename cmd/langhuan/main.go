@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -50,6 +51,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/datadir"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
 	metricspkg "github.com/dajee/langhuan/internal/infrastructure/metrics"
 	"github.com/dajee/langhuan/internal/infrastructure/migrate"
@@ -213,11 +215,11 @@ func main() {
 }
 
 func run(args []string) error {
-	configFile, err := configPath(args)
+	sel, err := selectConfig(args)
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(configFile)
+	cfg, err := config.Load(sel.Path)
 	if err != nil {
 		return err
 	}
@@ -225,7 +227,11 @@ func run(args []string) error {
 	// 把脱敏 logger 设为全局默认：worker/service 里 slog.Default() 兜底路径
 	// （Logger 未注入时）也继承脱敏，避免隐性旁路。
 	slog.SetDefault(log)
-	log.Info("starting langhuan", slog.String("version", version.Version()))
+	if sel.Explicit {
+		log.Info("starting langhuan", slog.String("version", version.Version()), slog.String("config", sel.Path))
+	} else {
+		log.Info("starting langhuan", slog.String("version", version.Version()), slog.String("config", sel.Path))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -248,14 +254,46 @@ func run(args []string) error {
 	return app.start(ctx, log)
 }
 
-func configPath(args []string) (string, error) {
+// selectConfig 解析 -config flag 并按 spec §2.1 四态探测链确定配置来源。
+func selectConfig(args []string) (ConfigSelection, error) {
+	explicitPath, explicitSet, err := parseConfigFlag(args)
+	if err != nil {
+		return ConfigSelection{}, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ConfigSelection{}, fmt.Errorf("获取当前目录失败: %w", err)
+	}
+	cwdConfig := filepath.Join(cwd, "config.yaml")
+	dataDir, err := datadir.Resolve(os.UserHomeDir)
+	if err != nil {
+		return ConfigSelection{}, err
+	}
+	dataDirConfig := filepath.Join(dataDir.Path(), "config.yaml")
+	return resolveConfigSelection(explicitPath, explicitSet, cwdConfig, dataDirConfig, dataDir.Path(),
+		func(dataDirPath string) (string, error) {
+			d := datadir.New(dataDirPath)
+			if err := d.Ensure(); err != nil {
+				return "", err
+			}
+			return config.MaterializeStandalone(dataDirPath, d.EnsureCredentialKey)
+		})
+}
+
+func parseConfigFlag(args []string) (path string, explicit bool, err error) {
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	path := fs.String("config", "config.yaml", "YAML 配置文件路径")
+	p := fs.String("config", "", "YAML 配置文件路径（未传时按四态探测链解析）")
 	if err := fs.Parse(args[1:]); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return *path, nil
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			set = true
+		}
+	})
+	return *p, set, nil
 }
 
 func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRuntime, error) {
@@ -266,7 +304,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 
 	gormDB, err := openDatabase(cfg.Database.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
 	app.gormDB = gormDB
 	if shouldRunMigrations(cfg) {

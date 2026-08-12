@@ -38,23 +38,29 @@ func TestPrintStartupBanner(t *testing.T) {
 	}
 }
 
-func TestConfigPathDefault(t *testing.T) {
-	path, err := configPath([]string{"langhuan"})
+func TestParseConfigFlagDefaultNotExplicit(t *testing.T) {
+	path, explicit, err := parseConfigFlag([]string{"langhuan"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != "config.yaml" {
-		t.Fatalf("config path = %q", path)
+	if path != "" {
+		t.Fatalf("未传 -config 时 path 应为空（走探测链），got %q", path)
+	}
+	if explicit {
+		t.Fatal("未传 -config 时 explicit 应为 false")
 	}
 }
 
-func TestConfigPathFromFlag(t *testing.T) {
-	path, err := configPath([]string{"langhuan", "-config", "dev.yaml"})
+func TestParseConfigFlagExplicit(t *testing.T) {
+	path, explicit, err := parseConfigFlag([]string{"langhuan", "-config", "dev.yaml"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if path != "dev.yaml" {
 		t.Fatalf("config path = %q", path)
+	}
+	if !explicit {
+		t.Fatal("传 -config 时 explicit 应为 true")
 	}
 }
 
