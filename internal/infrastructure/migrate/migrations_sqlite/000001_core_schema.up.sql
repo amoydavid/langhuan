@@ -145,7 +145,7 @@ CREATE TABLE workspace_api_tokens (
     token_hash                 TEXT NOT NULL,
     token_secret_ciphertext    BLOB NOT NULL,
     token_prefix               TEXT NOT NULL,
-    scopes                     TEXT NOT NULL,                 -- JSON 数组串，枚举校验下沉应用层
+    scopes                     TEXT NOT NULL,                 -- PG 数组字面量（pq.StringArray round-trip 兼容），枚举校验下沉应用层
     expires_at DATETIME,
     last_used_at DATETIME,
     revoked_at DATETIME,

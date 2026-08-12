@@ -157,8 +157,9 @@ func (r *KnowledgeBaseRepository) UpdateBasics(ctx context.Context, input appser
 }
 
 // ListDueFeishuKBs 返回所有飞书来源（feishu_drive/feishu_wiki）且 source_config.next_sync_at <= now
-// 的知识库。connectionID 非零值时仅返回绑定该 connection 的 KB。next_sync_at 字段缺失的 KB 视为
-// 立即到期（首次同步）。结果按 workspace_id 排序以保证 Tick 分组稳定。
+// 的知识库。connectionID 非零值时仅返回绑定该 connection 的 KB。next_sync_at 字段缺失的 KB 不视为到期
+// （NULL 不匹配 <= 比较）；如需首次同步，由 source sync 初始化时写入 next_sync_at。
+// 结果按 workspace_id 排序以保证 Tick 分组稳定。
 func (r *KnowledgeBaseRepository) ListDueFeishuKBs(ctx context.Context, now time.Time, connectionID uuid.UUID) ([]appservice.DueKnowledgeBase, error) {
 	type dueRow struct {
 		WorkspaceID        uuid.UUID `gorm:"column:workspace_id"`

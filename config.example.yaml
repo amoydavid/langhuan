@@ -20,6 +20,7 @@ database:
   # standalone profile（config.yaml + credential.key），无需手写本文件。
 
 redis:
+  enabled: true                 # Redis/asynq 是否装配；SQLite 单机模式设为 false 走内存队列/限流/OIDC state
   addr: "127.0.0.1:6379"
   password: ""
   db: 0

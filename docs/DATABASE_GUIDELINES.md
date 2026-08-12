@@ -415,4 +415,13 @@ go vet ./...
 git diff --check
 ```
 
+## 11. SQLite 时间列格式约定
+
+SQLite 无原生时间类型，时间列在迁移脚本中声明为 `DATETIME`（不写 `TEXT`），由 GORM 写入：
+
+- **写入侧**：业务路径统一经 GORM，modernc.org/sqlite 把 `time.Time` 序列化为 Go 的 `time.String()` 格式（如 `2026-08-12 10:00:00 +0000 UTC`），不依赖迁移脚本里的 `DEFAULT (strftime(...))`。
+- **兜底默认值**：迁移脚本里的 `strftime('%Y-%m-%dT%H:%M:%fZ','now')` 仅作 raw INSERT（不经 GORM 的路径）的兜底，业务路径不应依赖该格式。
+- **时间比较**：因 GORM 写入格式与 `datetime('now')`（`YYYY-MM-DD HH:MM:SS`）的字符串字节序存在偏差，凡 SQLite 下用 `expires_at > datetime('now')` 之类比较时，必须用 `datetime(col)` 包裹存储值：`datetime(expires_at) > datetime('now')`，由 `datetime()` 把存储的时间字符串解析为统一的 `YYYY-MM-DD HH:MM:SS` 格式后再比较，消除格式二义性。
+- **读取侧**：modernc 默认能把时间列 Scan 为 `time.Time`（compatibility test 验证 round-trip）；不要设 `_time_format=sqlite`，否则 driver 返回字符串，破坏 GORM 的 `*time.Time` 扫描。
+
 一句话总则：领域层不碰 GORM；租户读写都在 Workspace transaction 中；事实层不可变、投影可重建；复合外键守住 lineage；向量查询表达式必须与 HNSW 索引完全一致。

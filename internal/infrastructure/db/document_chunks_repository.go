@@ -117,8 +117,10 @@ func loadEffectiveDocumentChunkSet(
 		}
 		configCompare := "chunking_config = CAST(? AS jsonb)"
 		if tx.Dialector.Name() == "sqlite" {
-			// SQLite 把 chunking_config 当 JSON 文本存储，Go json.Marshal 产生确定性
-			//（键排序、紧凑）文本，可直接做相等比较。
+			// SQLite 把 chunking_config 当 JSON 文本存储（TEXT 字节比较）。
+			// 依赖 JSONMap 的 json.Marshal 确定性输出（键排序 + 紧凑），写入侧
+			//（index_generation_build）与读取侧（此处）序列化方式一致才能匹配。
+			// 比 PG 的 jsonb 结构比较脆，但当前路径可工作。
 			configCompare = "chunking_config = ?"
 		}
 		query = query.Where(
