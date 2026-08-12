@@ -73,7 +73,8 @@ func (d Dir) Ensure() error {
 	if !os.IsNotExist(err) {
 		return fmt.Errorf("检查数据目录失败: %w", err)
 	}
-	if err := os.Mkdir(d.path, 0o700); err != nil {
+	// MkdirAll 创建 .langhuan-data 及缺失的父级（如 HOME 尚未创建），全部 0700。
+	if err := os.MkdirAll(d.path, 0o700); err != nil {
 		return fmt.Errorf("创建数据目录失败: %w", err)
 	}
 	return nil
