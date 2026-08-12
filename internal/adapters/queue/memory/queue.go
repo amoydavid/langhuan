@@ -39,7 +39,8 @@ type Queue struct {
 	dead      []deadEntry         // 超出重试次数的死信（供 Inspector 可见，spec §10.2）
 	processed int64               // 累计成功处理数
 	failed    int64               // 累计失败（进死信）数
-	wg        sync.WaitGroup
+	wg        sync.WaitGroup      // worker goroutine
+	retryWG   sync.WaitGroup      // retry 退避 / Delay 投递 goroutine（不受 worker wg 管理）
 	stop      chan struct{}
 	stopped   bool
 }
@@ -136,7 +137,9 @@ func (q *Queue) Enqueue(ctx context.Context, job queueport.JobRequest) (*queuepo
 	}
 
 	if job.Delay > 0 {
+		q.retryWG.Add(1)
 		go func() {
+			defer q.retryWG.Done()
 			t := time.NewTimer(time.Duration(job.Delay))
 			defer t.Stop()
 			select {
@@ -223,7 +226,9 @@ func (q *Queue) execute(ctx context.Context, it *item) {
 	// M1: retry 退避期间保持 TaskID 占用（不提前 releaseSlot），
 	// 保证「pending/active/retry 期间唯一占用」契约。停止时才释放。
 	backoff := q.backoff(it.attempts)
+	q.retryWG.Add(1)
 	go func() {
+		defer q.retryWG.Done()
 		t := time.NewTimer(backoff)
 		defer t.Stop()
 		select {
@@ -285,7 +290,7 @@ func (q *Queue) releaseSlot(taskID string) {
 	q.mu.Unlock()
 }
 
-// Stop 停止接收与调度，等待运行中任务到 ctx 超时。可多次调用。
+// Stop 停止接收与调度，等待 worker（wg）与 retry/Delay（retryWG）goroutine 到 ctx 超时。可多次调用。
 func (q *Queue) Stop(ctx context.Context) error {
 	q.mu.Lock()
 	if q.stopped {
@@ -296,7 +301,11 @@ func (q *Queue) Stop(ctx context.Context) error {
 	q.mu.Unlock()
 	close(q.stop)
 	done := make(chan struct{})
-	go func() { q.wg.Wait(); close(done) }()
+	go func() {
+		q.wg.Wait()
+		q.retryWG.Wait()
+		close(done)
+	}()
 	select {
 	case <-done:
 		return nil

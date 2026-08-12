@@ -66,6 +66,16 @@ func (r *RetrievalCleanupRepository) CleanupGlobal(
 	}
 	var result appservice.RetrievalCleanupResult
 	// 过期 staging/failed entries（跨 workspace）。
+	if r.db.Dialector.Name() == "sqlite" {
+		// retrieval_fts 是 FTS5 虚拟表，无 FK 级联，删 entry 前先清 FTS 孤儿（对齐同批删除条件）。
+		if err := r.db.WithContext(ctx).Exec(
+			"DELETE FROM retrieval_fts WHERE entry_id IN ("+
+				"SELECT id FROM retrieval_entries WHERE state IN (?, ?) AND created_at < ?)",
+			value.RetrievalEntryStaging, value.RetrievalEntryFailed, request.FailedStagingBefore,
+		).Error; err != nil {
+			return appservice.RetrievalCleanupResult{}, translateDBError(err, "全局清理过期 RetrievalEntry FTS 孤儿失败")
+		}
+	}
 	deletedEntries := r.db.WithContext(ctx).
 		Where("state IN (?, ?) AND created_at < ?",
 			value.RetrievalEntryStaging, value.RetrievalEntryFailed, request.FailedStagingBefore).
@@ -79,6 +89,16 @@ func (r *RetrievalCleanupRepository) CleanupGlobal(
 	// 过期 retired entries（跨 workspace）。
 	remaining := request.BatchSize - int(deletedEntries.RowsAffected)
 	if remaining > 0 {
+		if r.db.Dialector.Name() == "sqlite" {
+			// 同上，retired 批次的 FTS 孤儿清理。
+			if err := r.db.WithContext(ctx).Exec(
+				"DELETE FROM retrieval_fts WHERE entry_id IN ("+
+					"SELECT id FROM retrieval_entries WHERE state = ? AND COALESCE(retired_at, created_at) < ?)",
+				value.RetrievalEntryRetired, request.RetiredBefore,
+			).Error; err != nil {
+				return appservice.RetrievalCleanupResult{}, translateDBError(err, "全局清理过期 retired RetrievalEntry FTS 孤儿失败")
+			}
+		}
 		deletedRetired := r.db.WithContext(ctx).
 			Where("state = ? AND COALESCE(retired_at, created_at) < ?",
 				value.RetrievalEntryRetired, request.RetiredBefore).
@@ -108,6 +128,14 @@ func (r *RetrievalCleanupRepository) Cleanup(
 			return err
 		}
 		if len(entryIDs) > 0 {
+			if tx.Dialector.Name() == "sqlite" {
+				// retrieval_fts 是 FTS5 虚拟表，无 FK 级联，删 entry 前先清 FTS 孤儿。
+				if err := tx.WithContext(ctx).Exec(
+					"DELETE FROM retrieval_fts WHERE entry_id IN ?", entryIDs,
+				).Error; err != nil {
+					return translateDBError(err, "清理过期 RetrievalEntry FTS 孤儿失败")
+				}
+			}
 			deleted := tx.WithContext(ctx).
 				Where("workspace_id = ? AND id IN ?", request.WorkspaceID, entryIDs).
 				Delete(&RetrievalEntryRow{})
