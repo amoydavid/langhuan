@@ -29,8 +29,8 @@ func TestRunSQLiteAppliesPlaceholderMigration(t *testing.T) {
 	if err := db.QueryRow("SELECT version FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("查询 schema_migrations 失败: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("schema_migrations version = %d, want 1", version)
+	if version != 3 {
+		t.Fatalf("schema_migrations version = %d, want 3", version)
 	}
 
 	// 重复 up 应幂等（ErrNoChange）
