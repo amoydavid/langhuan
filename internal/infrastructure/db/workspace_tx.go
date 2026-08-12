@@ -33,12 +33,18 @@ func (r *WorkspaceTxRunner) WithinWorkspace(
 		return fmt.Errorf("%w: Workspace 事务回调不能为空", domainerrors.ErrValidation)
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Exec(
-			"SELECT set_config('app.workspace_id', ?, true)",
-			workspaceID.String(),
-		).Error; err != nil {
-			return fmt.Errorf("设置 Workspace 数据库上下文失败: %w", err)
+		ttx := tx.WithContext(ctx)
+		// SQLite 无事务级 GUC / session 变量（set_config 是 PG 专属），跳过；
+		// 所有租户查询必须显式携带 workspace_id（spec §9）。PG 仍设置事务级上下文，
+		// 作为未来 RLS policy 的数据库层兜底。
+		if ttx.Dialector.Name() != "sqlite" {
+			if err := ttx.Exec(
+				"SELECT set_config('app.workspace_id', ?, true)",
+				workspaceID.String(),
+			).Error; err != nil {
+				return fmt.Errorf("设置 Workspace 数据库上下文失败: %w", err)
+			}
 		}
-		return fn(tx.WithContext(ctx))
+		return fn(ttx)
 	})
 }

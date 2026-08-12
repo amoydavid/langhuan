@@ -12,6 +12,37 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
+// selectExpiredEntriesSQL 返回锁定过期 retrieval_entries 的 SQL。
+// PG 用 FOR UPDATE SKIP LOCKED 保证并发清理安全；
+// SQLite 无行锁，靠 _txlock=immediate 单写锁串行化，去掉该子句（spec §9）。
+func selectExpiredEntriesSQL(dialector string) string {
+	base := "SELECT id FROM retrieval_entries " +
+		"WHERE workspace_id = ? AND (" +
+		"(state IN (?, ?) AND created_at < ?) OR " +
+		"(state = ? AND COALESCE(retired_at, created_at) < ?)) " +
+		"ORDER BY COALESCE(retired_at, created_at), id "
+	if dialector == "sqlite" {
+		return base + "LIMIT ?"
+	}
+	return base + "FOR UPDATE SKIP LOCKED LIMIT ?"
+}
+
+// selectExpiredGenerationsSQL 返回锁定过期 retired Generation 的 SQL（同上 SKIP LOCKED 分流）。
+func selectExpiredGenerationsSQL(dialector string) string {
+	base := "SELECT g.id FROM knowledge_base_index_generations AS g " +
+		"WHERE g.workspace_id = ? AND g.status = ? AND g.retired_at < ? " +
+		"AND NOT EXISTS (" +
+		"SELECT 1 FROM knowledge_bases AS kb " +
+		"WHERE kb.workspace_id = g.workspace_id " +
+		"AND kb.id = g.knowledge_base_id " +
+		"AND kb.active_index_generation_id = g.id) " +
+		"ORDER BY g.retired_at, g.id "
+	if dialector == "sqlite" {
+		return base + "LIMIT ?"
+	}
+	return base + "FOR UPDATE OF g SKIP LOCKED LIMIT ?"
+}
+
 // RetrievalCleanupRepository removes expired rebuildable retrieval data.
 type RetrievalCleanupRepository struct {
 	db *gorm.DB
@@ -121,12 +152,7 @@ func lockExpiredRetrievalEntryIDs(
 		ID uuid.UUID
 	}
 	err := tx.WithContext(ctx).Raw(
-		"SELECT id FROM retrieval_entries "+
-			"WHERE workspace_id = ? AND ("+
-			"(state IN (?, ?) AND created_at < ?) OR "+
-			"(state = ? AND COALESCE(retired_at, created_at) < ?)) "+
-			"ORDER BY COALESCE(retired_at, created_at), id "+
-			"FOR UPDATE SKIP LOCKED LIMIT ?",
+		selectExpiredEntriesSQL(tx.Dialector.Name()),
 		request.WorkspaceID,
 		value.RetrievalEntryStaging, value.RetrievalEntryFailed, request.FailedStagingBefore,
 		value.RetrievalEntryRetired, request.RetiredBefore,
@@ -152,15 +178,7 @@ func lockExpiredRetiredGenerationIDs(
 		ID uuid.UUID
 	}
 	err := tx.WithContext(ctx).Raw(
-		"SELECT g.id FROM knowledge_base_index_generations AS g "+
-			"WHERE g.workspace_id = ? AND g.status = ? AND g.retired_at < ? "+
-			"AND NOT EXISTS ("+
-			"SELECT 1 FROM knowledge_bases AS kb "+
-			"WHERE kb.workspace_id = g.workspace_id "+
-			"AND kb.id = g.knowledge_base_id "+
-			"AND kb.active_index_generation_id = g.id) "+
-			"ORDER BY g.retired_at, g.id "+
-			"FOR UPDATE OF g SKIP LOCKED LIMIT ?",
+		selectExpiredGenerationsSQL(tx.Dialector.Name()),
 		request.WorkspaceID, value.IndexGenerationRetired, request.RetiredBefore, limit,
 	).Scan(&rows).Error
 	if err != nil {
