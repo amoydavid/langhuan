@@ -447,7 +447,7 @@ func TestIndexGenerationCompleteBatchesLargeEntrySets(t *testing.T) {
 	}
 	for start := 0; start < len(staged); start += 500 {
 		end := min(start+500, len(staged))
-		if err := NewRetrievalRepository(database).StageBatch(ctx, seed.workspaceID, "simple", 1024, staged[start:end]); err != nil {
+		if err := NewRetrievalRepository(database, nil).StageBatch(ctx, seed.workspaceID, "simple", 1024, staged[start:end]); err != nil {
 			t.Fatal(err)
 		}
 	}

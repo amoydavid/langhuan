@@ -495,7 +495,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	indexGenerationRepo := db.NewIndexGenerationRepository(gormDB)
 	chunkSetRepo := db.NewChunkSetRepository(gormDB)
 	faqRepo := db.NewFAQRepository(gormDB)
-	retrievalRepo := db.NewRetrievalRepository(gormDB)
+	retrievalRepo := db.NewRetrievalRepository(gormDB, nil)
 	retrievalCleanupRepo := db.NewRetrievalCleanupRepository(gormDB)
 	documentPublisher := db.NewDocumentPublishDBStore(gormDB)
 	chunkRevisionStore := db.NewChunkRevisionStore(gormDB)
