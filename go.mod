@@ -17,6 +17,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/getkin/kin-openapi v0.146.0
 	github.com/gin-gonic/gin v1.12.0
+	github.com/go-ego/gse v1.0.2
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/jsonschema-go v0.4.2
@@ -173,6 +174,7 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
+	github.com/vcaesar/cedar v0.30.0 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
 	github.com/volcengine/volcengine-go-sdk v1.2.30 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
