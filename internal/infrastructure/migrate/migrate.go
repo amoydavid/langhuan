@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/golang-migrate/migrate/v4"
@@ -75,7 +76,7 @@ func runPostgres(ctx context.Context, databaseURL string) error {
 }
 
 func runSQLite(ctx context.Context, dsn string) error {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", sqlitePragmaDSN(dsn))
 	if err != nil {
 		return fmt.Errorf("打开 SQLite 迁移连接失败: %w", err)
 	}
@@ -105,4 +106,21 @@ func runSQLite(ctx context.Context, dsn string) error {
 		return fmt.Errorf("执行 SQLite 迁移失败: %w", err)
 	}
 	return nil
+}
+
+// sqlitePragmaDSN 在用户 DSN 上追加与 db.buildSQLiteDSN 一致的 PRAGMA 与事务锁模式。
+// migrate 包不能 import db 包（会循环依赖），故在此复制一份等价 helper。
+// foreign_keys 尤其重要：迁移产生的表关系在后续业务连接的 FK 检查下必须成立。
+// modernc 支持 ?_pragma=key(val) 形式，多个 _pragma 用 & 连接。
+func sqlitePragmaDSN(raw string) string {
+	extra := "_pragma=foreign_keys(1)" +
+		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(NORMAL)" +
+		"&_txlock=immediate"
+	sep := "?"
+	if strings.Contains(raw, "?") {
+		sep = "&"
+	}
+	return raw + sep + extra
 }

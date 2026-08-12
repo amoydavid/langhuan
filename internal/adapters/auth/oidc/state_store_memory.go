@@ -17,8 +17,8 @@ var _ authport.OIDCStateStore = (*MemoryStateStore)(nil)
 // MemoryStateStore 是 OIDCStateStore 的进程内内存实现，供 standalone 无 Redis 模式使用。
 //
 // 语义与 RedisStateStore 对齐：state 一次性消费（mutex 临界区内的取出+删除等价于 GETDEL），
-// 常量时间比较 browser nonce，不匹配时回写（保留原过期时刻）。TTL 由惰性过期 + 后台清理保证。
-// 重启清零（standalone 定位可接受；OIDC 登录窗口很短）。
+// 常量时间比较 browser nonce，不匹配时回写并重置为 full TTL（与 Redis 实现的 Set 行为一致）。
+// TTL 由惰性过期 + 后台清理保证。重启清零（standalone 定位可接受；OIDC 登录窗口很短）。
 type MemoryStateStore struct {
 	mu       sync.Mutex
 	entries  map[string]memoryStateEntry
@@ -29,7 +29,6 @@ type MemoryStateStore struct {
 
 type memoryStateEntry struct {
 	payload  authport.OIDCStatePayload
-	raw      []byte // 原始 JSON，用于 nonce 不匹配时回写
 	expireAt time.Time
 }
 
@@ -50,9 +49,6 @@ func NewMemoryStateStore(ttl time.Duration) *MemoryStateStore {
 
 func (s *MemoryStateStore) cleanupLoop() {
 	ticker := time.NewTicker(s.ttl / 4)
-	if ticker.C == nil {
-		return
-	}
 	defer ticker.Stop()
 	for {
 		select {
@@ -89,11 +85,11 @@ func (s *MemoryStateStore) Issue(ctx context.Context, payload authport.OIDCState
 	if err != nil {
 		return "", fmt.Errorf("序列化 oidc state payload 失败: %w", err)
 	}
+	_ = data // payload 已存入 entry，data 仅做序列化校验
 	now := time.Now()
 	s.mu.Lock()
 	s.entries[stateKeyPrefix+state] = memoryStateEntry{
 		payload:  payload,
-		raw:      data,
 		expireAt: now.Add(s.ttl),
 	}
 	s.mu.Unlock()
@@ -101,7 +97,7 @@ func (s *MemoryStateStore) Issue(ctx context.Context, payload authport.OIDCState
 }
 
 // Consume 在 mutex 临界区内原子取出并删除 state，常量时间比较 browser nonce。
-// nonce 不匹配时回写 state（保留剩余 TTL，供合法请求消费）。
+// nonce 不匹配时回写 state 并重置为 full TTL（与 Redis 实现的 Set 行为一致）。
 func (s *MemoryStateStore) Consume(ctx context.Context, state, browserNonce string) (*authport.OIDCStatePayload, error) {
 	if len(state) > 128 || len(state) == 0 {
 		return nil, ErrStateInvalid
@@ -119,8 +115,9 @@ func (s *MemoryStateStore) Consume(ctx context.Context, state, browserNonce stri
 	s.mu.Unlock()
 
 	if subtle.ConstantTimeCompare([]byte(entry.payload.BrowserNonce), []byte(browserNonce)) != 1 {
-		// nonce 不匹配：回写，保留剩余 TTL
+		// nonce 不匹配：回写并重置为 full TTL（对齐 RedisStateStore 的 Set 行为）。
 		s.mu.Lock()
+		entry.expireAt = time.Now().Add(s.ttl)
 		s.entries[key] = entry
 		s.mu.Unlock()
 		return nil, ErrStateInvalid

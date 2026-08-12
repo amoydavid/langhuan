@@ -64,7 +64,9 @@ func (r *InvitationRepository) FindPendingByTokenHash(ctx context.Context, token
 	var row InvitationRow
 	expiresCmp := "expires_at > now()"
 	if r.db.Dialector.Name() == "sqlite" {
-		expiresCmp = "expires_at > datetime('now')"
+		// datetime(expires_at) 把存储的时间字符串解析为统一的 "YYYY-MM-DD HH:MM:SS"，
+		// 消除 GORM 写入格式与 datetime('now') 的字节序偏差。
+		expiresCmp = "datetime(expires_at) > datetime('now')"
 	}
 	if err := r.db.WithContext(ctx).
 		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND "+expiresCmp, tokenHash).
