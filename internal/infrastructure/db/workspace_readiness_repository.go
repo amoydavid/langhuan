@@ -57,9 +57,9 @@ func (r *WorkspaceReadinessRepository) GetWorkspaceReadinessFacts(ctx context.Co
 		if tx.Dialector.Name() == "sqlite" {
 			docStatusSelect = `
 			COUNT(*) AS total,
-			SUM(CASE WHEN status IN ('ready', 'completed') THEN 1 ELSE 0 END) AS ready,
-			SUM(CASE WHEN status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting') THEN 1 ELSE 0 END) AS processing,
-			SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed`
+			COALESCE(SUM(CASE WHEN status IN ('ready', 'completed') THEN 1 ELSE 0 END), 0) AS ready,
+			COALESCE(SUM(CASE WHEN status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting') THEN 1 ELSE 0 END), 0) AS processing,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed`
 		}
 		if err := tx.WithContext(ctx).Table("documents").Select(docStatusSelect).
 			Where("workspace_id = ? AND deleted_at IS NULL AND status <> 'deleted'", workspaceID).

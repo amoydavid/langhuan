@@ -830,10 +830,13 @@ func (s *SourceSyncDBStore) DeleteSourceDocument(
 			First(&docRow, "workspace_id = ? AND id = ?", workspaceID, documentID).Error; err != nil {
 			return translateDBError(err, "读取待删除 Document 失败")
 		}
-		if err := tx.WithContext(ctx).Exec(
-			"SELECT set_config('app.workspace_id', ?, true)", docRow.WorkspaceID.String(),
-		).Error; err != nil {
-			return fmt.Errorf("设置 Workspace 数据库上下文失败: %w", err)
+		// set_config 是 PG 专属 GUC；SQLite 无对应物，跳过（查询显式带 workspace_id，spec §9）。
+		if tx.Dialector.Name() != "sqlite" {
+			if err := tx.WithContext(ctx).Exec(
+				"SELECT set_config('app.workspace_id', ?, true)", docRow.WorkspaceID.String(),
+			).Error; err != nil {
+				return fmt.Errorf("设置 Workspace 数据库上下文失败: %w", err)
+			}
 		}
 		wctx := tx.WithContext(ctx)
 

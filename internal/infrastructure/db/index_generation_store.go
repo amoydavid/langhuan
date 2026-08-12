@@ -115,8 +115,8 @@ func (tx *indexGenerationDBTx) GetActiveManualEditStats(
 	chunkStatsSelect := "COUNT(*) FILTER (WHERE cr.edit_source = 'user') AS manual_edit_count, " +
 		"COUNT(*) FILTER (WHERE cr.enabled = false) AS disabled_chunk_count"
 	if tx.db.Dialector.Name() == "sqlite" {
-		chunkStatsSelect = "SUM(CASE WHEN cr.edit_source = 'user' THEN 1 ELSE 0 END) AS manual_edit_count, " +
-			"SUM(CASE WHEN cr.enabled = false THEN 1 ELSE 0 END) AS disabled_chunk_count"
+		chunkStatsSelect = "COALESCE(SUM(CASE WHEN cr.edit_source = 'user' THEN 1 ELSE 0 END), 0) AS manual_edit_count, " +
+			"COALESCE(SUM(CASE WHEN cr.enabled = false THEN 1 ELSE 0 END), 0) AS disabled_chunk_count"
 	}
 	if err := tx.db.WithContext(ctx).Table("chunks AS c").Select(chunkStatsSelect).Joins(
 		"JOIN documents AS d ON d.workspace_id = c.workspace_id AND d.knowledge_base_id = c.knowledge_base_id "+

@@ -113,7 +113,9 @@ func (d Dir) EnsureCredentialKey() ([]byte, error) {
 	return key, nil
 }
 
-// writeFileExclusive 以 O_CREATE|O_EXCL 创建文件并写入+fsync。
+// writeFileExclusive 以 O_CREATE|O_EXCL 创建文件并写入+fsync 文件与父目录。
+// 父目录 fsync 防止断电后目录项丢失（密钥文件尤其关键：丢失会触发重新生成新密钥，
+// 使已加密的 Provider/API Key 密文不可恢复）。
 func writeFileExclusive(path string, data []byte, perm os.FileMode) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 	if err != nil {
@@ -123,7 +125,24 @@ func writeFileExclusive(path string, data []byte, perm os.FileMode) error {
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return syncParentDir(path)
+}
+
+// syncParentDir 在 Unix 上 fsync 文件所在目录，持久化目录项。
+func syncParentDir(path string) error {
+	if isWindows() {
+		return nil // Windows 无目录 fsync 语义
+	}
+	dir := filepath.Dir(path)
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func validateCredentialBytes(raw []byte, path string) ([]byte, error) {
@@ -133,7 +152,11 @@ func validateCredentialBytes(raw []byte, path string) ([]byte, error) {
 	}
 	if !isWindows() {
 		if info, statErr := os.Stat(path); statErr == nil && info.Mode().Perm() != 0o600 {
-			_ = os.Chmod(path, 0o600)
+			// 主密钥文件权限过宽必须收紧到 0600；收紧失败 fail-fast（与目录策略一致），
+			// 否则密钥可能对其他本地用户可读。
+			if err := os.Chmod(path, 0o600); err != nil {
+				return nil, fmt.Errorf("收紧凭证密钥权限失败（当前 %o）: %w", info.Mode().Perm(), err)
+			}
 		}
 	}
 	return key, nil

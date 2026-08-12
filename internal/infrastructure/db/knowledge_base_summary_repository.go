@@ -50,12 +50,12 @@ func (r *KnowledgeBaseSummaryRepository) GetKnowledgeBaseSummaryFacts(ctx contex
 		if tx.Dialector.Name() == "sqlite" {
 			docCountSelect = `
 			COUNT(*) AS total,
-			SUM(CASE WHEN kind = 'file' THEN 1 ELSE 0 END) AS file,
-			SUM(CASE WHEN kind = 'faq' THEN 1 ELSE 0 END) AS faq,
-			SUM(CASE WHEN kind = 'web' THEN 1 ELSE 0 END) AS web,
-			SUM(CASE WHEN status IN ('ready', 'completed') THEN 1 ELSE 0 END) AS ready,
-			SUM(CASE WHEN status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting') THEN 1 ELSE 0 END) AS processing,
-			SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed`
+			COALESCE(SUM(CASE WHEN kind = 'file' THEN 1 ELSE 0 END), 0) AS file,
+			COALESCE(SUM(CASE WHEN kind = 'faq' THEN 1 ELSE 0 END), 0) AS faq,
+			COALESCE(SUM(CASE WHEN kind = 'web' THEN 1 ELSE 0 END), 0) AS web,
+			COALESCE(SUM(CASE WHEN status IN ('ready', 'completed') THEN 1 ELSE 0 END), 0) AS ready,
+			COALESCE(SUM(CASE WHEN status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting') THEN 1 ELSE 0 END), 0) AS processing,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed`
 		}
 		if err := tx.WithContext(ctx).Table("documents").Select(docCountSelect).
 			Where("workspace_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL AND status <> 'deleted'", workspaceID, knowledgeBaseID).

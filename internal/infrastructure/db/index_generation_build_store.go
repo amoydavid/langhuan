@@ -181,10 +181,17 @@ func (s *IndexGenerationDBStore) Complete(
 			for start := 0; start < len(entryIDs); start += publishEntryBatchSize {
 				end := min(start+publishEntryBatchSize, len(entryIDs))
 				var batchCount int64
+				// SQLite 的 embedding/fts_document 移到独立表，改用 EXISTS 校验（同 requireCompleteStaging）。
+				cond := "workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ?"
+				if tx.Dialector.Name() == "sqlite" {
+					cond += " AND dimension IS NOT NULL" +
+						" AND EXISTS (SELECT 1 FROM retrieval_embeddings WHERE entry_id = retrieval_entries.id)" +
+						" AND EXISTS (SELECT 1 FROM retrieval_fts WHERE entry_id = retrieval_entries.id)"
+				} else {
+					cond += " AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL"
+				}
 				if err := tx.WithContext(ctx).Model(&RetrievalEntryRow{}).Where(
-					"workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ? "+
-						"AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL",
-					request.WorkspaceID, request.GenerationID, entryIDs[start:end], value.RetrievalEntryStaging,
+					cond, request.WorkspaceID, request.GenerationID, entryIDs[start:end], value.RetrievalEntryStaging,
 				).Count(&batchCount).Error; err != nil {
 					return translateDBError(err, "校验 Generation staging entries 失败")
 				}

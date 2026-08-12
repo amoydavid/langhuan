@@ -66,7 +66,7 @@ func StandaloneProfile(dataDirPath string) Config {
 	}
 	c.Database = DatabaseConfig{
 		Driver:      "sqlite",
-		DSN:         "file:" + filepath.Join(dataDirPath, "langhuan.db") + "?cache=shared",
+		DSN:         "file:" + filepath.ToSlash(filepath.Join(dataDirPath, "langhuan.db")) + "?cache=shared",
 		AutoMigrate: true,
 	}
 	c.Redis = RedisConfig{Enabled: false}
