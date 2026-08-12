@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -183,9 +182,9 @@ func (s *IndexGenerationDBStore) Complete(
 				end := min(start+publishEntryBatchSize, len(entryIDs))
 				var batchCount int64
 				if err := tx.WithContext(ctx).Model(&RetrievalEntryRow{}).Where(
-					"workspace_id = ? AND index_generation_id = ? AND id = ANY(?::uuid[]) AND state = ? "+
+					"workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ? "+
 						"AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL",
-					request.WorkspaceID, request.GenerationID, pq.Array(uuidStrings(entryIDs[start:end])), value.RetrievalEntryStaging,
+					request.WorkspaceID, request.GenerationID, entryIDs[start:end], value.RetrievalEntryStaging,
 				).Count(&batchCount).Error; err != nil {
 					return translateDBError(err, "校验 Generation staging entries 失败")
 				}
@@ -201,8 +200,8 @@ func (s *IndexGenerationDBStore) Complete(
 			for start := 0; start < len(entryIDs); start += publishEntryBatchSize {
 				end := min(start+publishEntryBatchSize, len(entryIDs))
 				result := tx.WithContext(ctx).Model(&RetrievalEntryRow{}).Where(
-					"workspace_id = ? AND index_generation_id = ? AND id = ANY(?::uuid[]) AND state = ?",
-					request.WorkspaceID, request.GenerationID, pq.Array(uuidStrings(entryIDs[start:end])), value.RetrievalEntryStaging,
+					"workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ?",
+					request.WorkspaceID, request.GenerationID, entryIDs[start:end], value.RetrievalEntryStaging,
 				).Updates(map[string]any{
 					"state": string(value.RetrievalEntryPublished), "published_at": publishedAt, "retired_at": nil,
 				})
