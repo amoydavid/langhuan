@@ -259,19 +259,26 @@ func (tx *documentPublishTx) requireCompleteStaging(
 		return nil
 	}
 	var count int64
-		for start := 0; start < len(entryIDs); start += publishEntryBatchSize {
-			end := min(start+publishEntryBatchSize, len(entryIDs))
-			var batchCount int64
-			if err := tx.db.WithContext(ctx).Model(&RetrievalEntryRow{}).
-				Where(
-					"workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ? "+
-						"AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL",
-					tx.workspaceID, generationID, entryIDs[start:end], value.RetrievalEntryStaging,
-				).Count(&batchCount).Error; err != nil {
-				return translateDBError(err, "校验 RetrievalEntry staging 完整性失败")
-			}
-			count += batchCount
+	for start := 0; start < len(entryIDs); start += publishEntryBatchSize {
+		end := min(start+publishEntryBatchSize, len(entryIDs))
+		var batchCount int64
+		// SQLite 的 embedding/fts_document 移到独立表（retrieval_embeddings/
+		// retrieval_fts），改用 EXISTS 校验投影已写入；PG 保留原列 NOT NULL 检查。
+		cond := "workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ?"
+		if tx.db.Dialector.Name() == "sqlite" {
+			cond += " AND dimension IS NOT NULL" +
+				" AND EXISTS (SELECT 1 FROM retrieval_embeddings WHERE entry_id = retrieval_entries.id)" +
+				" AND EXISTS (SELECT 1 FROM retrieval_fts WHERE entry_id = retrieval_entries.id)"
+		} else {
+			cond += " AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL"
 		}
+		if err := tx.db.WithContext(ctx).Model(&RetrievalEntryRow{}).
+			Where(cond, tx.workspaceID, generationID, entryIDs[start:end], value.RetrievalEntryStaging).
+			Count(&batchCount).Error; err != nil {
+			return translateDBError(err, "校验 RetrievalEntry staging 完整性失败")
+		}
+		count += batchCount
+	}
 	if count != int64(len(entryIDs)) {
 		return fmt.Errorf("%w: RetrievalEntry staging 不完整", domainerrors.ErrConflict)
 	}
