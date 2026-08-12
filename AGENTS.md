@@ -27,8 +27,9 @@
 
 - **Go 1.26**
 - **Gin**：REST 与 MCP HTTP 入口
-- **GORM + PostgreSQL + pgvector**：数据持久化与向量检索
-- **asynq + Redis**：异步任务队列
+- **GORM + PostgreSQL + pgvector**：生产数据持久化与向量检索
+- **SQLite 零配置单机模式**：modernc.org/sqlite（纯 Go，CGO_ENABLED=0）+ sqlite-vec 向量 + FTS5 + go-ego/gse 中文分词；单二进制 + 单 .db 文件零外部依赖部署，定位开发/演示。PG 为生产推荐。SQLite 路径与 PG 通过 `db.Dialect` 在 Repository SQL 层分流，domain/application 不感知方言
+- **asynq + Redis**：异步任务队列（生产）；standalone 模式禁用 Redis 时走进程内内存队列（`adapters/queue/memory`）
 - **golang-migrate**：数据库迁移
 - **MinerU Cloud**：首版 PDF 解析
 - **YAML 配置**：运行配置从 `config.yaml` 加载，环境变量不作为主配置入口
