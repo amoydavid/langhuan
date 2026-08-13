@@ -4,7 +4,10 @@
 TEST_PG_IMAGE ?= langhuan-test-postgres:pg17
 
 dev:
-	go run ./cmd/langhuan -config ./config.yaml
+	go run ./cmd/langhuan -config ./config.local.yaml
+
+standalone:
+	go run ./cmd/langhuan
 
 web:
 	cd web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:8090 pnpm dev
