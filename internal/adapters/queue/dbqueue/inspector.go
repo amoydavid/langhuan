@@ -1,4 +1,4 @@
-package sqlite
+package dbqueue
 
 import (
 	"context"

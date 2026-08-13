@@ -1,4 +1,4 @@
-package sqlite
+package dbqueue
 
 import (
 	"context"
@@ -12,16 +12,23 @@ import (
 	hibikenasynq "github.com/hibiken/asynq"
 	_ "modernc.org/sqlite"
 
+	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/migrate"
 	queueport "github.com/dajee/langhuan/internal/ports/queue"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+t.TempDir()+"/queue.db?cache=shared")
+	dsn := "file:" + t.TempDir() + "/queue.db?cache=shared"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
+	// 跑 SQLite 迁移建 queue_tasks 表（与生产一致，表不再由队列自建）
+	if err := migrate.Run(context.Background(), config.DatabaseConfig{Driver: "sqlite", DSN: dsn}); err != nil {
+		t.Fatalf("SQLite 迁移失败: %v", err)
+	}
 	return db
 }
 
@@ -50,7 +57,7 @@ func TestEnqueueProcessesViaMux(t *testing.T) {
 	})
 	db := openTestDB(t)
 	defer db.Close()
-	q, err := New(db, mux, Config{Concurrency: 1, MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
+	q, err := New(db, DialectSQLite, mux, Config{Concurrency: 1, MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +78,7 @@ func TestTaskIDDedup(t *testing.T) {
 	mux := newTestMux(t, "d", func(_ context.Context, _ *hibikenasynq.Task) error { return nil })
 	db := openTestDB(t)
 	defer db.Close()
-	q, _ := New(db, mux, Config{Concurrency: 1})
+	q, _ := New(db, DialectSQLite, mux, Config{Concurrency: 1})
 	// 不 Start worker，保证第一次入队的任务仍在 pending（UNIQUE 约束有效）
 	ctx := context.Background()
 
@@ -93,7 +100,7 @@ func TestRetryOnFailure(t *testing.T) {
 	})
 	db := openTestDB(t)
 	defer db.Close()
-	q, _ := New(db, mux, Config{Concurrency: 1, MaxRetry: 5, MinBackoff: time.Millisecond, MaxBackoff: 10 * time.Millisecond})
+	q, _ := New(db, DialectSQLite, mux, Config{Concurrency: 1, MaxRetry: 5, MinBackoff: time.Millisecond, MaxBackoff: 10 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	q.Start(ctx)
@@ -113,7 +120,7 @@ func TestDeadAfterMaxRetry(t *testing.T) {
 	})
 	db := openTestDB(t)
 	defer db.Close()
-	q, _ := New(db, mux, Config{Concurrency: 1, MaxRetry: 1, MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
+	q, _ := New(db, DialectSQLite, mux, Config{Concurrency: 1, MaxRetry: 1, MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	q.Start(ctx)
@@ -139,12 +146,15 @@ func TestRestartRecovery(t *testing.T) {
 		return nil
 	})
 
-	// 第 1 轮：入队但不启动 worker
+	// 第 1 轮：入队但不启动 worker（先迁移建表）
+	if err := migrate.Run(context.Background(), config.DatabaseConfig{Driver: "sqlite", DSN: dsn}); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
 	db1, _ := sql.Open("sqlite", dsn)
 	db1.SetMaxOpenConns(1)
 	mux1 := hibikenasynq.NewServeMux()
 	mux1.HandleFunc("recover", handler)
-	q1, err := New(db1, mux1, Config{Concurrency: 1})
+	q1, err := New(db1, DialectSQLite, mux1, Config{Concurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +175,7 @@ func TestRestartRecovery(t *testing.T) {
 	defer db2.Close()
 	mux2 := hibikenasynq.NewServeMux()
 	mux2.HandleFunc("recover", handler)
-	q2, err := New(db2, mux2, Config{Concurrency: 1})
+	q2, err := New(db2, DialectSQLite, mux2, Config{Concurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +197,7 @@ func TestDelayExecution(t *testing.T) {
 	})
 	db := openTestDB(t)
 	defer db.Close()
-	q, _ := New(db, mux, Config{Concurrency: 1, PollInterval: 50 * time.Millisecond})
+	q, _ := New(db, DialectSQLite, mux, Config{Concurrency: 1, PollInterval: 50 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	q.Start(ctx)
@@ -209,7 +219,7 @@ func TestInspectorSnapshotsAndDead(t *testing.T) {
 	})
 	db := openTestDB(t)
 	defer db.Close()
-	q, _ := New(db, mux, Config{Concurrency: 1, MaxRetry: 0, MinBackoff: time.Millisecond})
+	q, _ := New(db, DialectSQLite, mux, Config{Concurrency: 1, MaxRetry: 0, MinBackoff: time.Millisecond})
 	insp := NewInspector(q)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
