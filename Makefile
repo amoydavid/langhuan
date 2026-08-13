@@ -52,4 +52,4 @@ _web-build:
 
 linux: _web-build
 	mkdir -p bin
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags web_embed -o bin/langhuan-linux-amd64 ./cmd/langhuan
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags web_embed -trimpath -ldflags="-s -w" -o bin/langhuan-linux-amd64 ./cmd/langhuan

@@ -48,7 +48,7 @@ jobs:
         run: |
           ext=""
           [ "$GOOS" = "windows" ] && ext=".exe"
-          go build -tags web_embed -trimpath \
+          go build -tags web_embed -trimpath -ldflags="-s -w" \
             -o "langhuan-${GOOS}-${GOARCH}${ext}" \
             ./cmd/langhuan
 
