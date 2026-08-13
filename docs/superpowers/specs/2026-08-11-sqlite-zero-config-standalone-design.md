@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-11
 
-**状态：** 已确认，待实施
+**状态：** 已实现（feat/sqlite-standalone 分支），E2E 零配置启动验证通过
 
 **目标版本：** v1.0.0 前
 
@@ -14,11 +14,12 @@
 
 零配置启动必须满足：
 
-1. 用户直接执行 `langhuan`，当前目录没有 `config.yaml` 时，服务使用内建 standalone profile。
+1. 用户直接执行 `langhuan`，当前目录没有 `config.yaml`、且 `~/.langhuan-data/config.yaml` 也不存在时，服务首次生成 standalone profile 落盘为 `~/.langhuan-data/config.yaml` 并启动；之后重启自动读取该 config。
 2. 默认持久数据位于当前用户主目录的 `~/.langhuan-data/`：
    - SQLite：`~/.langhuan-data/langhuan.db`
    - 原始文档与资产：`~/.langhuan-data/raw-documents/`
-   - 自动生成的凭证主密钥：`~/.langhuan-data/credential.key`
+   - 自动生成的凭证主密钥（独立文件）：`~/.langhuan-data/credential.key`
+   - standalone 兜底配置（可编辑）：`~/.langhuan-data/config.yaml`，通过 `credentials.encryption_key_file` 指向 credential.key
 3. 默认不连接 PostgreSQL、Redis、S3 或其它本地基础设施；外部 Embedding/Parser Provider 只在用户配置并实际调用时访问。
 4. HTTP、MCP、内存 worker 与 Web Console 同进程启动，数据库迁移自动完成。
 5. `CGO_ENABLED=0` 的 release build 和测试通过。
@@ -39,15 +40,22 @@
 
 ### 2.1 配置选择优先级
 
-启动配置来源固定为以下顺序，不做模糊回退：
+启动配置来源固定为以下有序探测链，不做模糊回退：
 
-1. **显式 `-config <path>`**：严格读取指定 YAML。文件不存在、不可读、解析失败或校验失败时立即退出。
-2. **未显式传 `-config` 且当前目录存在 `config.yaml`**：继续读取该文件，兼容现有部署。
-3. **未显式传 `-config` 且 `config.yaml` 明确不存在**：使用内建 standalone profile。
+| 优先级 | 来源 | 命中时行为 | 文件存在但损坏/不可读/校验失败时行为 |
+|---|---|---|---|
+| 1 | 显式 `-config <path>` | 严格读取指定 YAML | 立即退出 |
+| 2 | 当前目录 `config.yaml` | 读取该文件，兼容现有部署 | 立即退出 |
+| 3 | `~/.langhuan-data/config.yaml`（standalone 生成物） | 读取该文件 | 立即退出（**不当作不存在重新生成**） |
+| 4 | 上述都不存在 | 首次生成 standalone profile（§2.2）+ credential.key（§2.4）到 `~/.langhuan-data/`，再读取刚生成的 config 启动 | — |
 
 程序必须区分 flag 的默认值和用户是否显式传参，不能把“默认字符串为 `config.yaml`”当成显式选择。可通过 `FlagSet.Visit` 或返回结构化 `ConfigSelection{Path, Explicit}` 实现。
 
-显式配置错误绝不回退 standalone；默认 `config.yaml` 的 `Stat` 若返回权限、I/O 或其它非 `IsNotExist` 错误也必须失败。否则拼错生产配置路径或暂时不可读的生产配置可能静默启动一个新的空 SQLite 实例。
+第 3 层是 standalone 兜底配置的正式落盘形态：用户会编辑它（这是本设计要提供的可编辑入口），因此它一旦存在就享有与第 1、2 层同等的严格性——解析失败或校验失败一律 fail-fast，绝不静默回退到第 4 层重新生成，否则用户的修改会被偷偷重置成默认值。
+
+任何层的 `Stat` 若返回权限、I/O 或其它非 `IsNotExist` 错误也必须失败。否则拼错生产配置路径或暂时不可读的生产配置可能静默启动一个新的空 SQLite 实例。
+
+第 4 层生成时，config.yaml 与 credential.key 的可重建性不同（详见 §2.4 的删除组合表）：config.yaml 可重建（非敏感），credential.key 不可重建（敏感，已存在则复用，绝不覆盖）。
 
 ### 2.2 Standalone profile
 
@@ -67,9 +75,14 @@ storage.raw_document_dir= ~/.langhuan-data/raw-documents
 auth.session.secure_cookie = false
 auth.password.enabled   = true
 auth.oidc.enabled       = false
+credentials.encryption_key_file = ~/.langhuan-data/credential.key（落盘时展开为绝对路径）
 ```
 
+首次启动（§2.1 第 4 层）必须把 standalone profile 完整落盘为 `~/.langhuan-data/config.yaml`，使用户重启后拿到一份可编辑的配置入口。落盘内容写完整非敏感字段 + `encryption_key_file` 指向同目录 credential.key 的绝对路径；不预填 embedding/parser/rerank 的 API key，由用户自行添加。YAML 中附头部注释说明该文件由首次启动自动生成、可编辑、删除后会在下次启动重建（但 credential.key 不重建）。
+
 其余 ingest、queue、retrieval、search、observability 等参数复用现有安全默认值。localhost 明文 HTTP 下必须关闭 Secure Cookie，否则注册/登录后的浏览器会话不可用。显式 YAML 配置继续保留当前生产默认与严格校验，不因 standalone profile 放宽。
+
+`credentials.encryption_key_file` 是通用能力，不限于 standalone：生产显式 YAML 也可用它指向外部密钥文件（如 k8s secret 挂载），与现有 `credentials.encryption_key`（Base64 直填）二选一互斥，详见 §2.4。
 
 ### 2.3 默认数据目录和权限
 
@@ -77,17 +90,45 @@ auth.oidc.enabled       = false
 
 - 数据根目录与 raw document 目录以 `0700` 创建。
 - `credential.key` 以 `0600` 创建。
+- `config.yaml`（standalone 落盘物）以 `0600` 创建。虽然 config.yaml 本身不含密钥内容（密钥在独立的 credential.key），但它揭示了数据目录布局与运行参数，与数据目录同级保护。
 - 新 SQLite 文件在 driver 打开前以 `O_CREATE|O_EXCL`、`0600` 预创建；已有文件权限过宽时尝试收紧，失败则拒绝启动，避免数据库曾以宽权限短暂存在。
 - Unix 平台严格执行并校验权限；Windows 没有等价 POSIX mode，只执行可用的用户目录隔离并在文档中说明边界。
 - 日志可显示数据目录和数据库路径，但仍通过现有脱敏规则禁止输出 DSN query、密钥或文档内容。
 
-### 2.4 自动凭证主密钥
+### 2.4 凭证主密钥与 encryption_key_file
 
-standalone 首次启动生成 32 个加密随机字节并以 Base64 文本写入 `credential.key`。写入流程必须使用 `O_CREATE|O_EXCL` 和 `0600`，写完后 `fsync` 并关闭。并发首次启动时，创建失败的一方遇到 `EEXIST` 后做有界重读，直到胜出进程写完有效内容；不会覆盖对方文件。若创建者崩溃留下空文件，后续启动按损坏密钥 fail-fast，不能擅自轮换。
+凭证主密钥始终是独立的 `credential.key` 文件，其内容为 32 个加密随机字节的 Base64 文本。config.yaml 通过 `credentials.encryption_key_file` 字段指向该文件的绝对路径，密钥内容从不进入 config 文本——这保证密钥与配置分离：config 可编辑、可分享，密钥文件单一职责、用户几乎不会触碰。
+
+#### 2.4.1 encryption_key_file 字段语义
+
+`CredentialsConfig` 新增 `EncryptionKeyFile string`（YAML 字段 `credentials.encryption_key_file`），与现有 `EncryptionKey string`（`credentials.encryption_key`，Base64 直填）并列：
+
+- 两者**互斥**：同时填写或同时为空均视为校验失败，避免歧义。
+- `encryption_key_file` 指向的文件内容格式与 `encryption_key` 一致：Base64 编码的 32 字节。加载时复用 `DecodeEncryptionKey` 的解码与长度校验，不引入新格式。
+- 文件不存在、不可读、Base64 非法、解码长度非 32 字节、权限无法收紧时一律 fail-fast，复用下方密钥损坏语义。
+- 路径必须为绝对路径；standalone 落盘 config 时把相对的 `~/.langhuan-data/credential.key` 展开为绝对路径写入。
+- 该字段是通用能力，不限于 standalone：生产显式 YAML 也可用它指向外部密钥文件（如 k8s secret 挂载）。
+
+#### 2.4.2 credential.key 的生成与稳定性
+
+standalone 首次启动（§2.1 第 4 层）生成 credential.key。写入流程必须使用 `O_CREATE|O_EXCL` 和 `0600`，写完后 `fsync` 并关闭。并发首次启动时，创建失败的一方遇到 `EEXIST` 后做有界重读，直到胜出进程写完有效内容；不会覆盖对方文件。若创建者崩溃留下空文件，后续启动按损坏密钥 fail-fast，不能擅自轮换。
 
 后续启动只读取并严格校验已有密钥。文件为空、Base64 非法、解码长度不是 32 字节、权限无法收紧或读取失败时立即退出；绝不能自动生成新密钥覆盖，否则数据库内 Provider、飞书连接和 Workspace API Key 密文将永久不可恢复。
 
-显式 YAML 部署继续要求 `credentials.encryption_key`。自动密钥文件只属于无配置 standalone profile，不改变生产备份与密钥管理合同。
+#### 2.4.3 config.yaml 与 credential.key 的删除组合
+
+config.yaml（非敏感，可重建）与 credential.key（敏感，不可重建）独立性不同。下表是用户主动删除文件后下次启动的确定性行为：
+
+| 用户删除 | credential.key 状态 | 下次启动行为 | 数据库密文可解 | 是否符合预期 |
+|---|---|---|---|---|
+| 都未删 | 存在 | §2.1 第 3 层读 config 启动 | ✓ | ✓ |
+| 仅 config.yaml | 存在 | 第 4 层检测到 key 已存在 → **复用**（不重新生成 key）→ 生成新 config 指向同一 key | ✓ | ✓ 安全 |
+| 仅 credential.key | 不存在 | 第 3 层 config 仍指向它 → 读 key 文件失败 → **fail-fast** | ✗（拒绝启动） | ✓ 正确，密文依赖该 key |
+| 两者都删 | 不存在 | 等同全新环境 → 重新生成 config + 新 key | ✗（旧 db 密文不可解） | ✓ 符合预期，用户主动删 key 的后果 |
+
+“仅删 config.yaml 时复用已有 key”是这套方案的关键不变式：config 可重建、key 不可重建、两者独立。实现时第 4 层生成逻辑必须先检查 credential.key 是否已存在，存在则复用、不存在才生成，绝不盲目覆盖。
+
+显式 YAML 部署继续要求 `credentials.encryption_key` 或 `credentials.encryption_key_file` 二选一。自动密钥文件只属于 standalone 兜底路径，不改变生产备份与密钥管理合同。
 
 ## 3. 技术选型
 
@@ -402,8 +443,8 @@ OIDC 默认关闭，但 SQLite/无 Redis 的显式配置允许开启 OIDC；此�
 `buildApp` 按数据库和 Redis 配置装配，不以 `RunHTTP/RunWorker` 推断 Redis 必然存在：
 
 ```text
-config selection
-  -> standalone data/key preparation（仅 standalone）
+config selection（§2.1 四态探测链）
+  -> standalone 兜底准备（仅第 4 层）：创建数据目录、首次生成 credential.key（已存在则复用）、落盘 config.yaml
   -> migrate selected database
   -> open selected database
   -> build repositories/services
@@ -457,8 +498,8 @@ SQLite 不需要 Docker；PostgreSQL 集成测试继续严格使用运行期临�
 
 ### 12.3 必测矩阵
 
-- 配置：缺省文件走 standalone；默认文件存在则读取；显式缺失报错；无静默回退。
-- 文件：目录/密钥权限、并发首次生成、损坏密钥 fail-fast、重启密钥稳定。
+- 配置：缺省文件走 standalone；默认文件存在则读取；`~/.langhuan-data/config.yaml` 存在则读取；显式缺失报错；无静默回退。
+- 文件：目录/密钥/config 权限、并发首次生成、损坏密钥 fail-fast、重启密钥稳定、§2.4.3 删除组合（仅删 config 复用 key / 仅删 key fail-fast / 都删等价全新环境）。
 - 迁移：空 SQLite up、重复 up、down/up、foreign key 开启、所有表/列/索引存在。
 - Codec：UUID、UTC time、JSON object/array、BLOB、nullable 字段 round-trip。
 - Repository：双方言共享断言；每个专属 SQL 点至少一个 SQLite 真实测试。
@@ -508,7 +549,7 @@ git diff --check
 - `AGENTS.md`：技术基线改为 PG 生产 + SQLite standalone；数据库测试隔离规则补充 `t.TempDir()` SQLite。
 - `docs/ARCHITECTURE.md`：数据库多驱动、内存 runtime 与 standalone 数据流。
 - `docs/DATABASE_GUIDELINES.md`：方言 SQL、SQLite schema、锁/事务、向量/FTS 规则。
-- `docs/operations/backup-restore.md`：standalone 必须一起备份 DB、raw documents 和 `credential.key`；密钥与数据目录整包泄漏不提供静态加密防护。
+- `docs/operations/backup-restore.md`：standalone 必须一起备份 DB、raw documents、`credential.key` 和 `config.yaml`；其中 `credential.key` 不可丢失（丢失即密文不可恢复），`config.yaml` 可重建但建议一并备份以保留用户自定义；密钥与数据目录整包泄漏不提供静态加密防护。
 - `ROADMAP.md`：把零配置 SQLite 纳入 v1.0.0 安装验收基线。
 
 兼容承诺：
@@ -529,15 +570,18 @@ git diff --check
 | FTS 双写漂移 | 同事务显式写/删，重建一致性测试与孤儿检查 |
 | 用户 query 被解释为 FTS5 语法 | tokenizer 输出逐 token 安全引用并以 AND 组合；特殊符号与空 token 测试 |
 | 内存队列重启丢任务 | 明确 standalone 边界；只复用现有可证明安全的补偿与用户重试入口，不声称持久队列或通用自动重建 |
-| 自动密钥丢失 | 0600 sidecar、损坏 fail-fast、README/备份文档强提示，绝不自动覆盖 |
+| 自动密钥丢失 | 0600 独立 credential.key、损坏 fail-fast、README/备份文档强提示，绝不自动覆盖；密钥与 config 分文件 |
+| 用户删除 config.yaml 后重启丢密钥 | §2.4.3 删除组合表：仅删 config 时复用已存在的 key、绝不重新生成；删除组合纳入必测矩阵 |
+| 用户编辑 `~/.langhuan-data/config.yaml` 弄坏 | 该文件一旦存在即按正式配置严格处理，损坏 fail-fast，不静默重置为 standalone 默认 |
 | 默认 Secure Cookie 导致 localhost 登录失败 | standalone profile 显式 false；生产 YAML 保持 true |
-| 现有 YAML 被静默切到 SQLite | 当前目录存在默认配置即读取；显式配置失败不回退 |
+| 现有 YAML 被静默切到 SQLite | 当前目录存在默认配置即读取；显式配置失败不回退；兜底 config 损坏也不回退 |
 
 ## 16. 第一性原理复核
 
 - **目标事实**：体验用户需要的是可直接使用的产品，不是一个需要手写 SQLite YAML 的 driver demo。因此配置缺失、凭证密钥、Cookie、队列和本地存储都是同一目标的必要组成。
 - **正确性约束**：租户过滤必须发生在向量排序之前；“全局 top-k 后过滤”无法由固定放大倍数证明正确，故舍弃。
-- **安全约束**：数据库内存在可恢复密文，自动密钥必须稳定持久化并拒绝静默轮换。密钥与数据库分文件至少保留“仅数据库泄漏”时的隔离。
-- **兼容约束**：已有 `config.yaml` 是现有生产入口，默认文件存在时继续读取比改变 YAML 默认值更可靠。
+- **安全约束**：数据库内存在可恢复密文，自动密钥必须稳定持久化并拒绝静默轮换。密钥与配置分离（独立 credential.key + config 用 `encryption_key_file` 指向）使密钥不进入用户可编辑/可分享的 config 文本，同时保留 config 可重建、key 不可重建的独立性，使“仅删 config”可安全恢复而“删 key”正确 fail-fast。
+- **透明度约束**：standalone 不应是黑盒内存 profile。首次启动落盘 config.yaml，用户重启后拿到可编辑的配置入口，能直接看到并修改生效参数。
+- **兼容约束**：已有 `config.yaml` 是现有生产入口，默认文件存在时继续读取比改变 YAML 默认值更可靠。`encryption_key_file` 是与 `encryption_key` 并列的通用字段，生产显式 YAML 同样可用，不引入 standalone 专属补丁。
 - **复杂度约束**：PG/SQLite 的共同业务合同已由 application/domain 隔离；只在真实 SQL 差异处引入 Dialect，避免复制 28 个 Repository 或创建万能 capability abstraction。
 - **验证闭环**：SQLite 使用临时文件真实迁移与 E2E，PG 使用临时 Docker；两条路径都以可复现实验而非 mock GORM 或静态 grep 作为完成证据。

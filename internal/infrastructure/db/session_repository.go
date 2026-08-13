@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -35,8 +36,21 @@ func (r *SessionRepository) Create(ctx context.Context, session *model.Session) 
 // 不向调用方区分“不存在/已过期/已撤销”以避免信息泄漏。
 func (r *SessionRepository) FindActive(ctx context.Context, id uuid.UUID) (*model.Session, error) {
 	var row SessionRow
+	expiresCmp := "expires_at > now()"
+	if r.db.Dialector.Name() == "sqlite" {
+		// SQLite 的 datetime() 无法解析 Go time.Time.String() 的 " UTC" 后缀（返回 NULL），
+		// 不能包裹列。用参数绑定 time.Now().UTC()，与 oidc_auth_tx_runner 的既有正确写法一致，
+		// 两侧同为 time.Time.String() 格式直接比较（保留亚秒精度，且能用 expires_at 索引）。
+		expiresCmp = "expires_at > ?"
+	}
+	var args []any
+	if r.db.Dialector.Name() == "sqlite" {
+		args = []any{id, time.Now().UTC()}
+	} else {
+		args = []any{id}
+	}
 	if err := r.db.WithContext(ctx).
-		Where("id = ? AND revoked_at IS NULL AND expires_at > now()", id).
+		Where("id = ? AND revoked_at IS NULL AND "+expiresCmp, args...).
 		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRepositoryNotFound

@@ -174,7 +174,7 @@ func stageChunkRevisionEntry(
 	}
 	vector := make([]float32, 1024)
 	vector[0] = 1
-	if err := NewRetrievalRepository(database).StageBatch(ctx, seed.workspaceID, "simple", 1024, []indexport.StageEntry{{
+	if err := NewRetrievalRepository(database, nil).StageBatch(ctx, seed.workspaceID, "simple", 1024, []indexport.StageEntry{{
 		Entry: entry, Embedding: vector,
 	}}); err != nil {
 		t.Fatal(err)

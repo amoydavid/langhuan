@@ -7,14 +7,16 @@ import (
 
 	"github.com/dajee/langhuan/internal/adapters/queue/asynq"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/db"
 	langhttp "github.com/dajee/langhuan/internal/interfaces/http"
 )
 
-// readinessChecker 探活 PostgreSQL、Redis 与 asynq 队列积压。
+// readinessChecker 探活数据库（postgres/sqlite）、Redis 与队列积压。
 type readinessChecker struct {
 	db                dbPinger
 	redis             redisPinger
 	inspector         *asynq.QueueInspector
+	dbDialect         string
 	queuePendingLimit int
 }
 
@@ -28,11 +30,12 @@ type redisPinger interface {
 	PingWithTimeout(ctx context.Context) error
 }
 
-func newReadinessChecker(db dbPinger, redis redisPinger, inspector *asynq.QueueInspector, cfg config.ObservabilityConfig) *readinessChecker {
+func newReadinessChecker(db dbPinger, redis redisPinger, inspector *asynq.QueueInspector, dialect db.Dialect, cfg config.ObservabilityConfig) *readinessChecker {
 	return &readinessChecker{
 		db:                db,
 		redis:             redis,
 		inspector:         inspector,
+		dbDialect:         string(dialect),
 		queuePendingLimit: cfg.Readiness.QueuePendingThreshold,
 	}
 }
@@ -41,20 +44,23 @@ func (r *readinessChecker) Check(ctx context.Context) langhttp.ReadinessReport {
 	checks := make(map[string]langhttp.ReadinessCheck, 3)
 	ready := true
 
-	// PostgreSQL
+	// 数据库（postgres 或 sqlite）
 	if r.db != nil {
 		if err := r.db.PingWithTimeout(ctx); err != nil {
-			checks["database"] = langhttp.ReadinessCheck{OK: false, Message: err.Error()}
+			// 不把底层错误原文（可能含 DB 连接信息）返回 HTTP，使用固定脱敏文案。
+			checks["database"] = langhttp.ReadinessCheck{OK: false, Message: "database unreachable"}
 			ready = false
 		} else {
-			checks["database"] = langhttp.ReadinessCheck{OK: true}
+			// 报告当前数据库方言，便于运维识别 standalone（sqlite）vs 生产（postgres）。
+			checks["database"] = langhttp.ReadinessCheck{OK: true, Message: r.dbDialect}
 		}
 	}
 
 	// Redis
 	if r.redis != nil {
 		if err := r.redis.PingWithTimeout(ctx); err != nil {
-			checks["redis"] = langhttp.ReadinessCheck{OK: false, Message: err.Error()}
+			// 同上，Redis 连接细节不进 HTTP。
+			checks["redis"] = langhttp.ReadinessCheck{OK: false, Message: "redis unreachable"}
 			ready = false
 		} else {
 			checks["redis"] = langhttp.ReadinessCheck{OK: true}
@@ -65,7 +71,7 @@ func (r *readinessChecker) Check(ctx context.Context) langhttp.ReadinessReport {
 	if r.inspector != nil && r.queuePendingLimit > 0 {
 		pending, err := r.inspector.TotalPending(ctx)
 		if err != nil {
-			checks["queue"] = langhttp.ReadinessCheck{OK: false, Message: err.Error()}
+			checks["queue"] = langhttp.ReadinessCheck{OK: false, Message: "queue inspector unavailable"}
 			ready = false
 		} else if pending > r.queuePendingLimit {
 			checks["queue"] = langhttp.ReadinessCheck{OK: false, Message: fmt.Sprintf("pending %d 超过阈值 %d", pending, r.queuePendingLimit)}
@@ -78,7 +84,7 @@ func (r *readinessChecker) Check(ctx context.Context) langhttp.ReadinessReport {
 	return langhttp.ReadinessReport{Ready: ready, Checks: checks}
 }
 
-// pingDB 用 gorm 探活 PostgreSQL（2s 超时）。
+// gormPinger 用 gorm 探活数据库（postgres/sqlite，2s 超时）。
 type gormPinger struct {
 	ping func(ctx context.Context) error
 }

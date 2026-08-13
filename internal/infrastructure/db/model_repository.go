@@ -174,8 +174,12 @@ func (r *ModelRepository) listManaged(ctx context.Context, query *gorm.DB, filte
 	}
 	if search := strings.TrimSpace(filter.Query); search != "" {
 		pattern := "%" + search + "%"
-		query = query.Where(`models.name ILIKE ? OR models.display_name ILIKE ? OR models.model_name ILIKE ? OR provider.display_name ILIKE ?`,
-			pattern, pattern, pattern, pattern)
+		// SQLite 无 ILIKE；其 LIKE 对 ASCII 默认大小写不敏感，与 PG ILIKE 语义对齐。
+		likeSQL := "models.name ILIKE ? OR models.display_name ILIKE ? OR models.model_name ILIKE ? OR provider.display_name ILIKE ?"
+		if query.Dialector.Name() == "sqlite" {
+			likeSQL = "models.name LIKE ? OR models.display_name LIKE ? OR models.model_name LIKE ? OR provider.display_name LIKE ?"
+		}
+		query = query.Where(likeSQL, pattern, pattern, pattern, pattern)
 	}
 	var rows []ModelRow
 	if err := query.

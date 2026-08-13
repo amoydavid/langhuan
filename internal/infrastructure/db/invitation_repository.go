@@ -62,8 +62,20 @@ func (r *InvitationRepository) FindByID(ctx context.Context, id uuid.UUID) (*mod
 // 其余情形一律返回 ErrNotFound，不向调用方区分状态以避免信息泄漏。
 func (r *InvitationRepository) FindPendingByTokenHash(ctx context.Context, tokenHash string) (*model.Invitation, error) {
 	var row InvitationRow
+	expiresCmp := "expires_at > now()"
+	if r.db.Dialector.Name() == "sqlite" {
+		// SQLite 的 datetime() 无法解析 Go time.Time.String() 的 " UTC" 后缀（返回 NULL），
+		// 不能包裹列。用参数绑定 time.Now().UTC()，与 oidc_auth_tx_runner 的既有正确写法一致。
+		expiresCmp = "expires_at > ?"
+	}
+	var args []any
+	if r.db.Dialector.Name() == "sqlite" {
+		args = []any{tokenHash, time.Now().UTC()}
+	} else {
+		args = []any{tokenHash}
+	}
 	if err := r.db.WithContext(ctx).
-		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()", tokenHash).
+		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND "+expiresCmp, args...).
 		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRepositoryNotFound

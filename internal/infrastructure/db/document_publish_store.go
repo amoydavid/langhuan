@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -23,20 +22,9 @@ type DocumentPublishDBStore struct {
 
 // publishEntryBatchSize 分批发布 retrieval_entries 的批大小。单文档 chunk 可能
 // 很多，一次性 `id IN (...)` 会产生超大 SQL 报文并锁住整文档所有行；分批保持
-// 同一事务，逐批累加校验，语义与一次性更新完全一致。
+// 同一事务，逐批累加校验，语义与一次性更新完全一致。批大小 1000 远低于
+// PostgreSQL 参数上限，因此 `id IN ?`（GORM 展开 slice）可直接跨 PG/SQLite 使用。
 const publishEntryBatchSize = 1000
-
-// uuidStrings 把 uuid 列表转成字符串切片，配合 pq.Array 以单个数组参数绑定
-// `id = ANY(?::uuid[])`：pq.Array 作为 driver.Valuer 返回数组字面量（GORM 不会
-// 展开 slice），经 SQL cast 为 uuid[] 参与相等比较，与 `id IN (...)` 完全等价
-// 但只占一个绑定参数，规避 PostgreSQL 参数上限。
-func uuidStrings(ids []uuid.UUID) []string {
-	values := make([]string, len(ids))
-	for index, id := range ids {
-		values[index] = id.String()
-	}
-	return values
-}
 
 // NewDocumentPublishDBStore creates a document publication store.
 func NewDocumentPublishDBStore(database *gorm.DB) *DocumentPublishDBStore {
@@ -161,7 +149,7 @@ func (tx *documentPublishTx) PublishDocument(
 		for start := 0; start < len(entryIDs); start += publishEntryBatchSize {
 			end := min(start+publishEntryBatchSize, len(entryIDs))
 			result := tx.db.WithContext(ctx).Model(&RetrievalEntryRow{}).
-				Where("workspace_id = ? AND id = ANY(?::uuid[]) AND state = ?", tx.workspaceID, pq.Array(uuidStrings(entryIDs[start:end])), value.RetrievalEntryStaging).
+				Where("workspace_id = ? AND id IN ? AND state = ?", tx.workspaceID, entryIDs[start:end], value.RetrievalEntryStaging).
 				Updates(map[string]any{
 					"state": string(value.RetrievalEntryPublished), "published_at": now, "retired_at": nil,
 				})
@@ -274,12 +262,19 @@ func (tx *documentPublishTx) requireCompleteStaging(
 	for start := 0; start < len(entryIDs); start += publishEntryBatchSize {
 		end := min(start+publishEntryBatchSize, len(entryIDs))
 		var batchCount int64
+		// SQLite 的 embedding/fts_document 移到独立表（retrieval_embeddings/
+		// retrieval_fts），改用 EXISTS 校验投影已写入；PG 保留原列 NOT NULL 检查。
+		cond := "workspace_id = ? AND index_generation_id = ? AND id IN ? AND state = ?"
+		if tx.db.Dialector.Name() == "sqlite" {
+			cond += " AND dimension IS NOT NULL" +
+				" AND EXISTS (SELECT 1 FROM retrieval_embeddings WHERE entry_id = retrieval_entries.id)" +
+				" AND EXISTS (SELECT 1 FROM retrieval_fts WHERE entry_id = retrieval_entries.id)"
+		} else {
+			cond += " AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL"
+		}
 		if err := tx.db.WithContext(ctx).Model(&RetrievalEntryRow{}).
-			Where(
-				"workspace_id = ? AND index_generation_id = ? AND id = ANY(?::uuid[]) AND state = ? "+
-					"AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL",
-				tx.workspaceID, generationID, pq.Array(uuidStrings(entryIDs[start:end])), value.RetrievalEntryStaging,
-			).Count(&batchCount).Error; err != nil {
+			Where(cond, tx.workspaceID, generationID, entryIDs[start:end], value.RetrievalEntryStaging).
+			Count(&batchCount).Error; err != nil {
 			return translateDBError(err, "校验 RetrievalEntry staging 完整性失败")
 		}
 		count += batchCount

@@ -44,24 +44,40 @@ File / Web / FAQ ingestion
   -> REST /api/v1/*  +  MCP /mcp
 ```
 
-Tech baseline: Go 1.26 · Gin · GORM + PostgreSQL 17 + pgvector (halfvec / HNSW) · PostgreSQL FTS (zhparser) · asynq + Redis · object storage (OSS / Local).
+Tech baseline: Go 1.26 · Gin · GORM + PostgreSQL 17 + pgvector (halfvec / HNSW) · PostgreSQL FTS (zhparser) · asynq + Redis · object storage (OSS / Local). Since v1.0.0: SQLite zero-config standalone mode (modernc.org/sqlite + sqlite-vec + FTS5 + gse Chinese tokenizer).
 
 ## Quick Start
 
-You only need Docker. A single command brings up the whole stack (PostgreSQL + pgvector + zhparser, Redis, and Langhuan itself):
+### Zero-Config (Recommended)
+
+No Docker, PostgreSQL, or Redis needed—just run the binary:
+
+```bash
+make standalone   # or: go run ./cmd/langhuan, or just ./langhuan
+```
+
+On first run, Langhuan auto-provisions a SQLite database, encryption key, and config under `~/.langhuan-data/`. Open [http://127.0.0.1:8080](http://127.0.0.1:8080) → register admin → create workspace → create knowledge base → ingest documents → search.
+
+> No Docker, PostgreSQL, or Redis needed. Just run the binary—Langhuan auto-provisions everything under `~/.langhuan-data/`.
+
+**Standalone limitations**: in-process memory queue (tasks lost on crash; recovered by source cleanup + user retry); recommended for < tens of thousands of embeddings (exact brute-force vector scan, 100% recall); full retrieval features (vector + Chinese FTS + RRF + rerank). For high-concurrency production, use the PostgreSQL + Redis deployment below.
+
+### Production Deployment (PostgreSQL + Redis)
+
+Requires Docker. One command brings up the full stack:
 
 ```bash
 docker compose up -d --build
 ```
 
-Open **[http://localhost:8080](http://localhost:8080)**, finish first-run setup (create the admin account) → create a workspace → create a knowledge base → ingest documents → verify mixed Chinese/English retrieval on the search page.
+Open [http://localhost:8080](http://localhost:8080), finish first-run setup → create workspace → create knowledge base → ingest documents → search.
 
-> Requires only Docker. One command brings up the full stack: `docker compose up -d --build`, then open http://localhost:8080.
+> Full production stack with one command: `docker compose up -d --build`.
 
 ### Manual Install
 
 - [Install PostgreSQL + pgvector + zhparser on Ubuntu 24 / macOS](docs/DATABASE_GUIDELINES.md#72-手动安装-pgvector--zhparserubuntu-24--macos) (Chinese)
-- [Architecture & Design](docs/ARCHITECTURE.md) · [Database Development Guide](docs/DATABASE_GUIDELINES.md) (Chinese) · [Roadmap](ROADMAP.md)
+- [Architecture & Design](docs/ARCHITECTURE.md) · [Database Development Guide](docs/DATABASE_GUIDELINES.md) (Chinese) · [Backup & Restore](docs/operations/backup-restore.md) · [Roadmap](ROADMAP.md)
 
 ## Positioning vs. RAG Platforms
 

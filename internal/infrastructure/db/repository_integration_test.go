@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/dajee/langhuan/internal/testsupport"
 )
 
@@ -30,7 +31,7 @@ func openIntegrationTestDB(t *testing.T) (context.Context, *gorm.DB) {
 	t.Helper()
 	ctx := context.Background()
 	databaseURL := testsupport.NewMigratedPostgres(t)
-	gormDB, err := Open(databaseURL)
+	gormDB, _, err := Open(config.DatabaseConfig{Driver: "postgres", DSN: databaseURL})
 	if err != nil {
 		t.Fatal(err)
 	}

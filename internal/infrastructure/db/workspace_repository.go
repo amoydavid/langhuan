@@ -82,8 +82,13 @@ const workspaceLimitLockKey = "langhuan:workspace-limit"
 // advisory transaction lock 保证并发创建时只有一个成功，其余获得锁后重读计数被拒。
 func (r *WorkspaceRepository) CreateWithOwnerIfEmpty(ctx context.Context, ws *model.Workspace, ownerUserID uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", workspaceLimitLockKey).Error; err != nil {
-			return fmt.Errorf("获取 workspace 数量限制锁失败: %w", err)
+		// advisory transaction lock 保证并发创建时只有一个成功（spec §9）。
+		// SQLite 无 advisory lock，但 _txlock=immediate + 单写锁已串行化所有写事务，
+		// 事务内 check-then-write 同样原子，跳过该 SQL。
+		if tx.Dialector.Name() != "sqlite" {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", workspaceLimitLockKey).Error; err != nil {
+				return fmt.Errorf("获取 workspace 数量限制锁失败: %w", err)
+			}
 		}
 		var count int64
 		if err := tx.Model(&WorkspaceRow{}).Count(&count).Error; err != nil {

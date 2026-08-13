@@ -191,6 +191,9 @@ type DatabaseConfig struct {
 }
 
 type RedisConfig struct {
+	// Enabled 控制 Redis/asynq 是否装配。默认 true（向后兼容旧 YAML 未写字段时保持 true）。
+	// standalone profile 与显式禁用 Redis 的部署设为 false，走内存队列/限流/OIDC state。
+	Enabled  bool   `yaml:"enabled"`
 	Addr     string `yaml:"addr"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
@@ -263,15 +266,49 @@ type RetrievalConfig struct {
 }
 
 // CredentialsConfig 描述持久化敏感凭证所使用的主密钥。
+//
+// 密钥来源二选一互斥：
+//   - EncryptionKey：Base64 直填（现有生产 YAML 用法）
+//   - EncryptionKeyFile：指向独立密钥文件的绝对路径，文件内容为 Base64 编码的 32 字节
+//
+// 密钥与配置分离：standalone 落盘的 config.yaml 只用 EncryptionKeyFile 指向独立的
+// credential.key，密钥内容从不进入 config 文本。
 type CredentialsConfig struct {
-	EncryptionKey string `yaml:"encryption_key"`
+	EncryptionKey     string `yaml:"encryption_key"`
+	EncryptionKeyFile string `yaml:"encryption_key_file"`
 }
 
 // DecodeEncryptionKey 解码并校验 AES-256 所需的 32-byte key。
+// 向后兼容保留：内部委托给 ResolveEncryptionKey 的 EncryptionKey 分支。
+// 新代码应直接调用 ResolveEncryptionKey。
 func (c CredentialsConfig) DecodeEncryptionKey() ([]byte, error) {
-	key, err := base64.StdEncoding.DecodeString(c.EncryptionKey)
+	return c.ResolveEncryptionKey()
+}
+
+// ResolveEncryptionKey 解析主密钥：encryption_key 与 encryption_key_file 二选一，
+// 返回 AES-256 所需的 32 字节。两者都填或都不填均视为校验失败。
+// encryption_key_file 指向的文件内容格式与 encryption_key 一致（Base64 32 字节）。
+func (c CredentialsConfig) ResolveEncryptionKey() ([]byte, error) {
+	switch {
+	case c.EncryptionKey != "" && c.EncryptionKeyFile != "":
+		return nil, errors.New("credentials.encryption_key 与 encryption_key_file 不能同时指定")
+	case c.EncryptionKey != "":
+		return decodeBase64Key(c.EncryptionKey)
+	case c.EncryptionKeyFile != "":
+		raw, err := os.ReadFile(c.EncryptionKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("读取 credentials.encryption_key_file 失败: %w", err)
+		}
+		return decodeBase64Key(strings.TrimSpace(string(raw)))
+	default:
+		return nil, errors.New("必须提供 credentials.encryption_key 或 credentials.encryption_key_file")
+	}
+}
+
+func decodeBase64Key(s string) ([]byte, error) {
+	key, err := base64.StdEncoding.DecodeString(s)
 	if err != nil || len(key) != 32 {
-		return nil, errors.New("credentials.encryption_key 必须是 Base64 编码的 32 字节密钥")
+		return nil, errors.New("主密钥必须是 Base64 编码的 32 字节")
 	}
 	return key, nil
 }
@@ -357,7 +394,7 @@ func defaultConfig() Config {
 			RunWorker: true,
 		},
 		Database: DatabaseConfig{Driver: "postgres", AutoMigrate: true},
-		Redis:    RedisConfig{Addr: "127.0.0.1:6379"},
+		Redis:    RedisConfig{Enabled: true, Addr: "127.0.0.1:6379"},
 		Log:      LogConfig{Level: "info", Redact: true},
 		Storage: StorageConfig{
 			Driver:         "local",
@@ -641,8 +678,8 @@ func (c *Config) validate() error {
 	if c.Database.DSN == "" {
 		return errors.New("database.dsn 不能为空")
 	}
-	if c.Redis.Addr == "" {
-		return errors.New("redis.addr 不能为空")
+	if c.Redis.Enabled && c.Redis.Addr == "" {
+		return errors.New("redis.enabled=true 时 redis.addr 不能为空")
 	}
 	if c.Storage.RawDocumentDir == "" {
 		return errors.New("storage.raw_document_dir 不能为空")
@@ -689,7 +726,7 @@ func (c *Config) validate() error {
 	if err := c.validateObservability(); err != nil {
 		return err
 	}
-	if _, err := c.Credentials.DecodeEncryptionKey(); err != nil {
+	if _, err := c.Credentials.ResolveEncryptionKey(); err != nil {
 		return err
 	}
 	return nil

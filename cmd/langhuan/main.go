@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -38,18 +39,21 @@ import (
 	parserprovideradapter "github.com/dajee/langhuan/internal/adapters/parserprovider"
 	minerufactory "github.com/dajee/langhuan/internal/adapters/parserprovider/mineru"
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
+	memoryqueue "github.com/dajee/langhuan/internal/adapters/queue/memory"
 	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	siliconflowadapter "github.com/dajee/langhuan/internal/adapters/siliconflow"
 	feishu "github.com/dajee/langhuan/internal/adapters/source/feishu"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
 	s3storage "github.com/dajee/langhuan/internal/adapters/storage/s3"
+	gsetokenizer "github.com/dajee/langhuan/internal/adapters/tokenizer/gse"
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/pipeline"
 	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/datadir"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
 	metricspkg "github.com/dajee/langhuan/internal/infrastructure/metrics"
 	"github.com/dajee/langhuan/internal/infrastructure/migrate"
@@ -88,8 +92,14 @@ type appRuntime struct {
 	otelProviders  *otelinfra.Providers
 	redisClient    *redis.Client
 	gormDB         *gorm.DB
+	dialect        db.Dialect
 	jobQueue       queueport.JobQueue
 	services       *runtimeServices
+	// standalone（SQLite / 无 Redis）模式专用组件。
+	memoryQueue      *memoryqueue.Queue            // 内存队列（无 Redis 时替代 asynq）
+	memoryStateStore *oidcadapter.MemoryStateStore // 内存 OIDC state（无 Redis 时需 Close 停止清理 goroutine）
+	gseTokenizer     db.SearchTokenizer            // SQLite 模式注入给 RetrievalRepository（PG 传 nil）
+	inspectorPort    service.QueueInspectorPort    // 队列可见性端口（asynq inspectorPortAdapter / memory.Inspector）
 }
 
 type runtimeServices struct {
@@ -106,10 +116,11 @@ type runtimeServices struct {
 	sessionCfg     config.SessionConfig
 	publicURLs     *service.PublicURLBuilder
 	// OIDC（条件装配：cfg.Auth.OIDC.Enabled=true 时非 nil）
-	oidc            *service.OIDCLoginService
-	oidcAcceptor    *service.InvitationService
-	oidcEnabled     bool
-	passwordEnabled bool
+	oidc             *service.OIDCLoginService
+	oidcAcceptor     *service.InvitationService
+	oidcEnabled      bool
+	passwordEnabled  bool
+	memoryStateStore *oidcadapter.MemoryStateStore // 无 Redis 模式的 OIDC state store（需 Close）
 
 	// resource (workspace-scoped)
 	workspaceRepo        *db.WorkspaceRepository
@@ -213,11 +224,11 @@ func main() {
 }
 
 func run(args []string) error {
-	configFile, err := configPath(args)
+	sel, err := selectConfig(args)
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(configFile)
+	cfg, err := config.Load(sel.Path)
 	if err != nil {
 		return err
 	}
@@ -225,7 +236,11 @@ func run(args []string) error {
 	// 把脱敏 logger 设为全局默认：worker/service 里 slog.Default() 兜底路径
 	// （Logger 未注入时）也继承脱敏，避免隐性旁路。
 	slog.SetDefault(log)
-	log.Info("starting langhuan", slog.String("version", version.Version()))
+	if sel.Explicit {
+		log.Info("starting langhuan", slog.String("version", version.Version()), slog.String("config", sel.Path))
+	} else {
+		log.Info("starting langhuan", slog.String("version", version.Version()), slog.String("config", sel.Path))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -248,14 +263,46 @@ func run(args []string) error {
 	return app.start(ctx, log)
 }
 
-func configPath(args []string) (string, error) {
+// selectConfig 解析 -config flag 并按 spec §2.1 四态探测链确定配置来源。
+func selectConfig(args []string) (ConfigSelection, error) {
+	explicitPath, explicitSet, err := parseConfigFlag(args)
+	if err != nil {
+		return ConfigSelection{}, err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ConfigSelection{}, fmt.Errorf("获取当前目录失败: %w", err)
+	}
+	cwdConfig := filepath.Join(cwd, "config.yaml")
+	dataDir, err := datadir.Resolve(os.UserHomeDir)
+	if err != nil {
+		return ConfigSelection{}, err
+	}
+	dataDirConfig := filepath.Join(dataDir.Path(), "config.yaml")
+	return resolveConfigSelection(explicitPath, explicitSet, cwdConfig, dataDirConfig, dataDir.Path(),
+		func(dataDirPath string) (string, error) {
+			d := datadir.New(dataDirPath)
+			if err := d.Ensure(); err != nil {
+				return "", err
+			}
+			return config.MaterializeStandalone(dataDirPath, d.EnsureCredentialKey)
+		})
+}
+
+func parseConfigFlag(args []string) (path string, explicit bool, err error) {
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	path := fs.String("config", "config.yaml", "YAML 配置文件路径")
+	p := fs.String("config", "", "YAML 配置文件路径（未传时按四态探测链解析）")
 	if err := fs.Parse(args[1:]); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return *path, nil
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			set = true
+		}
+	})
+	return *p, set, nil
 }
 
 func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRuntime, error) {
@@ -264,55 +311,78 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 		return app, nil
 	}
 
-	gormDB, err := openDatabase(cfg.Database.DSN)
-	if err != nil {
-		return nil, fmt.Errorf("连接 PostgreSQL 失败: %w", err)
-	}
-	app.gormDB = gormDB
+	// spec §11：迁移先于业务连接，避免 SQLite migration connection 与业务连接竞争。
 	if shouldRunMigrations(cfg) {
-		if err := migrate.Run(ctx, cfg.Database.DSN); err != nil {
+		if err := migrate.Run(ctx, cfg.Database); err != nil {
 			return nil, err
 		}
-		// Task 8: 不再调用 EnsureDefaultWorkspace——多租户认证启用后由首位
-		// platform admin 通过 /api/v1/auth/register + /api/v1/workspaces 显式建立
-		// 自有租户；这里只保留 migrate.Run（为旧库回填 workspace.slug）。
-		// EnsureDefaultWorkspace helper 仍保留，仅供旧库迁移兼容测试使用。
 	}
+	gormDB, dialect, err := openDatabase(cfg.Database)
+	if err != nil {
+		return nil, fmt.Errorf("连接数据库失败: %w", err)
+	}
+	app.gormDB = gormDB
+	app.dialect = dialect
 
 	if needsQueueClient(cfg) {
-		redisOpt := hibikenasynq.RedisClientOpt{
-			Addr:     cfg.Redis.Addr,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
+		if cfg.Redis.Enabled {
+			// PG + Redis 路径：redis client + asynq client + jobQueue + queueInspector。
+			redisOpt := hibikenasynq.RedisClientOpt{
+				Addr:     cfg.Redis.Addr,
+				Password: cfg.Redis.Password,
+				DB:       cfg.Redis.DB,
+			}
+			app.redisClient = newRedisClient(&redis.Options{
+				Addr:     cfg.Redis.Addr,
+				Password: cfg.Redis.Password,
+				DB:       cfg.Redis.DB,
+			})
+			if err := pingRedis(ctx, app.redisClient); err != nil {
+				return nil, fmt.Errorf("连接 Redis 失败: %w", err)
+			}
+			app.asynqClient = newAsynqClient(redisOpt)
+			app.jobQueue = queueadapter.NewQueueWithDefaults(app.asynqClient, queueDefaults(cfg.Queue))
+			insp, err := queueadapter.NewQueueInspectorFromRedis(redisOpt)
+			if err != nil {
+				return nil, fmt.Errorf("创建 asynq Inspector 失败: %w", err)
+			}
+			app.queueInspector = insp
+			app.inspectorPort = inspectorPortAdapter{inspector: insp}
+		} else {
+			// standalone 路径：内存队列。workerMux 必须先于 memory.Queue 构造，
+			// 因为 Queue 需要 mux 作为 TaskRunner；worker handler 注册两种模式共用。
+			mux := hibikenasynq.NewServeMux()
+			mux.Use(otelTaskMiddleware())
+			app.workerMux = mux
+			memQ := memoryqueue.New(mux, memoryqueue.Config{
+				Concurrency: cfg.Queue.Concurrency,
+				Capacity:    max(cfg.Queue.Concurrency, 1024),
+				MaxRetry:    cfg.Queue.MaxRetry(),
+				MinBackoff:  cfg.Queue.MinBackoff(),
+				MaxBackoff:  cfg.Queue.MaxBackoff(),
+			})
+			app.memoryQueue = memQ
+			app.jobQueue = memQ
+			app.inspectorPort = memoryqueue.NewInspector(memQ, "default")
 		}
-		app.redisClient = newRedisClient(&redis.Options{
-			Addr:     cfg.Redis.Addr,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-		})
-		if err := pingRedis(ctx, app.redisClient); err != nil {
-			return nil, fmt.Errorf("连接 Redis 失败: %w", err)
-		}
-		app.asynqClient = newAsynqClient(redisOpt)
-		app.jobQueue = queueadapter.NewQueueWithDefaults(app.asynqClient, queueDefaults(cfg.Queue))
-		insp, err := queueadapter.NewQueueInspectorFromRedis(redisOpt)
-		if err != nil {
-			return nil, fmt.Errorf("创建 asynq Inspector 失败: %w", err)
-		}
-		app.queueInspector = insp
 	}
 
 	if needsWorkerServer(cfg) {
-		redisOpt := hibikenasynq.RedisClientOpt{
-			Addr:     cfg.Redis.Addr,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
+		if cfg.Redis.Enabled {
+			// asynq 路径：workerMux 在此构造，注册 handler 后由 asynq.Server 消费。
+			redisOpt := hibikenasynq.RedisClientOpt{
+				Addr:     cfg.Redis.Addr,
+				Password: cfg.Redis.Password,
+				DB:       cfg.Redis.DB,
+			}
+			app.workerMux = hibikenasynq.NewServeMux()
+			// 为每个 asynq 任务开 OTel 根 span（task.<type>），使 handler 内的
+			// document.stage / source.stage span event 有可归属的父 span。
+			app.workerMux.Use(otelTaskMiddleware())
+			app.workerServer = hibikenasynq.NewServer(redisOpt, asynqServerConfig(cfg.Queue, log))
 		}
-		app.workerMux = hibikenasynq.NewServeMux()
-		// 为每个 asynq 任务开 OTel 根 span（task.<type>），使 handler 内的
-		// document.stage / source.stage span event 有可归属的父 span。
-		app.workerMux.Use(otelTaskMiddleware())
-		app.workerServer = hibikenasynq.NewServer(redisOpt, asynqServerConfig(cfg.Queue, log))
+		// 内存路径：workerMux 已在 needsQueueClient 块构造，这里不建 asynq.Server；
+		// worker handler 注册（后续 RegisterXxxHandler）两种模式共用同一 workerMux。
 	}
 
 	embeddingRegistry, err := buildRuntimeEmbeddingRegistry()
@@ -327,10 +397,21 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	if err != nil {
 		return nil, err
 	}
-	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, rerankRegistry, parserProviderRegistry, log)
+	// SQLite 模式需在应用层分词（PG 用 zhparser 在 SQL 层分词）。词典加载较重，
+	// 整个进程构造一次，注入给 RetrievalRepository 的写入与查询路径。
+	if dialect == db.DialectSQLite {
+		seg, gerr := gsetokenizer.New()
+		if gerr != nil {
+			return nil, fmt.Errorf("加载 gse 分词器失败: %w", gerr)
+		}
+		app.gseTokenizer = seg
+	}
+	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, rerankRegistry, parserProviderRegistry, app.gseTokenizer, log)
 	if err != nil {
 		return nil, err
 	}
+	// 内存 OIDC state store 需在 shutdown 时 Close（停止后台清理 goroutine）。
+	app.memoryStateStore = app.services.memoryStateStore
 
 	// 可观测性：初始化 OTel providers（TracerProvider + MeterProvider + Prometheus/OTLP exporter）。
 	otelProviders, err := otelinfra.Setup(ctx, cfg.Observability, log)
@@ -340,6 +421,14 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	app.otelProviders = otelProviders
 	// 指标经 OTel Meter 产出，由 Prometheus exporter 暴露 /metrics，可选 OTLP 推送。
 	app.services.httpMetrics = metricspkg.New(otelProviders.MeterProvider)
+	// redis pinger 仅在 Redis 启用时构造；内存模式下传 nil redisPinger，
+	// readiness 自动跳过 Redis 探活（避免对 nil redisClient 调用 Ping）。
+	var redisPingerVal redisPinger
+	if app.redisClient != nil {
+		redisPingerVal = redisPingerImpl{ping: func(ctx context.Context) error {
+			return app.redisClient.Ping(ctx).Err()
+		}}
+	}
 	app.services.readiness = newReadinessChecker(
 		gormPinger{ping: func(ctx context.Context) error {
 			sqlDB, err := gormDB.DB()
@@ -348,18 +437,17 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			}
 			return sqlDB.PingContext(ctx)
 		}},
-		redisPingerImpl{ping: func(ctx context.Context) error {
-			return app.redisClient.Ping(ctx).Err()
-		}},
+		redisPingerVal,
 		app.queueInspector,
+		app.dialect,
 		cfg.Observability,
 	)
 	if cfg.Observability.Metrics.Enabled {
 		app.services.metricsPath = cfg.Observability.Metrics.Path
 	}
-	if app.queueInspector != nil {
+	if app.inspectorPort != nil {
 		app.services.queueAdmin = service.NewQueueAdminService(service.QueueAdminDeps{
-			Inspector: inspectorPortAdapter{inspector: app.queueInspector},
+			Inspector: app.inspectorPort,
 		})
 	}
 
@@ -423,7 +511,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	return app, nil
 }
 
-func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingFactoryCatalog, rerankRegistry rerankFactoryCatalog, parserProviderRegistry *parserprovideradapter.Registry, log *slog.Logger) (*runtimeServices, error) {
+func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Config, jobQueue queueport.JobQueue, redisClient *redis.Client, embeddingRegistry embeddingFactoryCatalog, rerankRegistry rerankFactoryCatalog, parserProviderRegistry *parserprovideradapter.Registry, searchTokenizer db.SearchTokenizer, log *slog.Logger) (*runtimeServices, error) {
 	if embeddingRegistry == nil {
 		return nil, fmt.Errorf("构造模型服务失败: Embedding Factory Registry 不能为空")
 	}
@@ -458,7 +546,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	indexGenerationRepo := db.NewIndexGenerationRepository(gormDB)
 	chunkSetRepo := db.NewChunkSetRepository(gormDB)
 	faqRepo := db.NewFAQRepository(gormDB)
-	retrievalRepo := db.NewRetrievalRepository(gormDB)
+	retrievalRepo := db.NewRetrievalRepository(gormDB, searchTokenizer)
 	retrievalCleanupRepo := db.NewRetrievalCleanupRepository(gormDB)
 	documentPublisher := db.NewDocumentPublishDBStore(gormDB)
 	chunkRevisionStore := db.NewChunkRevisionStore(gormDB)
@@ -482,17 +570,14 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		cfg.Auth.Password.Argon2Parallelism,
 	)
 
-	// Rate limiter: declare the INTERFACE variable first, then assign the
-	// concrete adapter only when redisClient is non-nil. This avoids the
-	// typed-nil-interface trap (passing a nil *RedisRateLimiter as
-	// authport.RateLimiter yields a non-nil interface wrapping a nil pointer,
-	// which would panic on the first method call). The HTTP runtime always
-	// has Redis (needsQueueClient is true when RunHTTP), so the limiter is
-	// populated in production; the no-DB stub tests pass nil redisClient and
-	// never exercise login.
+	// Rate limiter: redisClient 非空（PG+Redis 路径）用 Redis 限流器；
+	// 否则（standalone 无 Redis）用进程内内存限流器，语义与 Redis 实现对齐。
+	// 显式按 redisClient 分流，避免 typed-nil-interface 陷阱。
 	var limiter authport.RateLimiter
 	if redisClient != nil {
 		limiter = authadapter.NewRedisRateLimiter(redisClient)
+	} else {
+		limiter = authadapter.NewMemoryRateLimiter()
 	}
 
 	users := service.NewUserService(userRepo, hasher, cfg.Auth.Password.Enabled)
@@ -503,6 +588,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	// OIDC 条件装配：cfg.Auth.OIDC.Enabled=true 时构造 provider/state store/service。
 	var oidcLogin *service.OIDCLoginService
 	var oidcAcceptor *service.InvitationService
+	var memoryStateStore *oidcadapter.MemoryStateStore
 	if cfg.Auth.OIDC.Enabled {
 		oidcProvider, err := oidcadapter.NewProvider(oidcadapter.ProviderConfig{
 			Enabled:            cfg.Auth.OIDC.Enabled,
@@ -517,7 +603,15 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 			return nil, fmt.Errorf("构造 OIDC provider 失败: %w", err)
 		}
 		if oidcProvider != nil {
-			stateStore := oidcadapter.NewRedisStateStore(redisClient, cfg.Auth.OIDC.StateTTLSeconds)
+			// state store 按 Redis 是否启用分流：内存实现需在 shutdown 时 Close。
+			var stateStore authport.OIDCStateStore
+			if redisClient != nil {
+				stateStore = oidcadapter.NewRedisStateStore(redisClient, cfg.Auth.OIDC.StateTTLSeconds)
+			} else {
+				mem := oidcadapter.NewMemoryStateStore(time.Duration(cfg.Auth.OIDC.StateTTLSeconds) * time.Second)
+				memoryStateStore = mem
+				stateStore = mem
+			}
 			identityRepo := db.NewExternalIdentityRepository(gormDB)
 			authTxRunner := db.NewOIDCAuthTxRunner(gormDB)
 			oidcLogin = service.NewOIDCLoginService(oidcProvider, stateStore, authTxRunner, identityRepo, cfg.Auth.Session, cfg.Auth.OIDC, cfg.Auth.OIDC.Enabled, log)
@@ -684,20 +778,21 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	})
 
 	return &runtimeServices{
-		userRepo:        userRepo,
-		sessionRepo:     sessionRepo,
-		membershipRepo:  membershipRepo,
-		invitationRepo:  invitationRepo,
-		users:           users,
-		auth:            auth,
-		invitations:     invitations,
-		memberships:     memberships,
-		sessionCfg:      cfg.Auth.Session,
-		publicURLs:      publicURLs,
-		oidc:            oidcLogin,
-		oidcAcceptor:    oidcAcceptor,
-		oidcEnabled:     cfg.Auth.OIDC.Enabled,
-		passwordEnabled: cfg.Auth.Password.Enabled,
+		userRepo:         userRepo,
+		sessionRepo:      sessionRepo,
+		membershipRepo:   membershipRepo,
+		invitationRepo:   invitationRepo,
+		users:            users,
+		auth:             auth,
+		invitations:      invitations,
+		memberships:      memberships,
+		sessionCfg:       cfg.Auth.Session,
+		publicURLs:       publicURLs,
+		oidc:             oidcLogin,
+		oidcAcceptor:     oidcAcceptor,
+		oidcEnabled:      cfg.Auth.OIDC.Enabled,
+		passwordEnabled:  cfg.Auth.Password.Enabled,
+		memoryStateStore: memoryStateStore,
 
 		workspaceRepo:           wsRepo,
 		knowledgeBaseRepo:       kbRepo,
@@ -908,6 +1003,13 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		InlineLimit:               services.mcpInlineLimit,
 		EnableLocalhostProtection: services.mcpHostProtection,
 	})
+	// 避免 typed-nil interface 陷阱：services.oidc 是 *OIDCLoginService(nil)，
+	// 直接赋给 Dependencies.OIDC（interface）会产生 typed-nil（!= nil 但底层 nil），
+	// 导致 router 误注册 OIDC 路由、前端调用时 panic。nil 时保持 interface 为 nil。
+	var oidcDep langhttp.OIDCLoginServiceHTTP
+	if services.oidc != nil {
+		oidcDep = services.oidc
+	}
 	return langhttp.NewRouter(langhttp.Dependencies{
 		// auth (Task 8)
 		Auth:            services.auth,
@@ -918,7 +1020,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		PublicURLs:      services.publicURLs,
 		APIKeys:         services.apiKeys,
 		APIKeyAuth:      services.apiKeys,
-		OIDC:            services.oidc,
+		OIDC:            oidcDep,
 		OIDCAcceptor:    services.oidcAcceptor,
 		OIDCCompleter:   services.oidcAcceptor,
 		OIDCEnabled:     services.oidcEnabled,
@@ -990,8 +1092,10 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 	errCh := make(chan error, 2)
 
 	// 收集各服务"真正启动完成"的信号，全部就绪后才输出 banner。
+	asynqWorkerActive := a.workerServer != nil && a.workerMux != nil
+	memoryWorkerActive := a.memoryQueue != nil
 	wantReady := 0
-	if a.workerServer != nil && a.workerMux != nil {
+	if asynqWorkerActive || memoryWorkerActive {
 		wantReady++
 	}
 	if a.httpServer != nil {
@@ -999,32 +1103,21 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 	}
 	readyCh := make(chan struct{}, wantReady)
 
-	if a.workerServer != nil && a.workerMux != nil {
+	if asynqWorkerActive {
 		log.Info("启动 asynq worker")
 		// Start 同步返回即代表 worker 已启动（asynq 输出 Starting processing 并
 		// 拉起全部子组件）；退出时由 app.shutdown 调用 workerServer.Shutdown 优雅关闭。
 		if err := a.workerServer.Start(a.workerMux); err != nil {
 			return fmt.Errorf("启动 asynq worker 失败: %w", err)
 		}
-		// 来源同步 Meta Scheduler：随 worker 生命周期运行，ctx 取消即停（随 shutdown 取消）。
-		if a.services != nil && a.services.sourceSyncScheduler != nil {
-			go func() { _ = a.services.sourceSyncScheduler.Run(ctx) }()
-		}
-		// 来源对象清理 Scheduler：启动时 RequeuePending 恢复孤儿 Job，随后周期 Tick 重派。
-		if a.services != nil && a.services.sourceCleanupScheduler != nil {
-			go func() {
-				if err := a.services.sourceCleanupScheduler.RequeuePending(ctx); err != nil && ctx.Err() == nil {
-					log.Warn("source_cleanup scheduler 启动恢复失败", "error", err.Error())
-				}
-				_ = a.services.sourceCleanupScheduler.Run(ctx)
-			}()
-		}
-		// Retrieval 投影定时清理：周期性删除过期的 staging/failed/retired 投影，
-		// 避免 rebuildable 数据无限增长。ctx 取消即停（随 shutdown）。
-		if a.services != nil && a.services.retrievalCleanup != nil && a.cfg.Retrieval.CleanupIntervalSeconds > 0 {
-			interval := time.Duration(a.cfg.Retrieval.CleanupIntervalSeconds) * time.Second
-			go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, a.services.searchRunCleanup, a.cfg.Retrieval.CleanupBatchSize, interval, log)
-		}
+		a.startWorkerBackgroundJobs(ctx, log)
+		readyCh <- struct{}{}
+	} else if memoryWorkerActive {
+		// 内存队列 worker：在进程内启动 goroutine 消费 pending，
+		// 复用同一 workerMux 执行 worker handler。两种模式共用后台 scheduler。
+		log.Info("启动内存队列 worker")
+		a.memoryQueue.Start(ctx)
+		a.startWorkerBackgroundJobs(ctx, log)
 		readyCh <- struct{}{}
 	}
 	if a.httpServer != nil {
@@ -1055,6 +1148,33 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 	}
 }
 
+// startWorkerBackgroundJobs 启动随 worker 生命周期运行的后台 scheduler / 清理循环。
+// asynq worker 与内存队列 worker 共用本方法：ctx 取消即随 shutdown 停止。
+func (a *appRuntime) startWorkerBackgroundJobs(ctx context.Context, log *slog.Logger) {
+	if a.services == nil {
+		return
+	}
+	// 来源同步 Meta Scheduler：周期扫描到期飞书 KB，按来源连接限流入队。
+	if a.services.sourceSyncScheduler != nil {
+		go func() { _ = a.services.sourceSyncScheduler.Run(ctx) }()
+	}
+	// 来源对象清理 Scheduler：启动时 RequeuePending 恢复孤儿 Job，随后周期 Tick 重派。
+	if a.services.sourceCleanupScheduler != nil {
+		go func() {
+			if err := a.services.sourceCleanupScheduler.RequeuePending(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("source_cleanup scheduler 启动恢复失败", "error", err.Error())
+			}
+			_ = a.services.sourceCleanupScheduler.Run(ctx)
+		}()
+	}
+	// Retrieval 投影定时清理：周期性删除过期的 staging/failed/retired 投影，
+	// 避免 rebuildable 数据无限增长。
+	if a.services.retrievalCleanup != nil && a.cfg.Retrieval.CleanupIntervalSeconds > 0 {
+		interval := time.Duration(a.cfg.Retrieval.CleanupIntervalSeconds) * time.Second
+		go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, a.services.searchRunCleanup, a.cfg.Retrieval.CleanupBatchSize, interval, log)
+	}
+}
+
 func (a *appRuntime) shutdown(ctx context.Context) error {
 	var firstErr error
 	capture := func(err error) {
@@ -1064,6 +1184,14 @@ func (a *appRuntime) shutdown(ctx context.Context) error {
 	}
 	if a.httpServer != nil {
 		capture(a.httpServer.Shutdown(ctx))
+	}
+	if a.memoryQueue != nil {
+		// 内存队列：等待运行中任务到 ctx 超时。
+		capture(a.memoryQueue.Stop(ctx))
+	}
+	if a.memoryStateStore != nil {
+		// 内存 OIDC state store：停止后台清理 goroutine（可多次调用）。
+		a.memoryStateStore.Close()
 	}
 	if a.workerServer != nil {
 		a.workerServer.Shutdown()

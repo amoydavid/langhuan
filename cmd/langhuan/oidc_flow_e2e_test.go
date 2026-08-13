@@ -61,7 +61,7 @@ func (s *stubStateStore) Consume(ctx context.Context, state, browserNonce string
 func TestOIDCLoginOrProvisionE2E(t *testing.T) {
 	ctx := context.Background()
 	testDSN := testsupport.NewMigratedPostgres(t)
-	gormDB, err := db.Open(testDSN)
+	gormDB, _, err := db.Open(config.DatabaseConfig{Driver: "postgres", DSN: testDSN})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if sqlDB, e := gormDB.DB(); e == nil {
@@ -117,7 +117,7 @@ func TestOIDCLoginOrProvisionE2E(t *testing.T) {
 func TestOIDCEmailMergeE2E(t *testing.T) {
 	ctx := context.Background()
 	testDSN := testsupport.NewMigratedPostgres(t)
-	gormDB, err := db.Open(testDSN)
+	gormDB, _, err := db.Open(config.DatabaseConfig{Driver: "postgres", DSN: testDSN})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if sqlDB, e := gormDB.DB(); e == nil {
@@ -168,7 +168,7 @@ func TestOIDCEmailMergeE2E(t *testing.T) {
 func TestSingleTenantWorkspaceAndAutoJoinE2E(t *testing.T) {
 	ctx := context.Background()
 	testDSN := testsupport.NewMigratedPostgres(t)
-	gormDB, err := db.Open(testDSN)
+	gormDB, _, err := db.Open(config.DatabaseConfig{Driver: "postgres", DSN: testDSN})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if sqlDB, e := gormDB.DB(); e == nil {

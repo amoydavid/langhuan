@@ -33,6 +33,7 @@ import (
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/value"
+	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
 	"github.com/dajee/langhuan/internal/interfaces/worker"
 	embeddingport "github.com/dajee/langhuan/internal/ports/embedding"
@@ -188,7 +189,7 @@ func startV030E2E(t *testing.T) *v030E2E {
 	t.Helper()
 	ctx := context.Background()
 	testDSN := testsupport.NewMigratedPostgres(t)
-	gormDB, err := db.Open(testDSN)
+	gormDB, _, err := db.Open(config.DatabaseConfig{Driver: "postgres", DSN: testDSN})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +226,7 @@ func startV030E2E(t *testing.T) *v030E2E {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(ctx, gormDB, cfg, jobQueue, redisClient, embeddingRegistry, rerankRegistry, parserRegistry, nil)
+	services, err := buildRuntimeServices(ctx, gormDB, cfg, jobQueue, redisClient, embeddingRegistry, rerankRegistry, parserRegistry, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

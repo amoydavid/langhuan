@@ -143,7 +143,7 @@ func insertCleanupEntry(
 		State: value.RetrievalEntryStaging, SearchContent: "search", Content: "content",
 		SourceAnchor: chunk.SourceAnchor, Metadata: map[string]any{}, CreatedAt: createdAt,
 	}
-	if err := NewRetrievalRepository(database).StageBatch(
+	if err := NewRetrievalRepository(database, nil).StageBatch(
 		ctx, seed.workspaceID, "simple", 1024,
 		[]indexport.StageEntry{{Entry: entry, Embedding: make([]float32, 1024)}},
 	); err != nil {

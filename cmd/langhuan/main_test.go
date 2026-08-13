@@ -23,6 +23,7 @@ import (
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
+	"github.com/dajee/langhuan/internal/infrastructure/db"
 )
 
 func TestPrintStartupBanner(t *testing.T) {
@@ -38,23 +39,29 @@ func TestPrintStartupBanner(t *testing.T) {
 	}
 }
 
-func TestConfigPathDefault(t *testing.T) {
-	path, err := configPath([]string{"langhuan"})
+func TestParseConfigFlagDefaultNotExplicit(t *testing.T) {
+	path, explicit, err := parseConfigFlag([]string{"langhuan"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != "config.yaml" {
-		t.Fatalf("config path = %q", path)
+	if path != "" {
+		t.Fatalf("未传 -config 时 path 应为空（走探测链），got %q", path)
+	}
+	if explicit {
+		t.Fatal("未传 -config 时 explicit 应为 false")
 	}
 }
 
-func TestConfigPathFromFlag(t *testing.T) {
-	path, err := configPath([]string{"langhuan", "-config", "dev.yaml"})
+func TestParseConfigFlagExplicit(t *testing.T) {
+	path, explicit, err := parseConfigFlag([]string{"langhuan", "-config", "dev.yaml"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if path != "dev.yaml" {
 		t.Fatalf("config path = %q", path)
+	}
+	if !explicit {
+		t.Fatal("传 -config 时 explicit 应为 true")
 	}
 }
 
@@ -163,7 +170,7 @@ func TestRuntimeServicesWireModelConfigurationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, rerankRegistry, nil, nil)
+	deps, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, rerankRegistry, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +203,7 @@ func TestRuntimeServicesWireFAQDocumentDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +237,7 @@ func TestRuntimeServicesWireChunkRevisionDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +268,7 @@ func TestRuntimeServicesWireIndexGenerationDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +305,7 @@ func TestBuildRuntimeServicesRejectsInvalidCredentialKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil); err == nil {
+	if _, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil); err == nil {
 		t.Fatal("expected invalid credential key error")
 	}
 }
@@ -314,7 +321,7 @@ func TestBuildAppHTTPOnlyWiresRuntimeServicesWithQueueClient(t *testing.T) {
 			DSN:         "postgres://stubbed/langhuan?sslmode=disable",
 			AutoMigrate: false,
 		},
-		Redis: config.RedisConfig{Addr: "127.0.0.1:6379"},
+		Redis: config.RedisConfig{Enabled: true, Addr: "127.0.0.1:6379"},
 		Storage: config.StorageConfig{
 			RawDocumentDir: t.TempDir(),
 		},
@@ -546,7 +553,7 @@ func buildTestRuntimeServices(t *testing.T, cfg *config.Config) *runtimeServices
 	if err != nil {
 		t.Fatal(err)
 	}
-	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil)
+	services, err := buildRuntimeServices(context.Background(), nil, cfg, nil, nil, registry, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,8 +595,8 @@ func stubRuntimeFactories(t *testing.T) func() {
 	previousNewRedisClient := newRedisClient
 	previousPingRedis := pingRedis
 
-	openDatabase = func(string) (*gorm.DB, error) {
-		return nil, nil
+	openDatabase = func(config.DatabaseConfig) (*gorm.DB, db.Dialect, error) {
+		return nil, "", nil
 	}
 	newRedisClient = func(*redis.Options) *redis.Client {
 		return redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})

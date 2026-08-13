@@ -46,7 +46,11 @@ type oidcAuthTx struct {
 
 // AcquireBootstrapLock 获取 bootstrap advisory transaction lock。
 // 所有建 user 路径在 CountUsers 前必须调用，保证首管理员判定原子。
+// SQLite 无 advisory lock，靠 _txlock=immediate + 单写锁串行化保证原子，跳过该 SQL。
 func (t *oidcAuthTx) AcquireBootstrapLock(ctx context.Context) error {
+	if t.tx.Dialector.Name() == "sqlite" {
+		return nil
+	}
 	return t.tx.WithContext(ctx).Exec(
 		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", bootstrapLockKey,
 	).Error

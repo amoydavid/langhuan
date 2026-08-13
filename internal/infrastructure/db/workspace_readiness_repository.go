@@ -48,11 +48,20 @@ func (r *WorkspaceReadinessRepository) GetWorkspaceReadinessFacts(ctx context.Co
 		var counts struct {
 			Total, Ready, Processing, Failed int64
 		}
-		if err := tx.WithContext(ctx).Table("documents").Select(`
+		// SQLite 不支持 COUNT(*) FILTER，改用 SUM(CASE WHEN ...)，语义等价。
+		docStatusSelect := `
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE status IN ('ready', 'completed')) AS ready,
 			COUNT(*) FILTER (WHERE status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting')) AS processing,
-			COUNT(*) FILTER (WHERE status = 'failed') AS failed`).
+			COUNT(*) FILTER (WHERE status = 'failed') AS failed`
+		if tx.Dialector.Name() == "sqlite" {
+			docStatusSelect = `
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status IN ('ready', 'completed') THEN 1 ELSE 0 END), 0) AS ready,
+			COALESCE(SUM(CASE WHEN status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting') THEN 1 ELSE 0 END), 0) AS processing,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed`
+		}
+		if err := tx.WithContext(ctx).Table("documents").Select(docStatusSelect).
 			Where("workspace_id = ? AND deleted_at IS NULL AND status <> 'deleted'", workspaceID).
 			Scan(&counts).Error; err != nil {
 			return fmt.Errorf("统计文档状态失败: %w", err)

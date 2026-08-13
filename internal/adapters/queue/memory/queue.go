@@ -1,0 +1,407 @@
+// Package memory 实现进程内内存队列，供 standalone 无 Redis 模式使用（spec §10.2）。
+//
+// 复用现有 asynq worker handler：内存 runtime 持有同一个 *asynq.ServeMux，
+// worker goroutine 从 pending 取任务，构造 asynq.NewTask(type, payload) 后调用
+// mux.ProcessContext 执行。因此所有 worker.RegisterXxxHandler、payload 解码、
+// SkipRetry 与业务幂等逻辑无需改动。
+//
+// 不承诺跨进程持久化：进程退出时未完成任务允许丢失，仅由现有 source cleanup/
+// force latch 补偿与用户 retry/reindex 恢复（spec §1.1、§11）。
+package memory
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	hibikenasynq "github.com/hibiken/asynq"
+
+	queueport "github.com/dajee/langhuan/internal/ports/queue"
+)
+
+// TaskRunner 执行单个任务。asynq.ServeMux 实现该接口（ProcessTask，即 asynq.Handler）。
+type TaskRunner interface {
+	ProcessTask(ctx context.Context, t *hibikenasynq.Task) error
+}
+
+// Queue 是进程内内存队列，实现 queueport.JobQueue。
+type Queue struct {
+	mux         TaskRunner
+	pending     chan *item
+	concurrency int
+	maxRetry    int
+	minBackoff  time.Duration
+	maxBackoff  time.Duration
+
+	mu        sync.Mutex
+	inFlight  map[string]struct{} // TaskID 去重（pending/active 期间占用）
+	dead      []deadEntry         // 超出重试次数的死信（供 Inspector 可见，spec §10.2）
+	processed int64               // 累计成功处理数
+	failed    int64               // 累计失败（进死信）数
+	wg        sync.WaitGroup      // worker goroutine
+	retryWG   sync.WaitGroup      // retry 退避 / Delay 投递 goroutine（不受 worker wg 管理）
+	stop      chan struct{}
+	stopped   bool
+}
+
+// deadEntry 是死信记录，保留 payload 以支持 RetryDead 重投（spec §10.2）。
+// payload 不经 Inspector 暴露（ListDead 只取 metadata）。
+type deadEntry struct {
+	id        string // TaskID（可能为空）
+	typ       string
+	payload   []byte
+	lastError string
+	retried   int
+	maxRetry  int
+	failedAt  time.Time
+}
+
+type item struct {
+	typ        string
+	payload    []byte
+	taskID     string
+	attempts   int // 已执行次数（含当前）
+	maxRetry   int
+	timeout    time.Duration
+	enqueuedAt time.Time
+}
+
+// Config 描述内存队列运行参数。
+type Config struct {
+	Concurrency int
+	Capacity    int
+	MaxRetry    int
+	MinBackoff  time.Duration
+	MaxBackoff  time.Duration
+}
+
+// New 构造内存队列。mux 通常是注册了所有 worker handler 的 *asynq.ServeMux。
+func New(mux TaskRunner, cfg Config) *Queue {
+	if cfg.Concurrency < 1 {
+		cfg.Concurrency = 1
+	}
+	if cfg.Capacity < cfg.Concurrency {
+		cfg.Capacity = cfg.Concurrency
+	}
+	if cfg.MaxRetry < 0 {
+		cfg.MaxRetry = 5
+	}
+	if cfg.MinBackoff <= 0 {
+		cfg.MinBackoff = time.Second
+	}
+	if cfg.MaxBackoff <= cfg.MinBackoff {
+		cfg.MaxBackoff = cfg.MinBackoff * 60
+	}
+	return &Queue{
+		mux:         mux,
+		pending:     make(chan *item, cfg.Capacity),
+		concurrency: cfg.Concurrency,
+		maxRetry:    cfg.MaxRetry,
+		minBackoff:  cfg.MinBackoff,
+		maxBackoff:  cfg.MaxBackoff,
+		inFlight:    make(map[string]struct{}),
+		stop:        make(chan struct{}),
+	}
+}
+
+// Enqueue 实现 queueport.JobQueue。
+// TaskID 在 pending/active 期间唯一占用（与 asynq 显式 TaskID 语义一致）。
+// Delay > 0 时由独立 scheduler goroutine 延后投递。
+func (q *Queue) Enqueue(ctx context.Context, job queueport.JobRequest) (*queueport.JobHandle, error) {
+	q.mu.Lock()
+	if q.stopped {
+		q.mu.Unlock()
+		return nil, fmt.Errorf("内存队列已停止，拒绝入队")
+	}
+	if job.TaskID != "" {
+		if _, exists := q.inFlight[job.TaskID]; exists {
+			q.mu.Unlock()
+			return nil, fmt.Errorf("任务 %s 已在队列中", job.TaskID)
+		}
+		q.inFlight[job.TaskID] = struct{}{}
+	}
+	q.mu.Unlock()
+
+	maxRetry := job.MaxRetry
+	if maxRetry == 0 {
+		maxRetry = q.maxRetry
+	}
+	it := &item{
+		typ:        job.Type,
+		payload:    job.Payload,
+		taskID:     job.TaskID,
+		maxRetry:   maxRetry,
+		timeout:    job.Timeout,
+		enqueuedAt: time.Now(),
+	}
+
+	if job.Delay > 0 {
+		q.retryWG.Add(1)
+		go func() {
+			defer q.retryWG.Done()
+			t := time.NewTimer(time.Duration(job.Delay))
+			defer t.Stop()
+			select {
+			case <-t.C:
+				// M2: push 失败（pending 满）必须释放 TaskID 槽位，否则永久占位。
+				if !q.push(it) {
+					q.releaseSlot(it.taskID)
+				}
+			case <-q.stop:
+				q.releaseSlot(it.taskID)
+			}
+		}()
+		return &queueport.JobHandle{ID: job.TaskID}, nil
+	}
+	if !q.push(it) {
+		q.releaseSlot(it.taskID)
+		return nil, fmt.Errorf("内存队列已满（capacity），拒绝入队")
+	}
+	return &queueport.JobHandle{ID: job.TaskID}, nil
+}
+
+// push 非阻塞投递；队列满返回 false。
+func (q *Queue) push(it *item) bool {
+	select {
+	case q.pending <- it:
+		return true
+	default:
+		return false
+	}
+}
+
+// Start 启动 worker goroutines 消费 pending。重复调用 panic。
+func (q *Queue) Start(ctx context.Context) {
+	for i := 0; i < q.concurrency; i++ {
+		q.wg.Add(1)
+		go q.runWorker(ctx)
+	}
+}
+
+func (q *Queue) runWorker(ctx context.Context) {
+	defer q.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-q.stop:
+			return
+		case it := <-q.pending:
+			q.execute(ctx, it)
+		}
+	}
+}
+
+func (q *Queue) execute(ctx context.Context, it *item) {
+	taskCtx := ctx
+	var cancel context.CancelFunc
+	if it.timeout > 0 {
+		taskCtx, cancel = context.WithTimeout(ctx, it.timeout)
+		defer cancel()
+	}
+	it.attempts++
+	task := hibikenasynq.NewTask(it.typ, it.payload)
+	err := q.mux.ProcessTask(taskCtx, task)
+	if err == nil || err == hibikenasynq.SkipRetry {
+		q.mu.Lock()
+		q.processed++
+		q.mu.Unlock()
+		q.releaseSlot(it.taskID)
+		return
+	}
+	// 失败：按指数退避重试
+	if it.attempts > it.maxRetry {
+		// 超出重试次数，存入死信（含 payload 供 RetryDead 重投，spec §10.2/H2）
+		q.mu.Lock()
+		q.dead = append(q.dead, deadEntry{
+			id: it.taskID, typ: it.typ, payload: it.payload, lastError: err.Error(),
+			retried: it.attempts - 1, maxRetry: it.maxRetry, failedAt: time.Now(),
+		})
+		q.failed++
+		q.mu.Unlock()
+		q.releaseSlot(it.taskID)
+		return
+	}
+	// M1: retry 退避期间保持 TaskID 占用（不提前 releaseSlot），
+	// 保证「pending/active/retry 期间唯一占用」契约。停止时才释放。
+	backoff := q.backoff(it.attempts)
+	q.retryWG.Add(1)
+	go func() {
+		defer q.retryWG.Done()
+		t := time.NewTimer(backoff)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			q.repush(it)
+		case <-q.stop:
+			q.releaseSlot(it.taskID)
+		}
+	}()
+}
+
+// repush 把 retry 的任务重新投递（TaskID 仍占用，不重新占）。
+// push 失败（pending 满）则进死信并释放槽位。
+func (q *Queue) repush(it *item) {
+	if q.push(it) {
+		return
+	}
+	q.mu.Lock()
+	if !q.stopped {
+		q.dead = append(q.dead, deadEntry{
+			id: it.taskID, typ: it.typ, payload: it.payload, lastError: "retry 时队列已满",
+			retried: it.attempts - 1, maxRetry: it.maxRetry, failedAt: time.Now(),
+		})
+		q.failed++
+	}
+	q.mu.Unlock()
+	q.releaseSlot(it.taskID)
+}
+
+func (q *Queue) reacquireAndPush(it *item) {
+	q.mu.Lock()
+	if q.stopped {
+		q.mu.Unlock()
+		return
+	}
+	if it.taskID != "" {
+		q.inFlight[it.taskID] = struct{}{}
+	}
+	q.mu.Unlock()
+	if !q.push(it) {
+		// 队列满：写回死信（含 payload），避免 RetryDead 的任务被静默丢弃（二次评审 C）。
+		q.mu.Lock()
+		if !q.stopped {
+			q.dead = append(q.dead, deadEntry{
+				id: it.taskID, typ: it.typ, payload: it.payload,
+				lastError: "重试时队列已满", maxRetry: it.maxRetry, failedAt: time.Now(),
+			})
+			q.failed++
+		}
+		q.mu.Unlock()
+		q.releaseSlot(it.taskID)
+	}
+}
+
+func (q *Queue) backoff(attempts int) time.Duration {
+	d := q.minBackoff << uint(attempts-1)
+	if d > q.maxBackoff || d <= 0 {
+		d = q.maxBackoff
+	}
+	return d
+}
+
+func (q *Queue) releaseSlot(taskID string) {
+	if taskID == "" {
+		return
+	}
+	q.mu.Lock()
+	delete(q.inFlight, taskID)
+	q.mu.Unlock()
+}
+
+// Stop 停止接收与调度，等待 worker（wg）与 retry/Delay（retryWG）goroutine 到 ctx 超时。可多次调用。
+func (q *Queue) Stop(ctx context.Context) error {
+	q.mu.Lock()
+	if q.stopped {
+		q.mu.Unlock()
+		return nil
+	}
+	q.stopped = true
+	q.mu.Unlock()
+	close(q.stop)
+	done := make(chan struct{})
+	go func() {
+		q.wg.Wait()
+		q.retryWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Stats 返回当前队列状态快照（供 Inspector）。
+func (q *Queue) Stats() Stats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return Stats{
+		Pending:   len(q.pending),
+		Active:    len(q.inFlight) - len(q.pending),
+		Dead:      len(q.dead),
+		Processed: q.processed,
+		Failed:    q.failed,
+	}
+}
+
+// Stats 是队列计数快照。
+type Stats struct {
+	Pending   int
+	Active    int
+	Dead      int
+	Processed int64
+	Failed    int64
+}
+
+// ListDead 返回死信列表的分页副本。
+func (q *Queue) ListDead(page, pageSize int) []deadEntry {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if page < 1 {
+		page = 1
+	}
+	start := (page - 1) * pageSize
+	if start >= len(q.dead) {
+		return nil
+	}
+	end := start + pageSize
+	if end > len(q.dead) {
+		end = len(q.dead)
+	}
+	out := make([]deadEntry, end-start)
+	copy(out, q.dead[start:end])
+	return out
+}
+
+// RetryDead 把指定 taskID 的死信重新入队（若存在）。返回是否找到。
+func (q *Queue) RetryDead(taskID string) bool {
+	q.mu.Lock()
+	idx := -1
+	for i, d := range q.dead {
+		if d.id == taskID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		q.mu.Unlock()
+		return false
+	}
+	d := q.dead[idx]
+	q.dead = append(q.dead[:idx], q.dead[idx+1:]...)
+	q.mu.Unlock()
+	// 重新投递（携带原 payload + 重置 attempts，H2）
+	q.reacquireAndPush(&item{
+		typ: d.typ, payload: d.payload, taskID: d.id, maxRetry: d.maxRetry, enqueuedAt: time.Now(),
+	})
+	return true
+}
+
+// DeleteDead 删除指定 taskID 的死信。返回是否找到。
+func (q *Queue) DeleteDead(taskID string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i, d := range q.dead {
+		if d.id == taskID {
+			q.dead = append(q.dead[:i], q.dead[i+1:]...)
+			return true
+		}
+	}
+	return false
+}

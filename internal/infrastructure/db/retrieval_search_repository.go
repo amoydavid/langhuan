@@ -24,12 +24,16 @@ func (r *RetrievalRepository) WithinWorkspace(
 		return fmt.Errorf("%w: Retrieval search callback 不能为空", domainerrors.ErrValidation)
 	}
 	return NewWorkspaceTxRunner(r.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
-		return fn(ctx, &retrievalSearchReader{db: tx, workspaceID: workspaceID})
+		return fn(ctx, &retrievalSearchReader{
+			db: tx, dialect: r.dialect, tokenizer: r.tokenizer, workspaceID: workspaceID,
+		})
 	})
 }
 
 type retrievalSearchReader struct {
 	db          *gorm.DB
+	dialect     Dialect
+	tokenizer   SearchTokenizer
 	workspaceID uuid.UUID
 }
 
@@ -66,7 +70,13 @@ func (r *retrievalSearchReader) GetGeneration(
 	return indexGenerationFromRow(&row), nil
 }
 
-// VectorCandidates executes one of four fixed HNSW-compatible expressions.
+// VectorCandidates executes the dialect-specific nearest-neighbour expression.
+//
+// PG：4 条固定 HNSW 兼容 SQL（embedding::halfvec(N) <=> ?::halfvec(N)），按维度选择，
+// 余弦距离由 pgvector 算子计算（spec §7.3）。
+// SQLite：vec_distance_cosine 对 retrieval_embeddings.embedding（float32 LE BLOB）
+// 做精确扫描，scope 过滤后按距离升序（spec §7.3）。查询向量复用 halfVectorLiteral
+// 生成的 [a,b,c] JSON 字面量作为 vec_f32(?) 入参。
 func (r *retrievalSearchReader) VectorCandidates(
 	ctx context.Context,
 	request indexport.SearchRequest,
@@ -74,11 +84,27 @@ func (r *retrievalSearchReader) VectorCandidates(
 	if err := validateSearchRequest(request, true); err != nil {
 		return nil, err
 	}
+	vector := halfVectorLiteral(request.QueryEmbedding)
+	if r.dialect == DialectSQLite {
+		var rows []vectorDistanceRow
+		if err := r.db.WithContext(ctx).Raw(
+			sqliteVectorSearchSQL,
+			vector, r.workspaceID, request.KnowledgeBaseID, request.GenerationID,
+			request.Dimension, request.VectorTopK,
+		).Scan(&rows).Error; err != nil {
+			return nil, translateDBError(err, "执行 Retrieval vector search 失败")
+		}
+		candidates := make([]indexport.SearchCandidate, len(rows))
+		for index, row := range rows {
+			// score = 1 - distance，与 PG cosine 语义对齐（距离越小越相似，score 越大）。
+			candidates[index] = indexport.SearchCandidate{EntryID: row.EntryID, Score: 1 - row.Distance}
+		}
+		return candidates, nil
+	}
 	query, ok := vectorSearchSQL[request.Dimension]
 	if !ok {
 		return nil, domainerrors.ErrUnsupportedEmbeddingDimension
 	}
-	vector := halfVectorLiteral(request.QueryEmbedding)
 	var rows []searchCandidateRow
 	if err := r.db.WithContext(ctx).Raw(
 		query,
@@ -90,13 +116,35 @@ func (r *retrievalSearchReader) VectorCandidates(
 	return searchCandidatesFromRows(rows), nil
 }
 
-// KeywordCandidates searches the stored search_content projection through its tsvector.
+// KeywordCandidates searches the stored search_content projection.
+//
+// PG：plainto_tsquery(?::regconfig, ?) + ts_rank_cd（spec §8.1）。
+// SQLite：应用层 gse 分词后构造 FTS5 MATCH 表达式（逐 token 双引号引用 + AND 组合，
+// 模拟 plainto_tsquery 的 plain-text AND 语义并阻止操作符注入），用 -bm25 排序
+// （spec §8.2）。无 token 返回空候选。
 func (r *retrievalSearchReader) KeywordCandidates(
 	ctx context.Context,
 	request indexport.SearchRequest,
 ) ([]indexport.SearchCandidate, error) {
 	if err := validateSearchRequest(request, false); err != nil {
 		return nil, err
+	}
+	if r.dialect == DialectSQLite {
+		if r.tokenizer == nil {
+			return nil, fmt.Errorf("%w: SQLite FTS 检索缺少分词器", domainerrors.ErrValidation)
+		}
+		match := buildFTS5MatchExpr(r.tokenizer.Tokens(request.Query))
+		if match == "" {
+			return []indexport.SearchCandidate{}, nil
+		}
+		var rows []searchCandidateRow
+		if err := r.db.WithContext(ctx).Raw(
+			sqliteKeywordSearchSQL,
+			match, r.workspaceID, request.KnowledgeBaseID, request.GenerationID, request.KeywordTopK,
+		).Scan(&rows).Error; err != nil {
+			return nil, translateDBError(err, "执行 Retrieval FTS search 失败")
+		}
+		return searchCandidatesFromRows(rows), nil
 	}
 	var rows []searchCandidateRow
 	if err := r.db.WithContext(ctx).Raw(
@@ -192,6 +240,13 @@ type searchCandidateRow struct {
 	Score   float64
 }
 
+// vectorDistanceRow 承载 SQLite 向量检索返回的余弦距离；score=1-distance 在调用方换算，
+// 与 PG 路径 SELECT 1-distance 直接返回 score 的语义保持一致（spec §7.3）。
+type vectorDistanceRow struct {
+	EntryID  uuid.UUID
+	Distance float64
+}
+
 type searchEvidenceRow struct {
 	EntryID, ChunkID, ChunkRevisionID, DocumentID     uuid.UUID
 	DocumentRevisionID                                uuid.UUID
@@ -265,5 +320,45 @@ const keywordSearchSQL = "WITH search_query AS (SELECT plainto_tsquery(?::regcon
 	"WHERE re.workspace_id = ? AND re.knowledge_base_id = ? AND re.index_generation_id = ? " +
 	"AND re.state = 'published' AND re.fts_document @@ search_query.value " +
 	"ORDER BY score DESC, re.id ASC LIMIT ?"
+
+// sqliteVectorSearchSQL：精确过滤后排序（spec §7.3）。vec_distance_cosine 对
+// retrieval_embeddings.embedding（float32 LE BLOB）做精确余弦距离，scope 索引
+// 让扫描限定在当前 Generation。查询向量以 [a,b,c] JSON 字面量传入 vec_f32(?)。
+const sqliteVectorSearchSQL = "SELECT re.id AS entry_id, " +
+	"vec_distance_cosine(ev.embedding, vec_f32(?)) AS distance " +
+	"FROM retrieval_entries AS re " +
+	"JOIN retrieval_embeddings AS ev ON ev.entry_id = re.id " +
+	"WHERE re.workspace_id = ? AND re.knowledge_base_id = ? AND re.index_generation_id = ? " +
+	"AND re.state = 'published' AND ev.dimension = ? " +
+	"ORDER BY distance ASC, re.id ASC LIMIT ?"
+
+// sqliteKeywordSearchSQL：FTS5 全文检索（spec §8.2）。retrieval_fts MATCH 应用层
+// 构造的 AND 表达式；-bm25 作为 score（大=好），ORDER BY bm25 ASC 即最佳在前。
+const sqliteKeywordSearchSQL = "SELECT re.id AS entry_id, -bm25(retrieval_fts) AS score " +
+	"FROM retrieval_fts " +
+	"JOIN retrieval_entries AS re ON re.id = retrieval_fts.entry_id " +
+	"WHERE retrieval_fts MATCH ? " +
+	"AND re.workspace_id = ? AND re.knowledge_base_id = ? AND re.index_generation_id = ? " +
+	"AND re.state = 'published' " +
+	"ORDER BY bm25(retrieval_fts) ASC, re.id ASC LIMIT ?"
+
+// buildFTS5MatchExpr 把 token 序列构造为 FTS5 MATCH 表达式：逐 token 双引号引用
+// （内部 " 转义为 ""），以 " AND " 连接，模拟 PG plainto_tsquery 的 plain-text AND
+// 语义并阻止 FTS5 操作符注入（spec §8.2）。空 token 返回空串，调用方据此短路。
+func buildFTS5MatchExpr(tokens []string) string {
+	if len(tokens) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for index, token := range tokens {
+		if index > 0 {
+			builder.WriteString(" AND ")
+		}
+		builder.WriteByte('"')
+		builder.WriteString(strings.ReplaceAll(token, `"`, `""`))
+		builder.WriteByte('"')
+	}
+	return builder.String()
+}
 
 var _ indexport.SearchRepository = (*RetrievalRepository)(nil)

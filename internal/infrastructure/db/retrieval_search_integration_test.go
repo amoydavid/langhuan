@@ -23,7 +23,7 @@ import (
 func TestKeywordCandidatesMapsMissingFTSConfigToValidationError(t *testing.T) {
 	ctx, database := newAuthTestDB(t)
 	seed := insertKnowledgeSchemaSeed(t, ctx, database)
-	repository := NewRetrievalRepository(database)
+	repository := NewRetrievalRepository(database, nil)
 	request := indexport.SearchRequest{
 		KnowledgeBaseID: seed.kbID, GenerationID: seed.generationID,
 		Query: "测试", FTSConfig: "missing_fts_config", Dimension: 1024,
@@ -52,7 +52,7 @@ func TestKeywordCandidatesMapsMissingFTSConfigToValidationError(t *testing.T) {
 func TestLoadEvidenceReturnsParentContextForChildren(t *testing.T) {
 	ctx, database := newAuthTestDB(t)
 	seed := insertKnowledgeSchemaSeed(t, ctx, database)
-	repository := NewRetrievalRepository(database)
+	repository := NewRetrievalRepository(database, nil)
 	documentID, revisionID := uuid.New(), uuid.New()
 	if err := insertFileDocumentRevision(ctx, database, seed, documentID, revisionID, "parent-child.md"); err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestRetrievalSearchIsWorkspaceScopedUsesFAQQuestionsAndResolvesCurrentFileN
 	ctx, database := newAuthTestDB(t)
 	seedA := insertKnowledgeSchemaSeed(t, ctx, database)
 	seedB := insertKnowledgeSchemaSeed(t, ctx, database)
-	repository := NewRetrievalRepository(database)
+	repository := NewRetrievalRepository(database, nil)
 	vector := make([]float32, 1024)
 	vector[0] = 1
 
@@ -382,7 +382,7 @@ func testSearchFAQAggregate(
 func TestRetrievalSearchZhparserChineseKeywordHits(t *testing.T) {
 	ctx, database := newAuthTestDB(t)
 	seed := insertKnowledgeSchemaSeed(t, ctx, database)
-	repository := NewRetrievalRepository(database)
+	repository := NewRetrievalRepository(database, nil)
 	vector := make([]float32, 1024)
 	vector[0] = 1
 	const chineseContent = "人工智能驱动的知识管理系统"

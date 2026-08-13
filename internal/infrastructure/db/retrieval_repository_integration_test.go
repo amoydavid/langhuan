@@ -40,7 +40,7 @@ func TestStageBatchMapsMissingFTSConfigToValidationError(t *testing.T) {
 	vector := make([]float32, 1024)
 	vector[0] = 1
 
-	err := NewRetrievalRepository(database).StageBatch(
+	err := NewRetrievalRepository(database, nil).StageBatch(
 		ctx, seed.workspaceID, "missing_fts_config", 1024,
 		[]indexport.StageEntry{{Entry: entry, Embedding: vector}},
 	)
@@ -101,7 +101,7 @@ func TestStageAndPublishRetrievalEntryStagesDistinctSearchAndReturnContent(t *te
 	}
 	vector := make([]float32, 1024)
 	vector[0] = 1
-	repository := NewRetrievalRepository(database)
+	repository := NewRetrievalRepository(database, nil)
 	if err := repository.StageBatch(ctx, seed.workspaceID, "simple", 1024, []indexport.StageEntry{
 		{Entry: normalEntry, Embedding: vector}, {Entry: faqEntry, Embedding: vector},
 	}); err != nil {

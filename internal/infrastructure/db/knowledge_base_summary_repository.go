@@ -38,14 +38,26 @@ func (r *KnowledgeBaseSummaryRepository) GetKnowledgeBaseSummaryFacts(ctx contex
 		var counts struct {
 			Total, File, FAQ, Web, Ready, Processing, Failed int64
 		}
-		if err := tx.WithContext(ctx).Table("documents").Select(`
+		// SQLite 不支持 COUNT(*) FILTER，改用 SUM(CASE WHEN ...)，语义等价。
+		docCountSelect := `
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE kind = 'file') AS file,
 			COUNT(*) FILTER (WHERE kind = 'faq') AS faq,
 			COUNT(*) FILTER (WHERE kind = 'web') AS web,
 			COUNT(*) FILTER (WHERE status IN ('ready', 'completed')) AS ready,
 			COUNT(*) FILTER (WHERE status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting')) AS processing,
-			COUNT(*) FILTER (WHERE status = 'failed') AS failed`).
+			COUNT(*) FILTER (WHERE status = 'failed') AS failed`
+		if tx.Dialector.Name() == "sqlite" {
+			docCountSelect = `
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN kind = 'file' THEN 1 ELSE 0 END), 0) AS file,
+			COALESCE(SUM(CASE WHEN kind = 'faq' THEN 1 ELSE 0 END), 0) AS faq,
+			COALESCE(SUM(CASE WHEN kind = 'web' THEN 1 ELSE 0 END), 0) AS web,
+			COALESCE(SUM(CASE WHEN status IN ('ready', 'completed') THEN 1 ELSE 0 END), 0) AS ready,
+			COALESCE(SUM(CASE WHEN status IN ('pending', 'processing', 'parsing_submitted', 'parsing', 'parsed', 'indexing', 'deleting') THEN 1 ELSE 0 END), 0) AS processing,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed`
+		}
+		if err := tx.WithContext(ctx).Table("documents").Select(docCountSelect).
 			Where("workspace_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL AND status <> 'deleted'", workspaceID, knowledgeBaseID).
 			Scan(&counts).Error; err != nil {
 			return fmt.Errorf("统计知识库文档失败: %w", err)

@@ -275,10 +275,18 @@ func validateChunkRevisionStaging(
 		return fmt.Errorf("%w: Chunk Revision staging lineage 无效", domainerrors.ErrValidation)
 	}
 	var count int64
+	// SQLite 的 embedding/fts_document 移到独立表，改用 EXISTS 校验（同 requireCompleteStaging）。
+	cond := "workspace_id = ? AND knowledge_base_id = ? AND index_generation_id = ? AND id = ? " +
+		"AND chunk_id = ? AND chunk_revision_id = ? AND state = ?"
+	if tx.Dialector.Name() == "sqlite" {
+		cond += " AND dimension IS NOT NULL" +
+			" AND EXISTS (SELECT 1 FROM retrieval_embeddings WHERE entry_id = retrieval_entries.id)" +
+			" AND EXISTS (SELECT 1 FROM retrieval_fts WHERE entry_id = retrieval_entries.id)"
+	} else {
+		cond += " AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL"
+	}
 	if err := tx.WithContext(ctx).Model(&RetrievalEntryRow{}).Where(
-		"workspace_id = ? AND knowledge_base_id = ? AND index_generation_id = ? AND id = ? "+
-			"AND chunk_id = ? AND chunk_revision_id = ? AND state = ? "+
-			"AND embedding IS NOT NULL AND dimension IS NOT NULL AND fts_document IS NOT NULL",
+		cond,
 		input.WorkspaceID, input.KnowledgeBaseID, input.GenerationID, entry.ID,
 		input.ChunkID, input.NewRevisionID, value.RetrievalEntryStaging,
 	).Count(&count).Error; err != nil {

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
@@ -39,8 +40,8 @@ const (
 	postgresCleanupTimeout = 30 * time.Second
 )
 
-// Migrator upgrades a database at the supplied DSN to the current schema.
-type Migrator func(context.Context, string) error
+// Migrator upgrades a database described by the given config to the current schema.
+type Migrator func(context.Context, config.DatabaseConfig) error
 
 type postgresServerConfig struct {
 	external bool
@@ -226,7 +227,7 @@ func (server *PostgresServer) ensureTemplate(ctx context.Context, migrator Migra
 		if err != nil {
 			return err
 		}
-		if err := migrator(ctx, templateDSN); err != nil {
+		if err := migrator(ctx, config.DatabaseConfig{Driver: "postgres", DSN: templateDSN}); err != nil {
 			return fmt.Errorf("迁移测试模板数据库失败: %w", err)
 		}
 		return nil
