@@ -39,8 +39,8 @@ import (
 	parserprovideradapter "github.com/dajee/langhuan/internal/adapters/parserprovider"
 	minerufactory "github.com/dajee/langhuan/internal/adapters/parserprovider/mineru"
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
+	dbqueue "github.com/dajee/langhuan/internal/adapters/queue/dbqueue"
 	memoryqueue "github.com/dajee/langhuan/internal/adapters/queue/memory"
-	sqlitequeue "github.com/dajee/langhuan/internal/adapters/queue/sqlite"
 	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	siliconflowadapter "github.com/dajee/langhuan/internal/adapters/siliconflow"
@@ -98,7 +98,7 @@ type appRuntime struct {
 	services       *runtimeServices
 	// standalone（SQLite / 无 Redis）模式专用组件。
 	memoryQueue      *memoryqueue.Queue            // 内存队列（保留备用/测试）
-	sqliteQueue      *sqlitequeue.Queue            // SQLite 持久化队列（无 Redis 时替代 asynq）
+	sqliteQueue      *dbqueue.Queue                // SQLite 持久化队列（无 Redis 时替代 asynq）
 	memoryStateStore *oidcadapter.MemoryStateStore // 内存 OIDC state（无 Redis 时需 Close 停止清理 goroutine）
 	gseTokenizer     db.SearchTokenizer            // SQLite 模式注入给 RetrievalRepository（PG 传 nil）
 	inspectorPort    service.QueueInspectorPort    // 队列可见性端口（asynq inspectorPortAdapter / memory.Inspector）
@@ -360,7 +360,17 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			if err != nil {
 				return nil, fmt.Errorf("获取底层 *sql.DB 失败: %w", err)
 			}
-			sqlQ, err := sqlitequeue.New(sqlDB, mux, sqlitequeue.Config{
+			// 队列方言跟随数据库方言：SQLite 库→SQLite 队列表，PG 库→PG 队列表。
+			var queueDialect dbqueue.Dialect
+			switch dialect {
+			case db.DialectSQLite:
+				queueDialect = dbqueue.DialectSQLite
+			case db.DialectPostgres:
+				queueDialect = dbqueue.DialectPostgres
+			default:
+				return nil, fmt.Errorf("不支持的队列方言: %s", dialect)
+			}
+			sqlQ, err := dbqueue.New(sqlDB, queueDialect, mux, dbqueue.Config{
 				Concurrency: cfg.Queue.Concurrency,
 				MaxRetry:    cfg.Queue.MaxRetry(),
 				MinBackoff:  cfg.Queue.MinBackoff(),
@@ -371,7 +381,7 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			}
 			app.sqliteQueue = sqlQ
 			app.jobQueue = sqlQ
-			app.inspectorPort = sqlitequeue.NewInspector(sqlQ)
+			app.inspectorPort = dbqueue.NewInspector(sqlQ)
 		}
 	}
 
