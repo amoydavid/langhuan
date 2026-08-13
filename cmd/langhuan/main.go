@@ -1003,6 +1003,13 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		InlineLimit:               services.mcpInlineLimit,
 		EnableLocalhostProtection: services.mcpHostProtection,
 	})
+	// 避免 typed-nil interface 陷阱：services.oidc 是 *OIDCLoginService(nil)，
+	// 直接赋给 Dependencies.OIDC（interface）会产生 typed-nil（!= nil 但底层 nil），
+	// 导致 router 误注册 OIDC 路由、前端调用时 panic。nil 时保持 interface 为 nil。
+	var oidcDep langhttp.OIDCLoginServiceHTTP
+	if services.oidc != nil {
+		oidcDep = services.oidc
+	}
 	return langhttp.NewRouter(langhttp.Dependencies{
 		// auth (Task 8)
 		Auth:            services.auth,
@@ -1013,7 +1020,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		PublicURLs:      services.publicURLs,
 		APIKeys:         services.apiKeys,
 		APIKeyAuth:      services.apiKeys,
-		OIDC:            services.oidc,
+		OIDC:            oidcDep,
 		OIDCAcceptor:    services.oidcAcceptor,
 		OIDCCompleter:   services.oidcAcceptor,
 		OIDCEnabled:     services.oidcEnabled,
