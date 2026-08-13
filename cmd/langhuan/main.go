@@ -40,6 +40,7 @@ import (
 	minerufactory "github.com/dajee/langhuan/internal/adapters/parserprovider/mineru"
 	queueadapter "github.com/dajee/langhuan/internal/adapters/queue/asynq"
 	memoryqueue "github.com/dajee/langhuan/internal/adapters/queue/memory"
+	sqlitequeue "github.com/dajee/langhuan/internal/adapters/queue/sqlite"
 	rerankadapter "github.com/dajee/langhuan/internal/adapters/rerank"
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	siliconflowadapter "github.com/dajee/langhuan/internal/adapters/siliconflow"
@@ -96,7 +97,8 @@ type appRuntime struct {
 	jobQueue       queueport.JobQueue
 	services       *runtimeServices
 	// standalone（SQLite / 无 Redis）模式专用组件。
-	memoryQueue      *memoryqueue.Queue            // 内存队列（无 Redis 时替代 asynq）
+	memoryQueue      *memoryqueue.Queue            // 内存队列（保留备用/测试）
+	sqliteQueue      *sqlitequeue.Queue            // SQLite 持久化队列（无 Redis 时替代 asynq）
 	memoryStateStore *oidcadapter.MemoryStateStore // 内存 OIDC state（无 Redis 时需 Close 停止清理 goroutine）
 	gseTokenizer     db.SearchTokenizer            // SQLite 模式注入给 RetrievalRepository（PG 传 nil）
 	inspectorPort    service.QueueInspectorPort    // 队列可见性端口（asynq inspectorPortAdapter / memory.Inspector）
@@ -349,21 +351,27 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 			app.queueInspector = insp
 			app.inspectorPort = inspectorPortAdapter{inspector: insp}
 		} else {
-			// standalone 路径：内存队列。workerMux 必须先于 memory.Queue 构造，
-			// 因为 Queue 需要 mux 作为 TaskRunner；worker handler 注册两种模式共用。
+			// 无 Redis 路径：SQLite 持久化队列（重启不丢任务）。
+			// workerMux 必须先于 Queue 构造（Queue 需 mux 作为 TaskRunner）。
 			mux := hibikenasynq.NewServeMux()
 			mux.Use(otelTaskMiddleware())
 			app.workerMux = mux
-			memQ := memoryqueue.New(mux, memoryqueue.Config{
+			sqlDB, err := gormDB.DB()
+			if err != nil {
+				return nil, fmt.Errorf("获取底层 *sql.DB 失败: %w", err)
+			}
+			sqlQ, err := sqlitequeue.New(sqlDB, mux, sqlitequeue.Config{
 				Concurrency: cfg.Queue.Concurrency,
-				Capacity:    max(cfg.Queue.Concurrency, 1024),
 				MaxRetry:    cfg.Queue.MaxRetry(),
 				MinBackoff:  cfg.Queue.MinBackoff(),
 				MaxBackoff:  cfg.Queue.MaxBackoff(),
 			})
-			app.memoryQueue = memQ
-			app.jobQueue = memQ
-			app.inspectorPort = memoryqueue.NewInspector(memQ, "default")
+			if err != nil {
+				return nil, fmt.Errorf("创建 SQLite 队列失败: %w", err)
+			}
+			app.sqliteQueue = sqlQ
+			app.jobQueue = sqlQ
+			app.inspectorPort = sqlitequeue.NewInspector(sqlQ)
 		}
 	}
 
@@ -1093,7 +1101,7 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 
 	// 收集各服务"真正启动完成"的信号，全部就绪后才输出 banner。
 	asynqWorkerActive := a.workerServer != nil && a.workerMux != nil
-	memoryWorkerActive := a.memoryQueue != nil
+	memoryWorkerActive := a.memoryQueue != nil || a.sqliteQueue != nil
 	wantReady := 0
 	if asynqWorkerActive || memoryWorkerActive {
 		wantReady++
@@ -1113,10 +1121,15 @@ func (a *appRuntime) start(ctx context.Context, log *slog.Logger) error {
 		a.startWorkerBackgroundJobs(ctx, log)
 		readyCh <- struct{}{}
 	} else if memoryWorkerActive {
-		// 内存队列 worker：在进程内启动 goroutine 消费 pending，
-		// 复用同一 workerMux 执行 worker handler。两种模式共用后台 scheduler。
-		log.Info("启动内存队列 worker")
-		a.memoryQueue.Start(ctx)
+		// 无 Redis 队列 worker（内存或 SQLite 持久化）：
+		// 在进程内启动 goroutine 消费 pending，复用同一 workerMux 执行 handler。
+		log.Info("启动队列 worker")
+		if a.memoryQueue != nil {
+			a.memoryQueue.Start(ctx)
+		}
+		if a.sqliteQueue != nil {
+			a.sqliteQueue.Start(ctx)
+		}
 		a.startWorkerBackgroundJobs(ctx, log)
 		readyCh <- struct{}{}
 	}
@@ -1188,6 +1201,10 @@ func (a *appRuntime) shutdown(ctx context.Context) error {
 	if a.memoryQueue != nil {
 		// 内存队列：等待运行中任务到 ctx 超时。
 		capture(a.memoryQueue.Stop(ctx))
+	}
+	if a.sqliteQueue != nil {
+		// SQLite 持久化队列：等待运行中任务到 ctx 超时。
+		capture(a.sqliteQueue.Stop(ctx))
 	}
 	if a.memoryStateStore != nil {
 		// 内存 OIDC state store：停止后台清理 goroutine（可多次调用）。
