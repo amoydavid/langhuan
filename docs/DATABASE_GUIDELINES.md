@@ -421,7 +421,7 @@ SQLite 无原生时间类型，时间列在迁移脚本中声明为 `DATETIME`�
 
 - **写入侧**：业务路径统一经 GORM，modernc.org/sqlite 把 `time.Time` 序列化为 Go 的 `time.String()` 格式（如 `2026-08-12 10:00:00 +0000 UTC`），不依赖迁移脚本里的 `DEFAULT (strftime(...))`。
 - **兜底默认值**：迁移脚本里的 `strftime('%Y-%m-%dT%H:%M:%fZ','now')` 仅作 raw INSERT（不经 GORM 的路径）的兜底，业务路径不应依赖该格式。
-- **时间比较**：因 GORM 写入格式与 `datetime('now')`（`YYYY-MM-DD HH:MM:SS`）的字符串字节序存在偏差，凡 SQLite 下用 `expires_at > datetime('now')` 之类比较时，必须用 `datetime(col)` 包裹存储值：`datetime(expires_at) > datetime('now')`，由 `datetime()` 把存储的时间字符串解析为统一的 `YYYY-MM-DD HH:MM:SS` 格式后再比较，消除格式二义性。
+- **时间比较**：SQLite 下不能直接用 `datetime('now')` 或 `datetime(col)` 与 GORM 写入的时间列比较——modernc 存储的 Go `time.String()` 格式带 `" UTC"` 后缀，SQLite 的 `datetime()` 函数无法解析该后缀，返回 NULL（导致比较恒假、查询全部失效）。正确写法是用参数绑定 `time.Now().UTC()`：`expires_at > ?`（参数传 `time.Now().UTC()`），两侧同为 `time.Time.String()` 格式直接比较，正确、保留亚秒精度、且能走索引。参照 `session_repository.go`、`invitation_repository.go`、`oidc_auth_tx_runner.go` 的既有写法。
 - **读取侧**：modernc 默认能把时间列 Scan 为 `time.Time`（compatibility test 验证 round-trip）；不要设 `_time_format=sqlite`，否则 driver 返回字符串，破坏 GORM 的 `*time.Time` 扫描。
 
 一句话总则：领域层不碰 GORM；租户读写都在 Workspace transaction 中；事实层不可变、投影可重建；复合外键守住 lineage；向量查询表达式必须与 HNSW 索引完全一致。

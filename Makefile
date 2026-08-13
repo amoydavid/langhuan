@@ -1,4 +1,4 @@
-.PHONY: dev web test-image test-integration linux _web-build
+.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build
 
 # 测试专用 PostgreSQL 镜像（pgvector + zhparser，见 docker/postgres-test/Dockerfile）
 TEST_PG_IMAGE ?= langhuan-test-postgres:pg17
@@ -42,6 +42,10 @@ test-integration: test-image
 	LANGHUAN_TEST_DATABASE_DSN="postgres://langhuan:langhuan@127.0.0.1:$$port/langhuan_test?sslmode=disable" \
 	LANGHUAN_TEST_RUN_ID="$$container_name" \
 	go test -tags=integration ./... -count=1
+
+# SQLite 相关单元测试（不依赖 Docker；db/migrate 的 SQLite 集成测试由 test-integration 覆盖）
+test-sqlite:
+	go test ./internal/infrastructure/config/... ./internal/infrastructure/datadir/... ./internal/adapters/auth/... ./internal/adapters/queue/memory/... ./internal/adapters/tokenizer/... -count=1
 
 _web-build:
 	pnpm --dir web build
