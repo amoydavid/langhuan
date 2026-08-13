@@ -269,6 +269,16 @@ func (q *Queue) reacquireAndPush(it *item) {
 	}
 	q.mu.Unlock()
 	if !q.push(it) {
+		// 队列满：写回死信（含 payload），避免 RetryDead 的任务被静默丢弃（二次评审 C）。
+		q.mu.Lock()
+		if !q.stopped {
+			q.dead = append(q.dead, deadEntry{
+				id: it.taskID, typ: it.typ, payload: it.payload,
+				lastError: "重试时队列已满", maxRetry: it.maxRetry, failedAt: time.Now(),
+			})
+			q.failed++
+		}
+		q.mu.Unlock()
 		q.releaseSlot(it.taskID)
 	}
 }

@@ -64,12 +64,18 @@ func (r *InvitationRepository) FindPendingByTokenHash(ctx context.Context, token
 	var row InvitationRow
 	expiresCmp := "expires_at > now()"
 	if r.db.Dialector.Name() == "sqlite" {
-		// datetime(expires_at) 把存储的时间字符串解析为统一的 "YYYY-MM-DD HH:MM:SS"，
-		// 消除 GORM 写入格式与 datetime('now') 的字节序偏差。
-		expiresCmp = "datetime(expires_at) > datetime('now')"
+		// SQLite 的 datetime() 无法解析 Go time.Time.String() 的 " UTC" 后缀（返回 NULL），
+		// 不能包裹列。用参数绑定 time.Now().UTC()，与 oidc_auth_tx_runner 的既有正确写法一致。
+		expiresCmp = "expires_at > ?"
+	}
+	var args []any
+	if r.db.Dialector.Name() == "sqlite" {
+		args = []any{tokenHash, time.Now().UTC()}
+	} else {
+		args = []any{tokenHash}
 	}
 	if err := r.db.WithContext(ctx).
-		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND "+expiresCmp, tokenHash).
+		Where("token_hash = ? AND accepted_at IS NULL AND revoked_at IS NULL AND "+expiresCmp, args...).
 		First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRepositoryNotFound

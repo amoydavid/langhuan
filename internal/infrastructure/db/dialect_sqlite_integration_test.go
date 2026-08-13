@@ -230,11 +230,19 @@ func TestSQLiteNowFunctionDialect(t *testing.T) {
 	}
 
 	// session_repository.FindActive 对过期会话返回 ErrRepositoryNotFound，
-	// 证明 SQLite 分支使用了 datetime('now') 而非未翻译的 now()（若未翻译，
-	// SQLite 会把 now() 当作字符串列名比较，行为不一致）。
+	// 对有效（future）会话应成功返回。正向断言是 H1 回归的关键拦截：
+	// 若 SQLite 时间比较写法错误（如 datetime(expires_at) 返回 NULL），
+	// future 会话也会被误判为过期，此断言即失败。
 	sessRepo := NewSessionRepository(database)
 	if _, err := sessRepo.FindActive(ctx, pastSession); err != ErrRepositoryNotFound {
 		t.Fatalf("过期会话应返回 ErrRepositoryNotFound, got %v", err)
+	}
+	found, err := sessRepo.FindActive(ctx, futureSession)
+	if err != nil {
+		t.Fatalf("有效会话应成功返回（H1 回归），got %v", err)
+	}
+	if found.ID != futureSession {
+		t.Fatalf("返回的会话 ID = %v, want %v", found.ID, futureSession)
 	}
 }
 
