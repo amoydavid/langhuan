@@ -53,24 +53,40 @@ File / Web / FAQ 导入
   -> REST /api/v1/*  +  MCP /mcp
 ```
 
-技术基线：Go 1.26 · Gin · GORM + PostgreSQL 17 + pgvector（halfvec / HNSW）· PostgreSQL FTS（zhparser）· asynq + Redis · 对象存储（OSS / Local）。
+技术基线：Go 1.26 · Gin · GORM + PostgreSQL 17 + pgvector（halfvec / HNSW）· PostgreSQL FTS（zhparser）· asynq + Redis · 对象存储（OSS / Local）。v1.0.0 起支持 SQLite 零配置单机模式（modernc.org/sqlite + sqlite-vec + FTS5 + gse 中文分词）。
 
 ## 快速开始 Quick Start
 
-需要 Docker。一条命令启动完整服务（PostgreSQL + pgvector + zhparser、Redis、Langhuan 本体）：
+### 零配置运行（推荐）Zero-Config
+
+不需要 Docker、PostgreSQL 或 Redis——下载或编译 `langhuan` 后直接运行：
+
+```bash
+make standalone   # 或 go run ./cmd/langhuan，或直接 ./langhuan
+```
+
+首次运行自动在 `~/.langhuan-data/` 生成 SQLite 数据库、加密密钥与配置文件。打开 [http://127.0.0.1:8080](http://127.0.0.1:8080) → 注册管理员 → 创建工作区 → 创建知识库 → 导入文档 → 检索。
+
+> No Docker, PostgreSQL, or Redis needed. Just run the binary—Langhuan auto-provisions everything under `~/.langhuan-data/`.
+
+**standalone 能力边界**：进程内内存队列（进程退出时未完成任务丢失，由 source cleanup 补偿与用户重试恢复）；数据量建议 < 数万条 embedding（向量检索为精确暴力扫描，召回率 100%）；检索功能完整（向量 + 中文全文 + RRF + rerank）。生产高并发场景推荐下方的 PostgreSQL + Redis 部署。
+
+### 生产部署（PostgreSQL + Redis）Production Deployment
+
+需要 Docker。一条命令启动完整生产栈（PostgreSQL + pgvector + zhparser、Redis、Langhuan 本体）：
 
 ```bash
 docker compose up -d --build
 ```
 
-打开 **[http://localhost:8080](http://localhost:8080)** ，完成首次初始化（创建管理员账号）→ 创建工作区 → 创建知识库 → 导入文档 → 在检索页验证中英文混合检索。
+打开 [http://localhost:8080](http://localhost:8080)，完成首次初始化 → 创建工作区 → 创建知识库 → 导入文档 → 检索。
 
-> Requires only Docker. One command brings up the full stack: `docker compose up -d --build`, then open http://localhost:8080.
+> Full production stack with one command: `docker compose up -d --build`.
 
 ### 手动安装 Manual Install
 
 - [Ubuntu 24 / macOS 安装 PostgreSQL + pgvector + zhparser](docs/DATABASE_GUIDELINES.md#72-手动安装-pgvector--zhparserubuntu-24--macos)
-- [架构与设计](docs/ARCHITECTURE.md) · [数据库开发指南](docs/DATABASE_GUIDELINES.md) · [路线图](ROADMAP.md)
+- [架构与设计](docs/ARCHITECTURE.md) · [数据库开发指南](docs/DATABASE_GUIDELINES.md) · [备份与恢复](docs/operations/backup-restore.md) · [路线图](ROADMAP.md)
 
 ## 与 RAG 平台的定位差异 Positioning
 
