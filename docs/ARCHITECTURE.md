@@ -401,7 +401,116 @@ retrieval:
 
 duration 必须大于 0；batch 必须为 1–10000。`search_run_retention` 默认 168h，且必须不大于 `retired_generation_retention`——SearchRun 的 Generation snapshot 引用了 Generation projection，物理清理顺序上 SearchRun 先于 retired Generation projection 清理，避免回放时引用已被删除的 Generation。Cleanup service 已在 runtime 装配为可调用的 Workspace-scoped 能力；当前不引入进程级全租户扫描 scheduler。
 
-## 12. 验证与后续边界
+## 12. 数据库多驱动（PostgreSQL 与 SQLite）
+
+琅嬛在同一套业务合同下支持两种数据库方言：PostgreSQL + pgvector 作为生产推荐路径，SQLite（modernc.org/sqlite，纯 Go，`CGO_ENABLED=0`）作为零配置单机 / 开发路径。两条路径通过 Repository SQL 层的方言分发对齐，`domain` 与 `application` 层完全不感知方言差异。
+
+```mermaid
+flowchart LR
+    App["application / domain<br/>（方言无关）"]
+    Repo["infrastructure/db<br/>Repository + Dialect 分发"]
+    PG["PostgreSQL + pgvector<br/>halfvec / HNSW / tsvector / zhparser"]
+    SQLite["SQLite + sqlite-vec + FTS5<br/>BLOB / vec_distance_cosine / gse"]
+    App --> Repo
+    Repo -->|"db.Dialect == postgres"| PG
+    Repo -->|"db.Dialect == sqlite"| SQLite
+```
+
+### 12.1 Dialect 抽象
+
+方言定义在 `internal/infrastructure/db/dialect.go`，由 `*gorm.DB` 的 Dialector 名称推断：
+
+```go
+type Dialect string
+
+const (
+    DialectPostgres Dialect = "postgres"
+    DialectSQLite   Dialect = "sqlite"
+)
+
+func DialectOf(database *gorm.DB) (Dialect, error)
+```
+
+`db.Open(config.DatabaseConfig)` 返回 `(*gorm.DB, Dialect, error)`。Repository 只在确有方言差异的方法处持有 `Dialect` 并选择固定 SQL；没有差异的 Repository 不新增字段或构造参数。固定 SQL 按职责落在相邻文件，例如 `retrieval_search_postgres.go` / `retrieval_search_sqlite.go`，不建立覆盖全部 SQL 能力的万能 builder，也不让 `application` / `domain` 感知 `Dialect`。
+
+### 12.2 迁移分流
+
+PostgreSQL 使用 `migrations/` + `database/postgres`，保留现有 23 套迁移、halfvec / HNSW / zhparser 全部行为不变。SQLite 使用独立嵌入目录 `migrations_sqlite/` + 纯 Go `database/sqlite`（底层同样是 modernc.org/sqlite），从 PostgreSQL 最终 schema 语义出发重新编写，不回放 PG 的历史重建与数据回填。两套迁移拥有独立版本历史，不要求版本号一一对应。迁移必须在业务连接、worker 与 HTTP listener 启动前完成。
+
+### 12.3 方言差异点
+
+所有业务表、约束、复合外键 lineage 与 CHECK 在两种方言下语义等价，差异集中在五类 PG 专属能力：
+
+| 能力 | PostgreSQL | SQLite |
+|------|-----------|--------|
+| JSON 局部更新 | `jsonb_set` / `->>` / `-` | `json_set` / `json_extract` / `json_remove`（时间统一 UTC RFC3339Nano 后再写入，保证文本比较一致） |
+| 向量存储与检索 | `retrieval_entries.embedding halfvec` + 四条固定维度 HNSW 部分索引 + `embedding::halfvec(N) <=> ?::halfvec(N)` | 独立 `retrieval_embeddings.embedding BLOB`（按 entry 存）+ 先按 Workspace / KB / Generation / published 业务条件过滤，再 `vec_distance_cosine` 精确排序，`score = 1 - distance` |
+| 全文检索 | `fts_document tsvector` + GIN + zhparser / simple，查询用 `plainto_tsquery` + `ts_rank_cd` | 独立 FTS5 虚拟表 + 应用层 `gse` 分词，查询逐 token 双引号包裹并以 `AND` 连接，排序用 `-bm25` |
+| 多租户隔离 | 事务内 `set_config('app.workspace_id', ?, true)` GUC + `pg_advisory_xact_lock(hashtextextended(...))` | 不执行 GUC，直接走 tx-bound store；查询显式带 `workspace_id`（GUC 在 PG 也只是兜底）；advisory lock 由单写锁串行保证，跳过 advisory SQL |
+| 行级锁 / 并发 | `clause.Locking{UPDATE/SHARE}` + raw `FOR UPDATE SKIP LOCKED`（cleanup） | GORM 静默忽略 `clause.Locking`；删除 `SKIP LOCKED`，改稳定排序普通 `SELECT ... LIMIT`；写正确性靠 `SetMaxOpenConns(1)` + `_txlock=immediate` 单写串行 |
+
+- 向量维度双方都只允许 798、1024、2048、3584 四个固定值，动态标识符只从固定 allowlist 选择，向量列不拼用户输入。SQLite 的精确扫描在限定 scope 内全表排序，召回为精确解（100%），适合单机“小于数万条 embedding”边界；PostgreSQL 的 HNSW 是近似索引，PG 路径不做性能降级。
+- 数组类型（如 `workspace_api_keys.scopes`）在两种方言下都使用稳定 JSON codec 实现 `sql.Scanner` / `driver.Valuer`；查询侧优先用 GORM `IN ?`（双方言均支持），不再用 `ANY(?::uuid[])`。
+- 多租户正确性是关键前提：去掉 GUC 后，所有租户表读写 SQL 必须显式限定 `workspace_id`。验证通过两个 Workspace 的同形 ID / 相似干扰数据构造负向矩阵，而非仅靠 grep。
+
+方言 SQL 与 schema 细则见 `docs/DATABASE_GUIDELINES.md`，设计与选型见 `docs/superpowers/specs/2026-08-11-sqlite-zero-config-standalone-design.md` §4–§9。
+
+## 13. 内存 runtime 与 standalone 数据流
+
+standalone 单机模式在零外部依赖下运行：没有 PostgreSQL、Redis、S3，三个 Redis 依赖（任务队列、登录限流、OIDC state）全部下沉到进程内内存实现。这与 §12 的 SQLite 方言是同一套零配置形态的两面——SQLite 替代 PostgreSQL，内存 runtime 替代 Redis / asynq。
+
+### 13.1 Redis 可选与内存 runtime
+
+`RedisConfig` 新增 `Enabled bool`。`enabled=true` 时继续严格要求 addr 并装配 Redis / asynq / 限流器 / OIDC state store；`enabled=false`（standalone profile 默认）时不创建或 ping Redis client，三个依赖改用进程内内存实现：
+
+| 能力 | Redis / asynq 形态 | 内存形态（standalone） |
+|------|------------------|----------------------|
+| 任务队列 | asynq + Redis | 进程内有界优先队列（`capacity` 默认 1024）+ worker pool，复用现有 worker handler |
+| 登录限流 | Redis 固定窗口计数器 | mutex 保护的固定窗口计数器，key 为规范化 email 的 SHA-256，惰性过期 + 低频清理 |
+| OIDC state | Redis `GETDEL` 原子读写 | mutex 临界区内一次性读取并删除，密码学随机 state / nonce，受 app context 控制的 TTL 清理 goroutine |
+
+内存队列复用现有 worker handler 而不重写 payload：抽出最小 `TaskRegistrar` 接口，内存 runtime 仍构造 `asynq.NewTask` 调用 handler，从而复用解码、`SkipRetry` 与业务幂等逻辑；retry / max retry 通过 worker-owned `TaskExecutionMetadata` context helper 读取，真实 asynq context 下回退到 `asynq.GetRetryCount` / `GetMaxRetry`，内存 context 下读取 adapter 注入值。内存 inspector 完整实现 `service.QueueInspectorPort`（pending / active / scheduled / retry / dead / processed / failed 统计、`ListDead`、`RetryDead`、`DeleteDead`），不因 standalone 让队列管理 API 退化。
+
+### 13.2 内存队列的不持久化边界
+
+内存队列不跨进程持久化。进程崩溃或重启时，尚未执行的导入 / 索引 / 同步任务会丢失，不会自动重放。这些任务只通过两条已证明安全的路径恢复：①进程内的 source cleanup / force latch 周期扫描补偿（飞书同步等可从 Job payload 安全重建的任务）；②用户对失败 / 未完成 Document 重新触发 retry / reindex。琅嬛不为内存队列发明通用 startup requeue，也不声称 standalone 提供持久队列语义。
+
+### 13.3 配置选择四态探测链
+
+启动配置来源是一条有序探测链，不做模糊回退：
+
+| 优先级 | 来源 | 命中时行为 |
+|---|---|---|
+| 1 | 显式 `-config <path>` | 严格读取指定 YAML |
+| 2 | 当前目录 `config.yaml` | 读取该文件（兼容现有生产部署） |
+| 3 | `~/.langhuan-data/config.yaml`（standalone 落盘物） | 读取该文件 |
+| 4 | 以上都不存在 | 首次生成 standalone profile + `credential.key` 到 `~/.langhuan-data/`，再读取刚生成的 config 启动 |
+
+任何层的文件存在但损坏 / 不可读 / 校验失败都立即退出（fail-fast），绝不静默回退到下一层——否则拼错生产配置路径或暂时不可读的配置会静默启动一个空的 SQLite 实例。第 3 层是 standalone 兜底配置的正式可编辑入口，一旦存在就与第 1、2 层同等严格；第 4 层生成时若 `credential.key` 已存在则复用、绝不覆盖。
+
+### 13.4 standalone 数据流
+
+零配置首次启动到可用的完整路径：
+
+```text
+config selection（四态探测链）
+  -> standalone 兜底准备（仅第 4 层）：
+       创建 ~/.langhuan-data/（0700）
+       首次生成 credential.key（0600，已存在则复用）
+       落盘 config.yaml（0600，指向 credential.key）
+  -> migrate SQLite（migrations_sqlite/）
+  -> open SQLite（foreign_keys=1, WAL, SetMaxOpenConns(1)）
+  -> build repositories / services
+  -> build 内存 runtime（队列 / 限流 / OIDC state）
+  -> register worker handlers（与 Redis 路径相同）
+  -> start schedulers / worker / HTTP（同进程）
+```
+
+standalone profile 固定 `database.driver=sqlite`、`storage.driver=local`（`raw_document_dir=~/.langhuan-data/raw-documents`）、`redis.enabled=false`、localhost 明文 HTTP（`secure_cookie=false`）、`auth.password.enabled=true` / `auth.oidc.enabled=false`，并通过 `credentials.encryption_key_file` 指向 `~/.langhuan-data/credential.key`。HTTP、MCP、内存 worker 与 Web Console 同进程启动，迁移自动完成。`encryption_key_file` 是与 `encryption_key`（Base64 直填）二选一的通用字段，生产显式 YAML 同样可用（如指向 k8s secret 挂载），不引入 standalone 专属补丁。
+
+standalone 备份恢复见 `docs/operations/backup-restore.md` §9，设计与 runtime 合同见 `docs/superpowers/specs/2026-08-11-sqlite-zero-config-standalone-design.md` §2、§10、§11。
+
+## 14. 验证与后续边界
 
 数据库验收覆盖复合外键、FAQ 完整性、父子分块 lineage 与 flat 回退、父块不入索引、完整父块检索上下文、文件树 cycle/name/delete、Revision 冲突、Generation 原子切换、FAQ 答案不入索引、HNSW 表达式兼容、跨租户负向矩阵和 Auth/Model 数据保留。
 
