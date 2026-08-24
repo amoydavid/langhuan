@@ -264,6 +264,14 @@ go vet ./...
 
 # 数据库迁移（若单独调用迁移子命令）
 go run ./cmd/langhuan migrate
+
+# 离线检索评测：准备数据集（首次约 730MB，走 HF 镜像）+ 执行评测（standalone 拉起被测系统）
+cp eval.config.example.yaml eval.config.yaml   # 一次性：配置真实 Embedding 端点
+make eval-prepare
+make eval
+
+# 离线冒烟（无真实 API 环境验证评测全链路；本地 mock embedding，指标无语义意义）
+make eval-smoke
 ```
 
 > 实际可用命令以 `cmd/langhuan` 当前 CLI 实现为准。
@@ -276,6 +284,7 @@ go run ./cmd/langhuan migrate
 - **向量索引**：`chunk_embeddings.embedding` 使用 `halfvec`，查询侧表达式必须与 `000001_init` 中预建的 HNSW 部分索引完全一致，否则退化为全表扫描。
 - **资产归档**：远程图片下载必须使用 SSRF-safe HTTP client。
 - **日志**：不得记录 API key、完整用户文档内容等敏感信息。
+- **检索评测回归**：修改 chunker、RRF 融合、默认检索参数或 embedding 链路的 PR，须附 `make eval` 新旧报告对比（`metrics.json` diff）或说明为何不适用；设计与用法见 `docs/superpowers/specs/2026-08-24-retrieval-eval-design.md`，评测数据集在 `.eval-data/`（gitignore）。
 
 ## 10. 前端最佳实践（`web/`）
 

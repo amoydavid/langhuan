@@ -462,6 +462,16 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 6. 在 SearchRun 保留期和 Generation projection 保留期内，owner/admin 可用原 query 回放；query 不一致或资源已清理时明确失败。
 7. 现有单库 REST、MCP 结果字段和 API Key 租户边界保持兼容。
 
+### 离线检索评测基准（已交付）
+
+在既有检索链路之上，建立不依赖人工标注的量化评测能力，回答"检索好不好"：指标基线、通道贡献与分块损耗均可测量。设计与操作指南见 [`docs/superpowers/specs/2026-08-24-retrieval-eval-design.md`](docs/superpowers/specs/2026-08-24-retrieval-eval-design.md)。
+
+- 数据集：MIRACL-zh（Apache-2.0，人工标注段落级 qrels）确定性子采样，双轨道——Track A 段落检索（每段落一文档，隔离分块变量）、Track B 长文档检索（按 Wikipedia 文章聚合，覆盖分块+父子+检索全链路）；gold 命中用字符 bigram 文本重叠判定（默认阈值 0.6，附 0.5/0.6/0.8 敏感性），不绑定 chunk ID，跨 chunker 版本存活。
+- 独立命令 `cmd/langhuan-eval`：`prepare`（HF 镜像优先/直连回退，下载缓存于仓库根 `.eval-data/`，gitignore）与 `run`（standalone 拉起被测单二进制 + REST 引导 + 通道矩阵 + 报告）；`mock-embedding` 子命令提供确定性离线冒烟（`make eval-smoke`）。
+- 检索通道语义扩展（主链路唯一改动）：`vector_top_k`/`keyword_top_k` 支持 `0=禁用该路`（两路同 0 拒绝），禁用路跳过召回与 query embedding；由此可评测 vector-only / FTS-only / RRF 混合 / 混合+Rerank 四格矩阵。
+- 指标：Recall@5/@10、MRR@10、nDCG@10（确定性 qrels 计算，无 LLM 参与）；报告输出 `docs/eval/<时间戳>_<数据集>_<模型>/`（report.md + metrics.json），指纹含数据集 manifest sha256、分块配置、embedding 五元组、矩阵参数与 repo HEAD，同指纹重复 run 指标逐位一致。
+- 回归约定：修改 chunker、RRF 融合、默认检索参数或 embedding 链路的 PR 须附新旧 metrics.json 对比。
+
 ### v1.0.0 - 首次对外发布与兼容基线
 
 目标：冻结首个可对外使用的产品、协议和数据兼容基线。从该版本起，不再以“删除内部测试库重新安装”替代正式升级路径。
