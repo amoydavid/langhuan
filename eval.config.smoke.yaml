@@ -1,0 +1,40 @@
+# 离线冒烟配置（make eval-smoke 专用）：连接本地 mock embedding，
+# 数据集为精简采样。指标值无语义意义，只验证评测全链路与确定性。
+server:
+  mode: standalone
+  email: "eval-smoke@langhuan.local"
+  nickname: "EvalSmoke"
+  password: "LanghuanEval!2026"
+  ingest_concurrency: 4
+  ready_timeout_seconds: 300
+
+embedding:
+  provider: openai
+  config:
+    mode: standard
+    base_url: "http://127.0.0.1:19829/v1"
+    timeout_seconds: 60
+  credentials:
+    api_key: "mock"
+  model_name: "mock-embedding"
+  dimensions: 1024
+  parameters:
+    batch_size: 32
+
+matrix:
+  top_k: 50
+  final_top_k: 10
+
+dataset:
+  dir: ".eval-data/smoke/miracl-zh"
+
+overlap:
+  threshold: 0.6
+  sensitivity_thresholds: [0.5, 0.6, 0.8]
+
+output:
+  dir: "docs/eval"
+
+hf:
+  mirror: "https://hf-mirror.com"
+  fallback: "https://huggingface.co"

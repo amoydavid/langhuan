@@ -1,0 +1,62 @@
+# langhuan-eval 评测配置模板。
+# 复制为 eval.config.yaml（已被 gitignore）后按需修改；
+# 密钥建议放独立文件并用 api_key_file 引用，避免明文落盘。
+
+server:
+  # standalone：评测自带起一个临时琅嬛实例（SQLite 单机模式，结束即销毁）。
+  # remote：连接已运行的实例（base_url 必填；要求干净环境，注册用户会成为 platform_admin）。
+  mode: standalone
+  # base_url: "http://127.0.0.1:8080"    # remote 模式必填
+  # binary: "./bin/langhuan"             # 预构建二进制；留空则现场 go build ./cmd/langhuan
+  email: "eval@langhuan.local"
+  nickname: "Eval"
+  password: "LanghuanEval!2026"
+  ingest_concurrency: 4
+  ready_timeout_seconds: 300
+
+embedding:
+  provider: openai                       # OpenAI-compatible 描述符
+  config:
+    mode: standard
+    base_url: "http://127.0.0.1:19829/v1"  # 指向真实 API 或本地 mock（langhuan-eval mock-embedding）
+    timeout_seconds: 60
+  credentials:
+    api_key: "mock"
+  # api_key_file: "/path/to/key"         # 非空时覆盖 credentials.api_key
+  model_name: "mock-embedding"
+  dimensions: 1024                       # 只允许 798 / 1024 / 2048 / 3584
+  parameters:
+    batch_size: 32
+
+# rerank:                                 # 可选：不配置则矩阵中 hybrid_rerank 为 N/A
+#   enabled: true
+#   provider: openai
+#   config:
+#     mode: standard
+#     base_url: "https://api.example.com/v1"
+#   credentials:
+#     api_key: "sk-..."
+#   model_name: "rerank-model"
+#   candidate_top_k: 50
+
+matrix:
+  top_k: 50                              # 各路候选深度（vector/keyword 单路取值）
+  final_top_k: 10                        # 指标评估窗口 K
+  # skip_vector_only: true               # 需要时跳过部分通道组合
+  # skip_fts_only: true
+  # skip_hybrid: true
+  # skip_rerank: true
+
+dataset:
+  dir: ".eval-data/miracl-zh"            # langhuan-eval prepare 的输出目录
+
+overlap:
+  threshold: 0.6                         # gold 命中判定阈值（字符 bigram 包含率）
+  sensitivity_thresholds: [0.5, 0.6, 0.8]
+
+output:
+  dir: "docs/eval"                       # 报告输出根目录（report.md + metrics.json）
+
+hf:
+  mirror: "https://hf-mirror.com"        # 国内镜像优先
+  fallback: "https://huggingface.co"     # 失败回退直连

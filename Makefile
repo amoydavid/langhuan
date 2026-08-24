@@ -1,4 +1,4 @@
-.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build
+.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build eval eval-prepare eval-smoke
 
 # 测试专用 PostgreSQL 镜像（pgvector + zhparser，见 docker/postgres-test/Dockerfile）
 TEST_PG_IMAGE ?= langhuan-test-postgres:pg17
@@ -46,6 +46,27 @@ test-integration: test-image
 # SQLite 相关单元测试（不依赖 Docker；db/migrate 的 SQLite 集成测试由 test-integration 覆盖）
 test-sqlite:
 	go test ./internal/infrastructure/config/... ./internal/infrastructure/datadir/... ./internal/adapters/auth/... ./internal/adapters/queue/memory/... ./internal/adapters/tokenizer/... -count=1
+
+# 离线检索评测（langhuan-eval，见 docs/superpowers/specs/2026-08-24-retrieval-eval-design.md）
+# eval：prepare（数据集缺失时自动下载，首次约 730MB，走 HF 镜像）+ run（standalone 拉起被测系统）
+eval:
+	@test -f eval.config.yaml || { echo "缺少 eval.config.yaml（cp eval.config.example.yaml eval.config.yaml 后按需修改）" >&2; exit 1; }
+	@test -f .eval-data/miracl-zh/manifest.json || $(MAKE) eval-prepare
+	go run ./cmd/langhuan-eval run -config eval.config.yaml
+
+eval-prepare:
+	go run ./cmd/langhuan-eval prepare
+
+# 离线冒烟：本地确定性 mock embedding + 精简数据集，验证评测全链路（指标无语义意义）
+eval-smoke:
+	@set -eu; \
+	port=19829; \
+	go run ./cmd/langhuan-eval mock-embedding -addr 127.0.0.1:$$port & \
+	mock_pid=$$!; \
+	trap 'kill $$mock_pid 2>/dev/null || true' EXIT; \
+	sleep 1; \
+	go run ./cmd/langhuan-eval prepare -data-dir .eval-data/smoke -queries 20 -distractors 200 -distractor-articles 15; \
+	go run ./cmd/langhuan-eval run -config eval.config.smoke.yaml
 
 _web-build:
 	pnpm --dir web build

@@ -1,0 +1,354 @@
+package main
+
+import (
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+// runEval 是 langhuan-eval run 的主流程（spec §7.2）：拉起被测系统 →
+// REST 引导 → 双轨导入 → 通道矩阵检索 → 指标 → 报告。
+// matrixCombo 是通道矩阵的一个格子（spec §6.3）：topK=0 表示禁用该路。
+type matrixCombo struct {
+	Name        string
+	VectorTopK  int
+	KeywordTopK int
+	Rerank      bool
+	Skip        bool
+}
+
+func matrixCombos(cfg evalConfig, rerankEnabled bool) []matrixCombo {
+	return []matrixCombo{
+		{Name: "vector_only", VectorTopK: cfg.Matrix.TopK, KeywordTopK: 0, Skip: cfg.Matrix.SkipVectorOnly},
+		{Name: "fts_only", VectorTopK: 0, KeywordTopK: cfg.Matrix.TopK, Skip: cfg.Matrix.SkipFTSOnly},
+		{Name: "hybrid", VectorTopK: cfg.Matrix.TopK, KeywordTopK: cfg.Matrix.TopK, Skip: cfg.Matrix.SkipHybrid},
+		{Name: "hybrid_rerank", VectorTopK: cfg.Matrix.TopK, KeywordTopK: cfg.Matrix.TopK, Rerank: true, Skip: cfg.Matrix.SkipRerank},
+	}
+}
+
+func runEval(configPath string) error {
+	cfg, err := loadEvalConfig(configPath)
+	if err != nil {
+		return err
+	}
+	if err := cfg.applyAPIKeyFiles(); err != nil {
+		return err
+	}
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return err
+	}
+	datasetPath := cfg.Dataset.Dir
+	if !filepath.IsAbs(datasetPath) {
+		datasetPath = filepath.Join(repoRoot, datasetPath)
+	}
+	dataset, err := loadDataset(datasetPath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("数据集：%s（query=%d TrackA=%d TrackB=%d seed=%d）\n",
+		datasetPath, len(dataset.Queries), len(dataset.TrackA), len(dataset.TrackB), dataset.Manifest.Seed)
+
+	var baseURL string
+	var server *standaloneServer
+	if cfg.Server.Mode == "remote" {
+		baseURL = strings.TrimRight(cfg.Server.BaseURL, "/")
+		fmt.Printf("remote 模式：%s\n", baseURL)
+	} else {
+		fmt.Println("standalone 模式：拉起临时琅嬛实例（SQLite）…")
+		server, err = startStandaloneServer(cfg, repoRoot)
+		if err != nil {
+			return err
+		}
+		defer server.stop()
+		baseURL = server.baseURL
+		fmt.Printf("  就绪：%s（日志 %s）\n", baseURL, filepath.Join(server.dataDir, "server.log"))
+	}
+
+	client, err := newLanghuanClient(baseURL)
+	if err != nil {
+		return err
+	}
+	fmt.Println("REST 引导：注册用户 / workspace / embedding 模型…")
+	boot, err := client.bootstrap(cfg)
+	if err != nil {
+		return err
+	}
+	rerankEnabled := cfg.Rerank != nil && cfg.Rerank.Enabled && boot.RerankModelID != ""
+	fmt.Printf("  workspace=%s embedding=%s(dim=%d) rerank=%v\n",
+		boot.WorkspaceSlug, cfg.Embedding.ModelName, cfg.Embedding.Dimensions, rerankEnabled)
+
+	golds := dataset.goldPassagesByQuery()
+	evaluatable := 0
+	for _, query := range dataset.Queries {
+		if len(golds[query.QueryID]) > 0 {
+			evaluatable++
+		}
+	}
+	if evaluatable == 0 {
+		return fmt.Errorf("没有可评测 query（gold 段落缺失）")
+	}
+	fmt.Printf("可评测 query：%d / %d\n", evaluatable, len(dataset.Queries))
+
+	tracks := []trackSpec{
+		{Name: "track-a", Label: "段落检索（单段落文档，隔离分块变量）", Docs: trackADocsOf(dataset), Slug: boot.WorkspaceSlug},
+		{Name: "track-b", Label: "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）", Docs: trackBDocsOf(dataset), Slug: boot.WorkspaceSlug},
+	}
+	combos := matrixCombos(cfg, rerankEnabled)
+
+	var trackReports []trackReport
+	for _, track := range tracks {
+		fmt.Printf("\n[%s] 创建知识库并导入 %d 份文档（并发 %d）…\n",
+			track.Name, len(track.Docs), cfg.Server.IngestConcurrency)
+		kbID, err := client.createKnowledgeBase(boot.WorkspaceSlug, "eval-"+track.Name, boot.EmbeddingModelID)
+		if err != nil {
+			return err
+		}
+		started := time.Now()
+		if err := ingestAll(client, boot.WorkspaceSlug, kbID, track.Docs, cfg); err != nil {
+			return err
+		}
+		fmt.Printf("  导入完成（%s），执行查询矩阵…\n", time.Since(started).Round(time.Second))
+
+		trackResult := trackReport{
+			Name: track.Name, Label: track.Label,
+			CorpusSize: len(track.Docs), QueryCount: evaluatable,
+			Combos: make([]comboReport, 0, len(combos)),
+		}
+		for _, combo := range combos {
+			if combo.Skip {
+				trackResult.Combos = append(trackResult.Combos, comboReport{
+					Name: combo.Name, Available: false, UnavailableReason: "配置跳过",
+				})
+				continue
+			}
+			if combo.Rerank && !rerankEnabled {
+				trackResult.Combos = append(trackResult.Combos, comboReport{
+					Name: combo.Name, Available: false, UnavailableReason: "未配置 rerank 模型",
+				})
+				continue
+			}
+			if combo.Rerank {
+				if err := client.setRerankSettings(boot.WorkspaceSlug, true, boot.RerankModelID, cfg.Rerank.CandidateTopK); err != nil {
+					return fmt.Errorf("启用 rerank 失败: %w", err)
+				}
+			}
+			summary, err := evaluateCombo(client, boot.WorkspaceSlug, kbID, dataset, golds, combo, cfg, thresholdList(cfg))
+			if combo.Rerank {
+				if err := client.setRerankSettings(boot.WorkspaceSlug, false, boot.RerankModelID, cfg.Rerank.CandidateTopK); err != nil {
+					return fmt.Errorf("关闭 rerank 失败: %w", err)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("%s/%s 评测失败: %w", track.Name, combo.Name, err)
+			}
+			fmt.Printf("  %-14s recall@10=%.4f mrr@10=%.4f ndcg@10=%.4f\n",
+				combo.Name, summary[cfg.Overlap.Threshold].RecallAt10,
+				summary[cfg.Overlap.Threshold].MRRAt10, summary[cfg.Overlap.Threshold].NDCGAt10)
+			trackResult.Combos = append(trackResult.Combos, comboReport{
+				Name: combo.Name, Available: true, ByThreshold: sortedThresholdMetrics(summary),
+			})
+		}
+		trackReports = append(trackReports, trackResult)
+	}
+	return writeReport(cfg, dataset, baseURL, repoRoot, trackReports)
+}
+
+type trackSpec struct {
+	Name, Label, Slug string
+	Docs              []ingestDoc
+}
+
+type ingestDoc struct {
+	Title, Content string
+}
+
+func trackADocsOf(dataset *evalDataset) []ingestDoc {
+	docs := make([]ingestDoc, 0, len(dataset.TrackA))
+	for _, doc := range dataset.TrackA {
+		docs = append(docs, ingestDoc{Title: uniqueTitle(doc.Title, doc.DocID), Content: doc.Text})
+	}
+	return docs
+}
+
+func trackBDocsOf(dataset *evalDataset) []ingestDoc {
+	docs := make([]ingestDoc, 0, len(dataset.TrackB))
+	for _, doc := range dataset.TrackB {
+		docs = append(docs, ingestDoc{
+			Title:   uniqueTitle(doc.Title, doc.DocID),
+			Content: strings.Join(doc.Passages, "\n\n"),
+		})
+	}
+	return docs
+}
+
+// uniqueTitle 保证文件树同级名称唯一：MIRACL 的段落标题沿用文章标题，
+// 同一文章的多个段落（及跨文章同名）会触发 file_tree_name_conflict。
+func uniqueTitle(title, docID string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return docID
+	}
+	return title + " [" + docID + "]"
+}
+
+func ingestAll(client *langhuanClient, slug, kbID string, docs []ingestDoc, cfg evalConfig) error {
+	workers := cfg.Server.IngestConcurrency
+	if workers < 1 {
+		workers = 1
+	}
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var failure struct {
+		sync.Mutex
+		err error
+	}
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				doc := docs[index]
+				documentID, err := client.ingestText(slug, kbID, doc.Title, doc.Content)
+				if err == nil {
+					err = client.waitDocumentReady(slug, documentID,
+						time.Duration(cfg.Server.ReadyTimeoutSeconds)*time.Second)
+				}
+				if err != nil {
+					failure.Lock()
+					if failure.err == nil {
+						failure.err = fmt.Errorf("文档 %q 导入失败: %w", doc.Title, err)
+					}
+					failure.Unlock()
+				}
+			}
+		}()
+	}
+	// 生产者：顺序派发，任一 worker 失败即停止派发（jobs 关闭后 worker 排空退出）。
+	go func() {
+		total := len(docs)
+		sent := 0
+		for index := range docs {
+			failure.Lock()
+			err := failure.err
+			failure.Unlock()
+			if err != nil {
+				break
+			}
+			jobs <- index
+			sent++
+			if sent%500 == 0 {
+				fmt.Printf("    已提交 %d/%d\n", sent, total)
+			}
+		}
+		close(jobs)
+	}()
+	wg.Wait()
+	if failure.err != nil {
+		return failure.err
+	}
+	return nil
+}
+
+// evaluateCombo 对一个通道组合执行全部 query，返回 threshold -> 指标。
+// 每个 query 只检索一次；不同阈值复用同一批结果重新做命中判定。
+func evaluateCombo(
+	client *langhuanClient,
+	slug, kbID string,
+	dataset *evalDataset,
+	golds map[string][]string,
+	combo matrixCombo,
+	cfg evalConfig,
+	thresholds []float64,
+) (map[float64]metricsSummary, error) {
+	type rankedResult struct {
+		golds []string
+		items []searchResultItem
+	}
+	results := make([]rankedResult, 0, len(dataset.Queries))
+	for _, query := range dataset.Queries {
+		gold := golds[query.QueryID]
+		if len(gold) == 0 {
+			continue
+		}
+		items, err := client.search(slug, kbID, query.Query, combo.VectorTopK, combo.KeywordTopK, cfg.Matrix.FinalTopK)
+		if err != nil {
+			return nil, fmt.Errorf("query %s 检索失败: %w", query.QueryID, err)
+		}
+		results = append(results, rankedResult{golds: gold, items: items})
+	}
+	summary := make(map[float64]metricsSummary, len(thresholds))
+	for _, threshold := range thresholds {
+		evals := make([]queryEvaluation, 0, len(results))
+		goldCounts := make([]int, 0, len(results))
+		for _, result := range results {
+			evals = append(evals, queryEvaluation{Ranks: ranksOf(result.items, result.golds, threshold)})
+			goldCounts = append(goldCounts, len(result.golds))
+		}
+		summary[threshold] = summarize(evals, goldCounts)
+	}
+	return summary, nil
+}
+
+// sortedThresholdMetrics 把 threshold -> 指标 的 map 转为按阈值升序的切片
+// （JSON map 不支持 float 键）。
+func sortedThresholdMetrics(summary map[float64]metricsSummary) []thresholdMetric {
+	thresholds := make([]float64, 0, len(summary))
+	for threshold := range summary {
+		thresholds = append(thresholds, threshold)
+	}
+	sort.Float64s(thresholds)
+	result := make([]thresholdMetric, 0, len(thresholds))
+	for _, threshold := range thresholds {
+		result = append(result, thresholdMetric{Threshold: threshold, Metrics: summary[threshold]})
+	}
+	return result
+}
+
+// ranksOf 计算一次检索的命中排名：按结果顺序，只有当某条结果首次覆盖
+// 一个尚未覆盖的 gold 时才记录排名，保证多 gold recall 不重复计数。
+func ranksOf(items []searchResultItem, golds []string, threshold float64) []int {
+	covered := make([]bool, len(golds))
+	var ranks []int
+	var builder strings.Builder
+	for position, item := range items {
+		builder.Reset()
+		builder.WriteString(item.Content)
+		for _, child := range item.MatchedChildren {
+			builder.WriteString("\n")
+			builder.WriteString(child.Content)
+		}
+		content := builder.String()
+		newlyCovered := false
+		for index, gold := range golds {
+			if !covered[index] && overlapRatio(content, gold) >= threshold {
+				covered[index] = true
+				newlyCovered = true
+			}
+		}
+		if newlyCovered {
+			ranks = append(ranks, position+1)
+		}
+	}
+	return ranks
+}
+
+func thresholdList(cfg evalConfig) []float64 {
+	seen := map[float64]struct{}{}
+	list := []float64{}
+	for _, threshold := range append([]float64{cfg.Overlap.Threshold}, cfg.Overlap.SensitivityThresholds...) {
+		if threshold <= 0 || threshold > 1 {
+			continue
+		}
+		if _, ok := seen[threshold]; ok {
+			continue
+		}
+		seen[threshold] = struct{}{}
+		list = append(list, threshold)
+	}
+	sort.Float64s(list)
+	return list
+}

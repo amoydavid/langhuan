@@ -1,0 +1,281 @@
+{
+  "fingerprint": {
+    "generated_at": "2026-08-25T00:36:59+08:00",
+    "dataset": "miracl-zh",
+    "dataset_dir": "/Users/mac/code/projects/dajee/langhuan/.eval-data/smoke/miracl-zh",
+    "manifest_sha256": "46fcbe6e0b0cac7061b69130b32134e907df1e949f4097708425ad6de5b92af8",
+    "seed": 20260824,
+    "query_count": 20,
+    "track_a_corpus_size": 254,
+    "track_b_corpus_size": 57,
+    "chunking": {
+      "child_chunk_size": 384,
+      "note": "知识库默认分块配置，未自定义",
+      "parent_chunk_size": 4096,
+      "strategy": "auto（默认父子）"
+    },
+    "embedding": {
+      "dimensions": 1024,
+      "model_name": "mock-embedding",
+      "parameters": {
+        "batch_size": 32
+      },
+      "provider": "openai"
+    },
+    "rerank": {
+      "enabled": false
+    },
+    "matrix": {
+      "final_top_k": 10,
+      "top_k": 50
+    },
+    "overlap_threshold": 0.6,
+    "repo_head": "d5a6e55619edf23ce3aa7310a2edc0f68cc3ce78",
+    "server_base_url": "http://127.0.0.1:52215",
+    "server_mode": "standalone"
+  },
+  "tracks": [
+    {
+      "name": "track-a",
+      "label": "段落检索（单段落文档，隔离分块变量）",
+      "corpus_size": 254,
+      "query_count": 20,
+      "combos": [
+        {
+          "name": "vector_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.0417,
+                "mrr@10": 0.0113,
+                "ndcg@10": 0.0163
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.0417,
+                "mrr@10": 0.0113,
+                "ndcg@10": 0.0163
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.0417,
+                "mrr@10": 0.0113,
+                "ndcg@10": 0.0163
+              }
+            }
+          ]
+        },
+        {
+          "name": "fts_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0,
+                "mrr@10": 0,
+                "ndcg@10": 0
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0,
+                "mrr@10": 0,
+                "ndcg@10": 0
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0,
+                "mrr@10": 0,
+                "ndcg@10": 0
+              }
+            }
+          ]
+        },
+        {
+          "name": "hybrid",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.0417,
+                "mrr@10": 0.0113,
+                "ndcg@10": 0.0163
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.0417,
+                "mrr@10": 0.0113,
+                "ndcg@10": 0.0163
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.0417,
+                "mrr@10": 0.0113,
+                "ndcg@10": 0.0163
+              }
+            }
+          ]
+        },
+        {
+          "name": "hybrid_rerank",
+          "available": false,
+          "unavailable_reason": "未配置 rerank 模型"
+        }
+      ]
+    },
+    {
+      "name": "track-b",
+      "label": "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）",
+      "corpus_size": 57,
+      "query_count": 20,
+      "combos": [
+        {
+          "name": "vector_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0.0143,
+                "recall@10": 0.1493,
+                "mrr@10": 0.0512,
+                "ndcg@10": 0.0638
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.135,
+                "mrr@10": 0.0387,
+                "ndcg@10": 0.0526
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.135,
+                "mrr@10": 0.0387,
+                "ndcg@10": 0.0526
+              }
+            }
+          ]
+        },
+        {
+          "name": "fts_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0,
+                "mrr@10": 0,
+                "ndcg@10": 0
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0,
+                "mrr@10": 0,
+                "ndcg@10": 0
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0,
+                "mrr@10": 0,
+                "ndcg@10": 0
+              }
+            }
+          ]
+        },
+        {
+          "name": "hybrid",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0.0143,
+                "recall@10": 0.1493,
+                "mrr@10": 0.0512,
+                "ndcg@10": 0.0638
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.135,
+                "mrr@10": 0.0387,
+                "ndcg@10": 0.0526
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 20,
+                "recall@5": 0,
+                "recall@10": 0.135,
+                "mrr@10": 0.0387,
+                "ndcg@10": 0.0526
+              }
+            }
+          ]
+        },
+        {
+          "name": "hybrid_rerank",
+          "available": false,
+          "unavailable_reason": "未配置 rerank 模型"
+        }
+      ]
+    }
+  ]
+}
