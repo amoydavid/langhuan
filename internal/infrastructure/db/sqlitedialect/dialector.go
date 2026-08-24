@@ -24,7 +24,8 @@ import (
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/migrator"
 	"gorm.io/gorm/schema"
-	_ "modernc.org/sqlite" // 注册 database/sql driver "sqlite"
+	_ "modernc.org/sqlite"     // 注册 database/sql driver "sqlite"
+	_ "modernc.org/sqlite/vec" // 注册 sqlite-vec 函数（vec_f32/vec_distance_cosine），standalone 向量检索依赖
 )
 
 // savePointNamePattern 限定 savepoint 名称字符集（GORM 生成 "sp"+数字，合法）。
