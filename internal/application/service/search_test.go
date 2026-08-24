@@ -182,6 +182,88 @@ func TestSearchRejectsOversizedCandidateTopKOverride(t *testing.T) {
 	}
 }
 
+func TestSearchOptionsZeroTopKDisablesChannel(t *testing.T) {
+	generation := &model.IndexGeneration{RetrievalConfig: map[string]any{
+		"fts_config": "simple", "vector_top_k": 30, "keyword_top_k": 30,
+		"final_top_k": 10, "rrf_k": 60,
+	}}
+
+	zero := 0
+	options, err := searchOptionsFromGeneration(generation, SearchInput{VectorTopK: &zero})
+	if err != nil {
+		t.Fatalf("vector_top_k=0 should disable the vector channel: %v", err)
+	}
+	if options.vectorTopK != 0 || options.keywordTopK != 30 {
+		t.Fatalf("options = %#v, want vectorTopK=0 keywordTopK=30", options)
+	}
+
+	options, err = searchOptionsFromGeneration(generation, SearchInput{KeywordTopK: &zero})
+	if err != nil {
+		t.Fatalf("keyword_top_k=0 should disable the keyword channel: %v", err)
+	}
+	if options.vectorTopK != 30 || options.keywordTopK != 0 {
+		t.Fatalf("options = %#v, want vectorTopK=30 keywordTopK=0", options)
+	}
+
+	if _, err := searchOptionsFromGeneration(generation, SearchInput{VectorTopK: &zero, KeywordTopK: &zero}); !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("both topK=0 should be rejected, got %v", err)
+	}
+
+	negative := -1
+	if _, err := searchOptionsFromGeneration(generation, SearchInput{VectorTopK: &negative}); !errors.Is(err, domainerrors.ErrValidation) {
+		t.Fatalf("negative topK should be rejected, got %v", err)
+	}
+}
+
+func TestSearchFTSOnlySkipsVectorRecallAndEmbedding(t *testing.T) {
+	workspaceID, knowledgeBaseID, generationID := uuid.New(), uuid.New(), uuid.New()
+	modelID, providerID := uuid.New(), uuid.New()
+	entry, err := uuid.NewRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := &model.IndexGeneration{
+		ID: generationID, WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID,
+		EmbeddingModelID: modelID, ProviderID: providerID, ModelName: "embed",
+		EmbeddingDimension: 1024, Status: value.IndexGenerationReady,
+		RetrievalConfig: map[string]any{"fts_config": "simple", "vector_top_k": 2, "keyword_top_k": 2, "final_top_k": 2, "rrf_k": 60},
+	}
+	embedder := &chunkRevisionEmbeddingSpy{dimension: 1024}
+	repository := &searchRepositoryFake{
+		generation: generation,
+		vector:     []indexport.SearchCandidate{{EntryID: entry, Score: 0.9}},
+		keyword:    []indexport.SearchCandidate{{EntryID: entry, Score: 0.5}},
+		evidence: map[uuid.UUID]indexport.SearchEvidence{
+			entry: {EntryID: entry, ChunkID: uuid.New(), ChunkRevisionID: uuid.New(), DocumentID: uuid.New(), DocumentKind: value.DocumentKindFile, Content: "FTS 命中", DocumentName: "a.md", SourceAnchor: value.SourceAnchor{SourceType: "txt"}},
+		},
+	}
+	service := NewSearchService(SearchServiceDeps{
+		Repository: repository,
+		Resolver:   &chunkRevisionResolverStub{resolved: &ResolvedEmbeddingClient{Client: embedder, ModelID: modelID, ProviderID: providerID, ModelName: "embed", Dimensions: 1024}},
+	})
+
+	zero := 0
+	got, err := service.Search(context.Background(), SearchInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID, Query: "退款",
+		VectorTopK: &zero,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.vectorCalls != 0 {
+		t.Fatalf("vector recall calls = %d, want 0 when vector channel disabled", repository.vectorCalls)
+	}
+	if repository.keywordCalls != 1 {
+		t.Fatalf("keyword recall calls = %d, want 1", repository.keywordCalls)
+	}
+	if len(embedder.inputs) != 0 {
+		t.Fatalf("embedding calls = %d, want 0 when vector channel disabled", len(embedder.inputs))
+	}
+	if len(got.Results) != 1 || got.Results[0].Content != "FTS 命中" {
+		t.Fatalf("results = %#v", got.Results)
+	}
+}
+
 type searchRepositoryFake struct {
 	generation         *model.IndexGeneration
 	generations        []*model.IndexGeneration
@@ -193,6 +275,8 @@ type searchRepositoryFake struct {
 	workspaceCalls     int
 	lastRequest        indexport.SearchRequest
 	loadedLimit        int
+	vectorCalls        int
+	keywordCalls       int
 }
 
 func (s *searchRepositoryFake) WithinWorkspace(
@@ -224,6 +308,7 @@ func (s *searchRepositoryFake) VectorCandidates(
 	_ context.Context,
 	request indexport.SearchRequest,
 ) ([]indexport.SearchCandidate, error) {
+	s.vectorCalls++
 	s.lastRequest = request
 	return s.vector, nil
 }
@@ -232,6 +317,7 @@ func (s *searchRepositoryFake) KeywordCandidates(
 	_ context.Context,
 	request indexport.SearchRequest,
 ) ([]indexport.SearchCandidate, error) {
+	s.keywordCalls++
 	s.lastRequest = request
 	return s.keyword, nil
 }

@@ -164,20 +164,8 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 		nil,
 	)
 	runGenerationSnapshot = recorder.generationSnapshot(generation)
-	failurePhase = searchFailurePhaseEmbedding
-	resolved, err := s.resolver.Resolve(ctx, input.WorkspaceID, generation.EmbeddingModelID)
-	if err != nil {
-		return nil, err
-	}
-	if resolved == nil || resolved.Client == nil || resolved.ModelID != generation.EmbeddingModelID ||
-		resolved.ProviderID != generation.ProviderID || resolved.ModelName != generation.ModelName ||
-		resolved.Dimensions != generation.EmbeddingDimension {
-		return nil, domainerrors.ErrDimensionMismatch
-	}
-	if resolved.ModelConfigHash != "" && generation.ModelConfigHash != "" && resolved.ModelConfigHash != generation.ModelConfigHash {
-		return nil, domainerrors.ErrEmbeddingSnapshotMismatch
-	}
 	// 查询阶段 Rerank 使用 Workspace Search Profile，而不是某个 KnowledgeBase Generation。
+	// Rerank 与召回通道正交：vector 路被禁用时仍可生效。
 	var rerankSnapshot *model.RerankSnapshot
 	var rerankClient *ResolvedRerankClient
 	if s.searchProfile != nil {
@@ -206,31 +194,49 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 			return nil, domainerrors.ErrRerankSnapshotMismatch
 		}
 	}
+	// vector 路被禁用（vectorTopK=0）时跳过 query embedding：FTS-only 检索
+	// 不应依赖 embedding 端点可用性。
 	failurePhase = searchFailurePhaseEmbedding
-	// query embedding 子 span：gen_ai.operation.name=embeddings。
-	_, embedSpan := tracer.Start(ctx, "embeddings",
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(
-			attribute.String("gen_ai.operation.name", "embeddings"),
-			attribute.String("embedding.model_name", resolved.ModelName),
-			attribute.Int("embedding.dimensions", resolved.Dimensions),
-		),
-	)
-	embedded, err := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: []string{query}})
-	if err != nil {
-		embedSpan.RecordError(err)
-		embedSpan.SetStatus(codes.Error, err.Error())
+	var queryVector []float32
+	if options.vectorTopK > 0 {
+		resolved, embedErr := s.resolver.Resolve(ctx, input.WorkspaceID, generation.EmbeddingModelID)
+		if embedErr != nil {
+			return nil, embedErr
+		}
+		if resolved == nil || resolved.Client == nil || resolved.ModelID != generation.EmbeddingModelID ||
+			resolved.ProviderID != generation.ProviderID || resolved.ModelName != generation.ModelName ||
+			resolved.Dimensions != generation.EmbeddingDimension {
+			return nil, domainerrors.ErrDimensionMismatch
+		}
+		if resolved.ModelConfigHash != "" && generation.ModelConfigHash != "" && resolved.ModelConfigHash != generation.ModelConfigHash {
+			return nil, domainerrors.ErrEmbeddingSnapshotMismatch
+		}
+		// query embedding 子 span：gen_ai.operation.name=embeddings。
+		_, embedSpan := tracer.Start(ctx, "embeddings",
+			trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(
+				attribute.String("gen_ai.operation.name", "embeddings"),
+				attribute.String("embedding.model_name", resolved.ModelName),
+				attribute.Int("embedding.dimensions", resolved.Dimensions),
+			),
+		)
+		embedded, embedErr := resolved.Client.Embed(ctx, embeddingport.EmbedInput{Texts: []string{query}})
+		if embedErr != nil {
+			embedSpan.RecordError(embedErr)
+			embedSpan.SetStatus(codes.Error, embedErr.Error())
+			embedSpan.End()
+			return nil, embedErr
+		}
 		embedSpan.End()
-		return nil, err
-	}
-	embedSpan.End()
-	if embedded == nil || len(embedded.Vectors) != 1 ||
-		len(embedded.Vectors[0]) != generation.EmbeddingDimension || !finiteChunkRevisionVector(embedded.Vectors[0]) {
-		return nil, domainerrors.ErrInvalidEmbeddingResponse
+		if embedded == nil || len(embedded.Vectors) != 1 ||
+			len(embedded.Vectors[0]) != generation.EmbeddingDimension || !finiteChunkRevisionVector(embedded.Vectors[0]) {
+			return nil, domainerrors.ErrInvalidEmbeddingResponse
+		}
+		queryVector = embedded.Vectors[0]
 	}
 	request := indexport.SearchRequest{
 		KnowledgeBaseID: input.KnowledgeBaseID, GenerationID: generation.ID,
-		Query: query, QueryEmbedding: embedded.Vectors[0], FTSConfig: options.ftsConfig,
+		Query: query, QueryEmbedding: queryVector, FTSConfig: options.ftsConfig,
 		Dimension:  generation.EmbeddingDimension,
 		VectorTopK: options.vectorTopK, KeywordTopK: options.keywordTopK,
 	}
@@ -244,13 +250,20 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 		if current == nil || current.ID != generation.ID {
 			return domainerrors.ErrGenerationStale
 		}
-		vectorCandidates, err := reader.VectorCandidates(txCtx, request)
-		if err != nil {
-			return err
+		// topK=0 表示禁用该路召回：跳过 SQL 调用，RRF 对单路退化为直通排序。
+		var vectorCandidates []indexport.SearchCandidate
+		if options.vectorTopK > 0 {
+			vectorCandidates, err = reader.VectorCandidates(txCtx, request)
+			if err != nil {
+				return err
+			}
 		}
-		keywordCandidates, err := reader.KeywordCandidates(txCtx, request)
-		if err != nil {
-			return err
+		var keywordCandidates []indexport.SearchCandidate
+		if options.keywordTopK > 0 {
+			keywordCandidates, err = reader.KeywordCandidates(txCtx, request)
+			if err != nil {
+				return err
+			}
 		}
 		stats.vectorCandidateCount = len(vectorCandidates)
 		stats.keywordCandidateCount = len(keywordCandidates)
@@ -463,11 +476,12 @@ func searchOptionsFromGeneration(generation *model.IndexGeneration, input Search
 	if input.FinalTopK != nil {
 		finalTopK = *input.FinalTopK
 	}
-	if vectorTopK < minRetrievalTopK || vectorTopK > maxCandidateTopK ||
-		keywordTopK < minRetrievalTopK || keywordTopK > maxCandidateTopK {
+	if vectorTopK < 0 || vectorTopK > maxCandidateTopK ||
+		keywordTopK < 0 || keywordTopK > maxCandidateTopK ||
+		(vectorTopK == 0 && keywordTopK == 0) {
 		return searchOptions{}, fmt.Errorf(
-			"%w: Search candidate topK 必须在 %d..%d 之间",
-			domainerrors.ErrValidation, minRetrievalTopK, maxCandidateTopK,
+			"%w: Search candidate topK 必须在 0..%d 之间，且两路不能同时为 0（0 表示禁用该路召回）",
+			domainerrors.ErrValidation, maxCandidateTopK,
 		)
 	}
 	finalTopK = max(minRetrievalTopK, min(finalTopK, maxFinalTopK))

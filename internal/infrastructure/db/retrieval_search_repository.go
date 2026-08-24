@@ -266,11 +266,14 @@ func searchCandidatesFromRows(rows []searchCandidateRow) []indexport.SearchCandi
 	return result
 }
 
+// validateSearchRequest 校验单路召回请求。topK=0 表示该路被禁用，调用方直接
+// 跳过 SQL，因此这里只校验被调用路自身的 topK（vector 路查 VectorTopK，keyword
+// 路查 KeywordTopK），另一路允许为 0。
 func validateSearchRequest(request indexport.SearchRequest, vector bool) error {
 	if request.KnowledgeBaseID == uuid.Nil || request.GenerationID == uuid.Nil ||
 		strings.TrimSpace(request.Query) == "" || strings.TrimSpace(request.FTSConfig) == "" ||
 		!value.IsSupportedEmbeddingDimension(request.Dimension) ||
-		request.VectorTopK < 1 || request.KeywordTopK < 1 {
+		(vector && request.VectorTopK < 1) || (!vector && request.KeywordTopK < 1) {
 		return fmt.Errorf("%w: Retrieval search request 无效", domainerrors.ErrValidation)
 	}
 	if vector && len(request.QueryEmbedding) != request.Dimension {

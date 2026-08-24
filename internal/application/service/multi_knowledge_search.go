@@ -429,13 +429,20 @@ func (s *MultiKnowledgeSearchService) searchPerKB(ctx context.Context, input Mul
 					VectorTopK:  options.vectorTopK,
 					KeywordTopK: options.keywordTopK,
 				}
-				vectorCandidates, err := reader.VectorCandidates(txCtx, request)
-				if err != nil {
-					return err
+				// topK=0 表示禁用该路召回：跳过 SQL 调用，RRF 对单路退化为直通排序。
+				var vectorCandidates []indexport.SearchCandidate
+				if options.vectorTopK > 0 {
+					vectorCandidates, err = reader.VectorCandidates(txCtx, request)
+					if err != nil {
+						return err
+					}
 				}
-				keywordCandidates, err := reader.KeywordCandidates(txCtx, request)
-				if err != nil {
-					return err
+				var keywordCandidates []indexport.SearchCandidate
+				if options.keywordTopK > 0 {
+					keywordCandidates, err = reader.KeywordCandidates(txCtx, request)
+					if err != nil {
+						return err
+					}
 				}
 				rrfK := options.rrfK
 				if rrfK <= 0 {
