@@ -93,9 +93,25 @@ func runEval(configPath string) error {
 	}
 	fmt.Printf("可评测 query：%d / %d\n", evaluatable, len(dataset.Queries))
 
-	tracks := []trackSpec{
+	allTracks := []trackSpec{
 		{Name: "track-a", Label: "段落检索（单段落文档，隔离分块变量）", Docs: trackADocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: false},
 		{Name: "track-b", Label: "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）", Docs: trackBDocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: true},
+	}
+	var tracks []trackSpec
+	for _, track := range allTracks {
+		if len(cfg.Tracks) == 0 {
+			tracks = append(tracks, track)
+			continue
+		}
+		for _, wanted := range cfg.Tracks {
+			if track.Name == wanted {
+				tracks = append(tracks, track)
+				break
+			}
+		}
+	}
+	if len(tracks) == 0 {
+		return fmt.Errorf("tracks 过滤后为空（可选值 track-a/track-b）")
 	}
 	combos := matrixCombos(cfg, rerankEnabled)
 
@@ -103,7 +119,7 @@ func runEval(configPath string) error {
 	for _, track := range tracks {
 		fmt.Printf("\n[%s] 创建知识库并导入 %d 份文档（并发 %d）…\n",
 			track.Name, len(track.Docs), cfg.Server.IngestConcurrency)
-		kbID, err := client.createKnowledgeBase(boot.WorkspaceSlug, "eval-"+track.Name, boot.EmbeddingModelID)
+		kbID, err := client.createKnowledgeBase(boot.WorkspaceSlug, "eval-"+track.Name, boot.EmbeddingModelID, cfg.Chunking)
 		if err != nil {
 			return err
 		}

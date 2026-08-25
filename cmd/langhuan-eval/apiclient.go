@@ -185,13 +185,36 @@ func (c *langhuanClient) createModel(providerID, modelType, modelName string, di
 
 // createKnowledgeBase 创建轨道知识库；remote 模式重跑撞同名 409 时复用
 // 已有 KB——同内容文档按 hash 去重，可跳过重复嵌入。
-func (c *langhuanClient) createKnowledgeBase(slug, name, embeddingModelID string) (string, error) {
+func (c *langhuanClient) createKnowledgeBase(slug, name, embeddingModelID string, chunking *evalChunkingConfig) (string, error) {
 	var created struct {
 		ID string `json:"id"`
 	}
-	if err := c.do(http.MethodPost, "/api/v1/workspaces/"+slug+"/knowledge-bases", map[string]any{
+	body := map[string]any{
 		"name": name, "description": "langhuan-eval track", "embedding_model_id": embeddingModelID,
-	}, &created); err != nil {
+	}
+	if chunking != nil {
+		chunkingBody := map[string]any{}
+		if chunking.Strategy != "" {
+			chunkingBody["strategy"] = chunking.Strategy
+		}
+		if chunking.EnableParentChild != nil {
+			chunkingBody["enable_parent_child"] = *chunking.EnableParentChild
+		}
+		if chunking.ParentChunkSize > 0 {
+			chunkingBody["parent_chunk_size"] = chunking.ParentChunkSize
+		}
+		if chunking.ChildChunkSize > 0 {
+			chunkingBody["child_chunk_size"] = chunking.ChildChunkSize
+		}
+		if chunking.ChunkSize > 0 {
+			chunkingBody["chunk_size"] = chunking.ChunkSize
+		}
+		if chunking.ChunkOverlap > 0 {
+			chunkingBody["chunk_overlap"] = chunking.ChunkOverlap
+		}
+		body["chunking_config"] = chunkingBody
+	}
+	if err := c.do(http.MethodPost, "/api/v1/workspaces/"+slug+"/knowledge-bases", body, &created); err != nil {
 		if !strings.Contains(err.Error(), "HTTP 409") {
 			return "", err
 		}

@@ -82,10 +82,7 @@ func writeReport(cfg evalConfig, dataset *evalDataset, baseURL, repoRoot string,
 		DatasetDir: dataset.Dir, ManifestSHA256: manifestSum, Seed: dataset.Manifest.Seed,
 		QueryCount:       len(dataset.Queries),
 		TrackACorpusSize: dataset.Manifest.TrackACorpusSize, TrackBCorpusSize: dataset.Manifest.TrackBCorpusSize,
-		Chunking: map[string]any{
-			"strategy": "auto（默认父子）", "parent_chunk_size": 4096, "child_chunk_size": 384,
-			"note": "知识库默认分块配置，未自定义",
-		},
+		Chunking: chunkingFingerprint(cfg),
 		Embedding: map[string]any{
 			"provider": cfg.Embedding.Provider, "model_name": cfg.Embedding.ModelName,
 			"dimensions": cfg.Embedding.Dimensions, "parameters": cfg.Embedding.Parameters,
@@ -128,6 +125,34 @@ func writeReport(cfg evalConfig, dataset *evalDataset, baseURL, repoRoot string,
 	}
 	fmt.Printf("\n报告已生成：\n  %s\n  %s\n", filepath.Join(runDir, "report.md"), filepath.Join(runDir, "metrics.json"))
 	return nil
+}
+
+// chunkingFingerprint 反映评测实际使用的分块配置；未覆盖时为生产默认
+// （chunker v3：auto 父子 4096/384）。
+func chunkingFingerprint(cfg evalConfig) map[string]any {
+	chunking := map[string]any{
+		"strategy": "auto", "enable_parent_child": true,
+		"parent_chunk_size": 4096, "child_chunk_size": 384, "chunker_version": 3,
+	}
+	if cfg.Chunking != nil {
+		if cfg.Chunking.Strategy != "" {
+			chunking["strategy"] = cfg.Chunking.Strategy
+		}
+		if cfg.Chunking.ParentChunkSize > 0 {
+			chunking["parent_chunk_size"] = cfg.Chunking.ParentChunkSize
+		}
+		if cfg.Chunking.ChildChunkSize > 0 {
+			chunking["child_chunk_size"] = cfg.Chunking.ChildChunkSize
+		}
+		if cfg.Chunking.EnableParentChild != nil {
+			chunking["enable_parent_child"] = *cfg.Chunking.EnableParentChild
+		}
+		if cfg.Chunking.ChunkOverlap > 0 {
+			chunking["chunk_overlap"] = cfg.Chunking.ChunkOverlap
+		}
+		chunking["note"] = "eval 配置覆盖"
+	}
+	return chunking
 }
 
 func sanitizeName(name string) string {

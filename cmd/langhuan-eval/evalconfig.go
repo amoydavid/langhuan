@@ -15,10 +15,14 @@ type evalConfig struct {
 	Embedding evalEmbeddingConfig `yaml:"embedding"`
 	Rerank    *evalRerankConfig   `yaml:"rerank"`
 	Matrix    evalMatrixConfig    `yaml:"matrix"`
-	Dataset   evalDatasetConfig   `yaml:"dataset"`
-	Overlap   evalOverlapConfig   `yaml:"overlap"`
-	Output    evalOutputConfig    `yaml:"output"`
-	HF        evalHFConfig        `yaml:"hf"`
+	// Chunking 可选覆盖知识库分块配置（chunker 对比实验用；缺省用生产默认）。
+	Chunking *evalChunkingConfig `yaml:"chunking"`
+	// Tracks 可选过滤执行轨道（track-a / track-b）；缺省双轨全跑。
+	Tracks  []string          `yaml:"tracks"`
+	Dataset evalDatasetConfig `yaml:"dataset"`
+	Overlap evalOverlapConfig `yaml:"overlap"`
+	Output  evalOutputConfig  `yaml:"output"`
+	HF      evalHFConfig      `yaml:"hf"`
 }
 
 type evalServerConfig struct {
@@ -59,6 +63,15 @@ type evalRerankConfig struct {
 	ModelName      string         `yaml:"model_name"`
 	Parameters     map[string]any `yaml:"parameters"`
 	CandidateTopK  int            `yaml:"candidate_top_k"`
+}
+
+type evalChunkingConfig struct {
+	Strategy          string `yaml:"strategy"`
+	EnableParentChild *bool  `yaml:"enable_parent_child"`
+	ParentChunkSize   int    `yaml:"parent_chunk_size"`
+	ChildChunkSize    int    `yaml:"child_chunk_size"`
+	ChunkSize         int    `yaml:"chunk_size"`
+	ChunkOverlap      int    `yaml:"chunk_overlap"`
 }
 
 type evalMatrixConfig struct {
