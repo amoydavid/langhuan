@@ -133,7 +133,9 @@ func (r *retrievalSearchReader) KeywordCandidates(
 		if r.tokenizer == nil {
 			return nil, fmt.Errorf("%w: SQLite FTS 检索缺少分词器", domainerrors.ErrValidation)
 		}
-		match := buildFTS5MatchExpr(r.tokenizer.Tokens(request.Query))
+		// 查询侧过滤疑问词/虚词/标点后 AND 匹配；否则疑问句 token 在正文中
+		// 永不齐备，FTS 零召回（见 fts_query_filter.go）。
+		match := buildFTS5MatchExpr(FilterFTSQueryTokens(r.tokenizer.Tokens(request.Query)))
 		if match == "" {
 			return []indexport.SearchCandidate{}, nil
 		}
@@ -146,10 +148,21 @@ func (r *retrievalSearchReader) KeywordCandidates(
 		}
 		return searchCandidatesFromRows(rows), nil
 	}
+	// PG：同样在查询侧过滤（与 SQLite 语义对齐）。过滤后的实义词以空格拼接
+	// 交给 plainto_tsquery，zhparser 逐词切分后 AND；tokenizer 未注入的装配
+	// （旧测试）退回原始 query，保持兼容。
+	query := request.Query
+	if r.tokenizer != nil {
+		filtered := FilterFTSQueryTokens(r.tokenizer.Tokens(query))
+		if len(filtered) == 0 {
+			return []indexport.SearchCandidate{}, nil
+		}
+		query = strings.Join(filtered, " ")
+	}
 	var rows []searchCandidateRow
 	if err := r.db.WithContext(ctx).Raw(
 		keywordSearchSQL,
-		request.FTSConfig, request.Query,
+		request.FTSConfig, query,
 		r.workspaceID, request.KnowledgeBaseID, request.GenerationID, request.KeywordTopK,
 	).Scan(&rows).Error; err != nil {
 		return nil, translateFTSConfigError(err, request.FTSConfig, "执行 Retrieval FTS search 失败")

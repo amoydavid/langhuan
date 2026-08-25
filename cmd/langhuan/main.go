@@ -100,7 +100,7 @@ type appRuntime struct {
 	memoryQueue      *memoryqueue.Queue            // 内存队列（保留备用/测试）
 	sqliteQueue      *dbqueue.Queue                // SQLite 持久化队列（无 Redis 时替代 asynq）
 	memoryStateStore *oidcadapter.MemoryStateStore // 内存 OIDC state（无 Redis 时需 Close 停止清理 goroutine）
-	gseTokenizer     db.SearchTokenizer            // SQLite 模式注入给 RetrievalRepository（PG 传 nil）
+	gseTokenizer     db.SearchTokenizer            // 双方言注入：SQLite FTS5 索引/查询 + PG FTS 查询过滤
 	inspectorPort    service.QueueInspectorPort    // 队列可见性端口（asynq inspectorPortAdapter / memory.Inspector）
 }
 
@@ -417,13 +417,13 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	}
 	// SQLite 模式需在应用层分词（PG 用 zhparser 在 SQL 层分词）。词典加载较重，
 	// 整个进程构造一次，注入给 RetrievalRepository 的写入与查询路径。
-	if dialect == db.DialectSQLite {
-		seg, gerr := gsetokenizer.New()
-		if gerr != nil {
-			return nil, fmt.Errorf("加载 gse 分词器失败: %w", gerr)
-		}
-		app.gseTokenizer = seg
+	// gse 分词器两种方言都装配：SQLite 用于 FTS5 索引与查询构造，PG 用于
+	// FTS 查询侧的停用词/疑问词过滤（检索通道修复，见 fts_query_filter.go）。
+	seg, gerr := gsetokenizer.New()
+	if gerr != nil {
+		return nil, fmt.Errorf("加载 gse 分词器失败: %w", gerr)
 	}
+	app.gseTokenizer = seg
 	app.services, err = buildRuntimeServices(ctx, gormDB, cfg, app.jobQueue, app.redisClient, embeddingRegistry, rerankRegistry, parserProviderRegistry, app.gseTokenizer, log)
 	if err != nil {
 		return nil, err
