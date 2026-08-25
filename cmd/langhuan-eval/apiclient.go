@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
 	"time"
 )
 
@@ -139,7 +140,7 @@ func (c *langhuanClient) createModelProvider(provider string, providerConfig, cr
 		ID string `json:"id"`
 	}
 	body := map[string]any{
-		"name": "eval-" + provider, "display_name": "Eval " + provider, "description": "langhuan-eval",
+		"name": "eval-" + sanitizeIdentifier(provider), "display_name": "Eval " + provider, "description": "langhuan-eval",
 		"provider": provider,
 	}
 	if providerConfig != nil {
@@ -158,8 +159,9 @@ func (c *langhuanClient) createModel(providerID, modelType, modelName string, di
 	var created struct {
 		ID string `json:"id"`
 	}
+	// models.name 要求是 1..64 位小写 ASCII 标识；model_name 保留上游原名。
 	body := map[string]any{
-		"name": "eval-" + modelName, "display_name": "Eval " + modelName, "description": "langhuan-eval",
+		"name": "eval-" + sanitizeIdentifier(modelName), "display_name": "Eval " + modelName, "description": "langhuan-eval",
 		"type": modelType, "model_name": modelName,
 	}
 	if dimensions > 0 {
@@ -256,4 +258,25 @@ func (c *langhuanClient) setRerankSettings(slug string, enabled bool, modelID st
 		},
 	}
 	return c.do(http.MethodPut, "/api/v1/workspaces/"+slug+"/search-settings", body, nil)
+}
+
+// sanitizeIdentifier 把任意模型/provider 标识转为合法记录名：小写、
+// 非 [a-z0-9-] 字符折叠为 '-'，连续 '-' 压缩，去首尾 '-'。
+func sanitizeIdentifier(name string) string {
+	lowered := strings.ToLower(name)
+	var builder strings.Builder
+	lastDash := false
+	for _, r := range lowered {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			builder.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash && builder.Len() > 0 {
+				builder.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }

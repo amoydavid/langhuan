@@ -95,9 +95,13 @@ func defaultEvalConfig() evalConfig {
 			Mode: "standalone", Email: "eval@langhuan.local", Nickname: "Eval",
 			Password: "LanghuanEval!2026", IngestConcurrency: 4, ReadyTimeoutSeconds: 300,
 		},
+		// ProviderConfig 不设默认值：yaml.Unmarshal 对 map 是合并语义，
+		// 预置 openai 的 mode/timeout 会污染其它 provider 的严格校验
+		//（例如 siliconflow 拒绝未知字段 mode）。完整模板见
+		// eval.config.example.yaml。
 		Embedding: evalEmbeddingConfig{
-			Provider: "openai", ProviderConfig: map[string]any{"mode": "standard", "timeout_seconds": 60},
-			ModelName: "bge-m3", Dimensions: 1024, Parameters: map[string]any{"batch_size": 32},
+			Provider: "openai", ModelName: "bge-m3", Dimensions: 1024,
+			Parameters: map[string]any{"batch_size": 32},
 		},
 		Matrix:  evalMatrixConfig{TopK: 50, FinalTopK: 10},
 		Dataset: evalDatasetConfig{Dir: ".eval-data/miracl-zh"},
