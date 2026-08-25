@@ -2,7 +2,7 @@
   "fingerprint": {
     "generated_at": "2026-08-25T10:28:20+08:00",
     "dataset": "miracl-zh",
-    "dataset_dir": "/Users/mac/code/projects/dajee/langhuan/.eval-data/miracl-zh",
+    "dataset_dir": ".eval-data/miracl-zh",
     "manifest_sha256": "b57f82a175b59d314e7d650e7d72ffde0a86ffc9a85eeac24aa824ec7a13a5df",
     "seed": 20260824,
     "query_count": 200,

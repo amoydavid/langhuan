@@ -58,7 +58,7 @@ Expected: the first command exits `0`; status still shows the user's `.gitignore
 Run:
 
 ```bash
-python3 /Users/mac/.codex/skills/.system/skill-creator/scripts/init_skill.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/init_skill.py \
   langhuan-console-design-system \
   --path .codex/skills \
   --resources references \
@@ -206,7 +206,7 @@ Expected: all four files exist, each has one focused responsibility, and every n
 Run:
 
 ```bash
-python3 /Users/mac/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
+python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   .codex/skills/langhuan-console-design-system
 ```
 
@@ -230,7 +230,7 @@ Expected: the scan prints nothing; only the root, `agents`, and `references` dir
 Use a fresh agent context with:
 
 ```text
-Use $langhuan-console-design-system at /Users/mac/code/projects/dajee/langhuan/.codex/skills/langhuan-console-design-system to propose the implementation shape for a Langhuan knowledge-base retrieval results page. Do not edit files. Identify the live sources you would inspect, route and Query ownership, desktop/mobile composition, real-state rules, and accessibility checks.
+Use $langhuan-console-design-system at .codex/skills/langhuan-console-design-system to propose the implementation shape for a Langhuan knowledge-base retrieval results page. Do not edit files. Identify the live sources you would inspect, route and Query ownership, desktop/mobile composition, real-state rules, and accessibility checks.
 ```
 
 Expected:

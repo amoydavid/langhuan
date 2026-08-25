@@ -79,7 +79,10 @@ func writeReport(cfg evalConfig, dataset *evalDataset, baseURL, repoRoot string,
 	}
 	fingerprint := reportFingerprint{
 		GeneratedAt: time.Now().Format(time.RFC3339), Dataset: dataset.Manifest.Dataset,
-		DatasetDir: dataset.Dir, ManifestSHA256: manifestSum, Seed: dataset.Manifest.Seed,
+		// dataset_dir 用仓库相对路径：报告会提交进 git，指纹不得携带
+		// 本地绝对路径（用户名等环境信息）。
+		DatasetDir:     relPathFromRoot(dataset.Dir, repoRoot),
+		ManifestSHA256: manifestSum, Seed: dataset.Manifest.Seed,
 		QueryCount:       len(dataset.Queries),
 		TrackACorpusSize: dataset.Manifest.TrackACorpusSize, TrackBCorpusSize: dataset.Manifest.TrackBCorpusSize,
 		Chunking: chunkingFingerprint(cfg),
@@ -153,6 +156,15 @@ func chunkingFingerprint(cfg evalConfig) map[string]any {
 		chunking["note"] = "eval 配置覆盖"
 	}
 	return chunking
+}
+
+// relPathFromRoot 把绝对路径转成相对 root 的路径（报告指纹脱敏用）；
+// 无法求相对（跨卷等）时退回路径末段，保证不泄漏本地前缀。
+func relPathFromRoot(path, root string) string {
+	if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return filepath.Base(path)
 }
 
 func sanitizeName(name string) string {
