@@ -195,6 +195,10 @@ Generation `RetrievalConfig` 已含 `vector_top_k` / `keyword_top_k` / `final_to
 - **（已修复）FTS 查询侧停用词过滤（首份基线的核心发现）**：基线实测 `fts_only` 在 MIRACL-zh 疑问句上 recall@10=0——gse 把"埃及有哪些民族？"切为 `[埃及 有 哪些 民族 ？]` 后全 token AND，"哪些/？/有"在正文中永不齐备。修复：新增 `FilterFTSQueryTokens`（标点/单字虚词/疑问填充词过滤，词表刻意保守），SQLite FTS5 MATCH 表达式与 PG plainto_tsquery 查询串共用同一过滤（PG 模式同样装配 gse 分词器）。修复后 fts_only 从 0 → 0.131，track-a `hybrid` recall@10 首次严格高于 vector_only（0.9826 vs 0.9799）——RRF 混合检索的核心架构假设由评测闭环验证成立。停用词表扩充必须附 `make eval` 新旧对比。
 - **报告未命中归因（v1.2.0 追加）**：主阈值下每个通道组合的未命中 query 拆分为「gold 文档已召回但文本重叠不足（分块/匹配损耗）」与「gold 文档未召回」两类（gold 文档按导入标题的 `[docid]` 标记识别）。bge-m3 基线的 Track B 结论：6 个 vector 未命中中 5 个属前者——分块/匹配是长文档轨道的主要损耗模式，为 chunker 演进提供了靶子。
 - **离线冒烟 fixture（v1.2.0 追加）**：`cmd/langhuan-eval/testdata/micro` 入库微型数据集（12 query / 90 段落 / 44 长文档，自全量采样派生），`make eval-smoke` 不再依赖 HF 下载，可在 CI 中端到端防回归（上述 standalone 双缺陷即此类问题）。
+- **chunker 参数实验记录（v1.2.0，含阴性结果）**：归因下钻显示 track-b 的 6 个 vector 未命中中 5 个是「gold 文档已召回、但含 gold 段落的父块没进 top-10」（如"意大利汽车品牌"命中意大利文章的其它章节），且 gold 段落多为繁体中文（语料繁简混杂）。据此跑了两组单变量实验（bge-m3，仅 track-b，其余同指纹）：
+  - E2 `parent_chunk_size` 4096→8192：recall@10 0.7918→0.7732（**未提升，证伪父块切分主因假设**）；MRR 0.9199→0.9392、rerank ndcg 0.7952→0.7989 小幅变好。
+  - E3 `child_chunk_size` 384→256：recall@10 0.7918→0.7942、hybrid 0.7962、ndcg 0.7975，三者最优但仅 +0.4~0.5pp；6 个未命中在两组实验中完全不变。
+  - **结论**：分块参数不是剩余差距的有效杠杆（±0.5pp 不构成改默认合同的理由，维持 4096/384）；track-b 的有效杠杆是 rerank（已交付）；下一前沿是**繁简归一化**（索引与查询侧统一简体，FTS 与匹配双双受益——gold 繁体段落是未命中主因之一）。实验用 `chunking:`/`tracks:` 配置项复现（见 §13）。
 - **文本重叠阈值**：0.6 初值可能偏严/偏松，首份报告的三档敏感性数据用于校准；阈值进 eval config，不硬编码。
 - **MIRACL qrels 的 train/dev 划分**：使用 dev split 避免与（未来可能的）微调数据重叠；若 dev gold passage 覆盖不足 200 query，回落到 train split 抽样并在 manifest 标注。
 - **DuRetrieval 语料规模**（百万级 passage）：已随 §4.1 决策暂缓；若未来接入，同 prepare 子采样策略处理。

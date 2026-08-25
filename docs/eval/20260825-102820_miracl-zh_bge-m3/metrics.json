@@ -1,0 +1,214 @@
+{
+  "fingerprint": {
+    "generated_at": "2026-08-25T10:28:20+08:00",
+    "dataset": "miracl-zh",
+    "dataset_dir": "/Users/mac/code/projects/dajee/langhuan/.eval-data/miracl-zh",
+    "manifest_sha256": "b57f82a175b59d314e7d650e7d72ffde0a86ffc9a85eeac24aa824ec7a13a5df",
+    "seed": 20260824,
+    "query_count": 200,
+    "track_a_corpus_size": 5298,
+    "track_b_corpus_size": 709,
+    "chunking": {
+      "child_chunk_size": 256,
+      "chunker_version": 3,
+      "enable_parent_child": true,
+      "note": "eval 配置覆盖",
+      "parent_chunk_size": 4096,
+      "strategy": "auto"
+    },
+    "embedding": {
+      "dimensions": 1024,
+      "model_name": "bge-m3",
+      "parameters": {
+        "batch_size": 32
+      },
+      "provider": "openai"
+    },
+    "rerank": {
+      "candidate_top_k": 50,
+      "model_name": "BAAI/bge-reranker-v2-m3"
+    },
+    "matrix": {
+      "final_top_k": 10,
+      "top_k": 50
+    },
+    "overlap_threshold": 0.6,
+    "repo_head": "946d5daad725396b7a1d89575eadb23476193770",
+    "server_base_url": "http://127.0.0.1:62693",
+    "server_mode": "standalone"
+  },
+  "tracks": [
+    {
+      "name": "track-b",
+      "label": "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）",
+      "corpus_size": 709,
+      "query_count": 200,
+      "combos": [
+        {
+          "name": "vector_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7636,
+                "recall@10": 0.7825,
+                "mrr@10": 0.9332,
+                "ndcg@10": 0.7928
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7753,
+                "recall@10": 0.7942,
+                "mrr@10": 0.9232,
+                "ndcg@10": 0.7975
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7838,
+                "recall@10": 0.8037,
+                "mrr@10": 0.9232,
+                "ndcg@10": 0.8056
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 6,
+            "missed_doc_recalled": 5,
+            "missed_doc_not_recalled": 1
+          }
+        },
+        {
+          "name": "fts_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.118,
+                "recall@10": 0.1205,
+                "mrr@10": 0.1879,
+                "ndcg@10": 0.132
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.1178,
+                "recall@10": 0.1202,
+                "mrr@10": 0.1854,
+                "ndcg@10": 0.1312
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.1167,
+                "recall@10": 0.1191,
+                "mrr@10": 0.1804,
+                "ndcg@10": 0.1296
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 159,
+            "missed_doc_recalled": 3,
+            "missed_doc_not_recalled": 156
+          }
+        },
+        {
+          "name": "hybrid",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7647,
+                "recall@10": 0.7838,
+                "mrr@10": 0.9174,
+                "ndcg@10": 0.7859
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7771,
+                "recall@10": 0.7962,
+                "mrr@10": 0.9099,
+                "ndcg@10": 0.7915
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7849,
+                "recall@10": 0.805,
+                "mrr@10": 0.9074,
+                "ndcg@10": 0.7979
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 6,
+            "missed_doc_recalled": 5,
+            "missed_doc_not_recalled": 1
+          }
+        },
+        {
+          "name": "hybrid_rerank",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7626,
+                "recall@10": 0.7822,
+                "mrr@10": 0.9216,
+                "ndcg@10": 0.7904
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7727,
+                "recall@10": 0.7935,
+                "mrr@10": 0.9133,
+                "ndcg@10": 0.7966
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 200,
+                "recall@5": 0.7814,
+                "recall@10": 0.8038,
+                "mrr@10": 0.9074,
+                "ndcg@10": 0.8008
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 6,
+            "missed_doc_recalled": 5,
+            "missed_doc_not_recalled": 1
+          }
+        }
+      ]
+    }
+  ]
+}
