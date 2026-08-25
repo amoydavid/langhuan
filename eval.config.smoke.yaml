@@ -26,7 +26,7 @@ matrix:
   final_top_k: 10
 
 dataset:
-  dir: ".eval-data/smoke/miracl-zh"
+  dir: "cmd/langhuan-eval/testdata/micro"
 
 overlap:
   threshold: 0.6

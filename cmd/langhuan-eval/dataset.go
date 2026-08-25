@@ -164,3 +164,30 @@ func loadDataset(dir string) (*evalDataset, error) {
 	}
 	return &evalDataset{Manifest: m, Queries: queries, Qrels: qrels, TrackA: trackA, TrackB: trackB, Dir: dir}, nil
 }
+
+// goldDocTokensByQuery 返回 query_id -> gold 文档标记集合：Track A 是段落
+// docid 本身，Track B 取 docid 的文章前缀（longDoc=true）。标记与导入标题的
+// "[docid]" 后缀对应，用于未命中归因（gold 文档是否被召回）。
+func (d *evalDataset) goldDocTokensByQuery(longDoc bool) map[string][]string {
+	tokens := make(map[string][]string)
+	for _, qrel := range d.Qrels {
+		if qrel.Relevance < 1 {
+			continue
+		}
+		id := qrel.DocID
+		if longDoc {
+			id = articleOf(id)
+		}
+		seen := false
+		for _, existing := range tokens[qrel.QueryID] {
+			if existing == id {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			tokens[qrel.QueryID] = append(tokens[qrel.QueryID], id)
+		}
+	}
+	return tokens
+}

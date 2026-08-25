@@ -1,0 +1,12 @@
+{
+  "dataset": "miracl-zh-micro",
+  "seed": 20260824,
+  "query_count": 12,
+  "track_a_corpus_size": 90,
+  "track_b_corpus_size": 44,
+  "track_a_distractors": 60,
+  "track_b_distractor_articles": 15,
+  "max_passages_per_article": 40,
+  "source_files": {},
+  "generated_by": "derived from .eval-data/miracl-zh (seed 20260824) for offline CI smoke; no HF dependency"
+}

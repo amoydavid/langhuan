@@ -57,7 +57,7 @@ eval:
 eval-prepare:
 	go run ./cmd/langhuan-eval prepare
 
-# 离线冒烟：本地确定性 mock embedding + 精简数据集，验证评测全链路（指标无语义意义）
+# 离线冒烟：本地确定性 mock embedding + 入库微型数据集（无 HF/网络依赖），验证评测全链路（指标无语义意义）
 eval-smoke:
 	@set -eu; \
 	port=19829; \
@@ -65,7 +65,6 @@ eval-smoke:
 	mock_pid=$$!; \
 	trap 'kill $$mock_pid 2>/dev/null || true' EXIT; \
 	sleep 1; \
-	go run ./cmd/langhuan-eval prepare -data-dir .eval-data/smoke -queries 20 -distractors 200 -distractor-articles 15; \
 	go run ./cmd/langhuan-eval run -config eval.config.smoke.yaml
 
 _web-build:

@@ -94,8 +94,8 @@ func runEval(configPath string) error {
 	fmt.Printf("可评测 query：%d / %d\n", evaluatable, len(dataset.Queries))
 
 	tracks := []trackSpec{
-		{Name: "track-a", Label: "段落检索（单段落文档，隔离分块变量）", Docs: trackADocsOf(dataset), Slug: boot.WorkspaceSlug},
-		{Name: "track-b", Label: "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）", Docs: trackBDocsOf(dataset), Slug: boot.WorkspaceSlug},
+		{Name: "track-a", Label: "段落检索（单段落文档，隔离分块变量）", Docs: trackADocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: false},
+		{Name: "track-b", Label: "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）", Docs: trackBDocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: true},
 	}
 	combos := matrixCombos(cfg, rerankEnabled)
 
@@ -136,7 +136,8 @@ func runEval(configPath string) error {
 					return fmt.Errorf("启用 rerank 失败: %w", err)
 				}
 			}
-			summary, err := evaluateCombo(client, boot.WorkspaceSlug, kbID, dataset, golds, combo, cfg, thresholdList(cfg))
+			summary, attribution, err := evaluateCombo(client, boot.WorkspaceSlug, kbID, dataset, golds,
+				dataset.goldDocTokensByQuery(track.LongDoc), combo, cfg, thresholdList(cfg))
 			if combo.Rerank {
 				if err := client.setRerankSettings(boot.WorkspaceSlug, false, boot.RerankModelID, cfg.Rerank.CandidateTopK); err != nil {
 					return fmt.Errorf("关闭 rerank 失败: %w", err)
@@ -145,11 +146,13 @@ func runEval(configPath string) error {
 			if err != nil {
 				return fmt.Errorf("%s/%s 评测失败: %w", track.Name, combo.Name, err)
 			}
-			fmt.Printf("  %-14s recall@10=%.4f mrr@10=%.4f ndcg@10=%.4f\n",
+			fmt.Printf("  %-14s recall@10=%.4f mrr@10=%.4f ndcg@10=%.4f（未命中 %d：文档已召回 %d / 未召回 %d）\n",
 				combo.Name, summary[cfg.Overlap.Threshold].RecallAt10,
-				summary[cfg.Overlap.Threshold].MRRAt10, summary[cfg.Overlap.Threshold].NDCGAt10)
+				summary[cfg.Overlap.Threshold].MRRAt10, summary[cfg.Overlap.Threshold].NDCGAt10,
+				attribution.Missed, attribution.MissedDocRecalled, attribution.MissedDocNotRecalled)
 			trackResult.Combos = append(trackResult.Combos, comboReport{
 				Name: combo.Name, Available: true, ByThreshold: sortedThresholdMetrics(summary),
+				Attribution: &attribution,
 			})
 		}
 		trackReports = append(trackReports, trackResult)
@@ -160,6 +163,8 @@ func runEval(configPath string) error {
 type trackSpec struct {
 	Name, Label, Slug string
 	Docs              []ingestDoc
+	// LongDoc 标记长文档轨道：归因用文章 id（docid '#' 前缀）识别 gold 文档。
+	LongDoc bool
 }
 
 type ingestDoc struct {
@@ -253,20 +258,25 @@ func ingestAll(client *langhuanClient, slug, kbID string, docs []ingestDoc, cfg 
 	return nil
 }
 
-// evaluateCombo 对一个通道组合执行全部 query，返回 threshold -> 指标。
-// 每个 query 只检索一次；不同阈值复用同一批结果重新做命中判定。
+// evaluateCombo 对一个通道组合执行全部 query，返回 threshold -> 指标与
+// 未命中归因。每个 query 只检索一次；不同阈值复用同一批结果重新做命中
+// 判定。归因在主阈值下计算：未命中的 query 若 gold 文档出现在返回列表
+// （按标题里的 [docid] 标记识别）则计为分块/匹配损耗，否则为文档未召回。
 func evaluateCombo(
 	client *langhuanClient,
 	slug, kbID string,
 	dataset *evalDataset,
 	golds map[string][]string,
+	goldDocTokens map[string][]string,
 	combo matrixCombo,
 	cfg evalConfig,
 	thresholds []float64,
-) (map[float64]metricsSummary, error) {
+) (map[float64]metricsSummary, missAttribution, error) {
+	attribution := missAttribution{}
 	type rankedResult struct {
-		golds []string
-		items []searchResultItem
+		golds     []string
+		docTokens []string
+		items     []searchResultItem
 	}
 	results := make([]rankedResult, 0, len(dataset.Queries))
 	for _, query := range dataset.Queries {
@@ -276,21 +286,54 @@ func evaluateCombo(
 		}
 		items, err := client.search(slug, kbID, query.Query, combo.VectorTopK, combo.KeywordTopK, cfg.Matrix.FinalTopK)
 		if err != nil {
-			return nil, fmt.Errorf("query %s 检索失败: %w", query.QueryID, err)
+			return nil, attribution, fmt.Errorf("query %s 检索失败: %w", query.QueryID, err)
 		}
-		results = append(results, rankedResult{golds: gold, items: items})
+		results = append(results, rankedResult{golds: gold, docTokens: goldDocTokens[query.QueryID], items: items})
 	}
 	summary := make(map[float64]metricsSummary, len(thresholds))
 	for _, threshold := range thresholds {
 		evals := make([]queryEvaluation, 0, len(results))
 		goldCounts := make([]int, 0, len(results))
 		for _, result := range results {
-			evals = append(evals, queryEvaluation{Ranks: ranksOf(result.items, result.golds, threshold)})
+			ranks := ranksOf(result.items, result.golds, threshold)
+			evals = append(evals, queryEvaluation{Ranks: ranks})
 			goldCounts = append(goldCounts, len(result.golds))
+			if threshold == cfg.Overlap.Threshold && len(ranks) == 0 {
+				attribution.Missed++
+				if goldDocumentRecalled(result.items, result.docTokens) {
+					attribution.MissedDocRecalled++
+				} else {
+					attribution.MissedDocNotRecalled++
+				}
+			}
 		}
 		summary[threshold] = summarize(evals, goldCounts)
 	}
-	return summary, nil
+	return summary, attribution, nil
+}
+
+// missAttribution 拆分主阈值下的未命中：gold 文档被召回但文本重叠不足
+// （分块边界/父块稀释/阈值），还是 gold 文档根本没进返回列表（召回问题）。
+type missAttribution struct {
+	Missed               int `json:"missed"`
+	MissedDocRecalled    int `json:"missed_doc_recalled"`
+	MissedDocNotRecalled int `json:"missed_doc_not_recalled"`
+}
+
+// goldDocumentRecalled 判断任一 gold 文档是否出现在结果列表。导入标题带
+// "[docid]" 后缀（uniqueTitle），Track A 的 docid 是段落 id，Track B 是文章 id。
+func goldDocumentRecalled(items []searchResultItem, docTokens []string) bool {
+	if len(docTokens) == 0 {
+		return false
+	}
+	for _, item := range items {
+		for _, token := range docTokens {
+			if strings.Contains(item.DocumentName, "["+token+"]") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sortedThresholdMetrics 把 threshold -> 指标 的 map 转为按阈值升序的切片

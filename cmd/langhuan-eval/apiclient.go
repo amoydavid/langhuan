@@ -73,14 +73,18 @@ func truncateForLog(text string, limit int) string {
 	return string(runes[:limit]) + "…"
 }
 
-// bootstrap 完成「注册 -> workspace -> embedding provider/model」引导，
-// 返回 workspace slug 与 embedding model id。
+// bootstrap 完成「注册/登录 -> workspace -> embedding provider/model」引导，
+// 返回 workspace slug 与 embedding model id。remote 模式指向已初始化实例时，
+// register 409（邮箱已存在）不视为错误——后续 login 复用既有账号。
 func (c *langhuanClient) bootstrap(config evalConfig) (bootstrapResult, error) {
 	var result bootstrapResult
 	if err := c.do(http.MethodPost, "/api/v1/auth/register", map[string]any{
 		"email": config.Server.Email, "nickname": config.Server.Nickname, "password": config.Server.Password,
 	}, nil); err != nil {
-		return result, fmt.Errorf("注册首用户失败（已存在的实例请用 remote 模式指向干净环境）: %w", err)
+		if !strings.Contains(err.Error(), "HTTP 409") {
+			return result, fmt.Errorf("注册用户失败: %w", err)
+		}
+		fmt.Println("  注册返回 409（实例已有该账号），改用登录复用")
 	}
 	if err := c.do(http.MethodPost, "/api/v1/auth/login", map[string]any{
 		"email": config.Server.Email, "password": config.Server.Password,
@@ -94,7 +98,10 @@ func (c *langhuanClient) bootstrap(config evalConfig) (bootstrapResult, error) {
 	if err := c.do(http.MethodPost, "/api/v1/workspaces", map[string]any{
 		"name": "eval", "slug": "eval",
 	}, &workspace); err != nil {
-		return result, fmt.Errorf("创建 workspace 失败: %w", err)
+		if !strings.Contains(err.Error(), "HTTP 409") {
+			return result, fmt.Errorf("创建 workspace 失败: %w", err)
+		}
+		workspace.Slug = "eval"
 	}
 	result.WorkspaceSlug = workspace.Slug
 
@@ -176,6 +183,8 @@ func (c *langhuanClient) createModel(providerID, modelType, modelName string, di
 	return created.ID, nil
 }
 
+// createKnowledgeBase 创建轨道知识库；remote 模式重跑撞同名 409 时复用
+// 已有 KB——同内容文档按 hash 去重，可跳过重复嵌入。
 func (c *langhuanClient) createKnowledgeBase(slug, name, embeddingModelID string) (string, error) {
 	var created struct {
 		ID string `json:"id"`
@@ -183,7 +192,22 @@ func (c *langhuanClient) createKnowledgeBase(slug, name, embeddingModelID string
 	if err := c.do(http.MethodPost, "/api/v1/workspaces/"+slug+"/knowledge-bases", map[string]any{
 		"name": name, "description": "langhuan-eval track", "embedding_model_id": embeddingModelID,
 	}, &created); err != nil {
-		return "", err
+		if !strings.Contains(err.Error(), "HTTP 409") {
+			return "", err
+		}
+		var list []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if listErr := c.do(http.MethodGet, "/api/v1/workspaces/"+slug+"/knowledge-bases", nil, &list); listErr != nil {
+			return "", listErr
+		}
+		for _, kb := range list {
+			if kb.Name == name {
+				return kb.ID, nil
+			}
+		}
+		return "", fmt.Errorf("知识库 %s 创建冲突且未找到同名可复用记录", name)
 	}
 	return created.ID, nil
 }

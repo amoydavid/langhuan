@@ -21,6 +21,8 @@ type comboReport struct {
 	Available         bool              `json:"available"`
 	UnavailableReason string            `json:"unavailable_reason,omitempty"`
 	ByThreshold       []thresholdMetric `json:"by_threshold,omitempty"`
+	// Attribution 拆分主阈值下的未命中（gold 文档已召回 vs 未召回）。
+	Attribution *missAttribution `json:"miss_attribution,omitempty"`
 }
 
 // metricAt 返回该组合在指定阈值下的指标；缺失时回退首档，保证报告不空。
@@ -191,6 +193,15 @@ func renderMarkdown(document reportDocument, cfg evalConfig) string {
 				fmt.Fprintf(&builder, "| %.4f ", combo.metricAt(threshold).NDCGAt10)
 			}
 			builder.WriteString("|\n")
+		}
+		builder.WriteString("\n未命中归因（主阈值）:\n\n")
+		builder.WriteString("| 通道组合 | 未命中 | gold 文档已召回（分块/匹配损耗） | gold 文档未召回 |\n|---|---|---|---|\n")
+		for _, combo := range track.Combos {
+			if !combo.Available || combo.Attribution == nil {
+				continue
+			}
+			fmt.Fprintf(&builder, "| %s | %d | %d | %d |\n",
+				combo.Name, combo.Attribution.Missed, combo.Attribution.MissedDocRecalled, combo.Attribution.MissedDocNotRecalled)
 		}
 		builder.WriteString("\n")
 	}
