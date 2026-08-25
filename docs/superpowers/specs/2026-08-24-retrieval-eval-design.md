@@ -192,6 +192,9 @@ Generation `RetrievalConfig` 已含 `vector_top_k` / `keyword_top_k` / `final_to
 - **HF 下载体积**：miracl-corpus zh 全量 10 分片约 730MB。prepare 一次性下载到 `.eval-data/cache/`（sha256 校验、断点重下），二次运行命中缓存不再联网；镜像失败自动回退直连。
 - **parquet 依赖**：已消解——MIRACL 原始分发即 jsonl.gz/tsv，全程零解析依赖；DuRetrieval 因仅 parquet 分发而暂缓（§4.1）。
 - **（已修复）评测冒烟暴露的两个 standalone 既有缺陷**：其一，SQLite 连接开启 `foreign_keys` 但 `knowledge_bases` 的前向复合 FK（指向 file_tree_nodes / knowledge_base_index_generations）无 DEFERRABLE，KB 创建事务按 kb 行 → root → generation 顺序插入立即违约（HTTP 500）；修复为 WorkspaceTxRunner 在非 PG 事务内执行 `PRAGMA defer_foreign_keys = ON`，对齐 PG DEFERRABLE 语义，含集成回归测试。其二，`modernc.org/sqlite/vec` 此前只在测试文件空导入，发布二进制未链接 vec 扩展，standalone 向量检索报 `no such function: vec_f32`；修复为 sqlitedialect 生产代码空导入。两项均为评测 harness 端到端冒烟直接发现的真实产品缺陷，佐证了 standalone 拉起式评测的价值。
+- **（已修复）FTS 查询侧停用词过滤（首份基线的核心发现）**：基线实测 `fts_only` 在 MIRACL-zh 疑问句上 recall@10=0——gse 把"埃及有哪些民族？"切为 `[埃及 有 哪些 民族 ？]` 后全 token AND，"哪些/？/有"在正文中永不齐备。修复：新增 `FilterFTSQueryTokens`（标点/单字虚词/疑问填充词过滤，词表刻意保守），SQLite FTS5 MATCH 表达式与 PG plainto_tsquery 查询串共用同一过滤（PG 模式同样装配 gse 分词器）。修复后 fts_only 从 0 → 0.131，track-a `hybrid` recall@10 首次严格高于 vector_only（0.9826 vs 0.9799）——RRF 混合检索的核心架构假设由评测闭环验证成立。停用词表扩充必须附 `make eval` 新旧对比。
+- **报告未命中归因（v1.2.0 追加）**：主阈值下每个通道组合的未命中 query 拆分为「gold 文档已召回但文本重叠不足（分块/匹配损耗）」与「gold 文档未召回」两类（gold 文档按导入标题的 `[docid]` 标记识别）。bge-m3 基线的 Track B 结论：6 个 vector 未命中中 5 个属前者——分块/匹配是长文档轨道的主要损耗模式，为 chunker 演进提供了靶子。
+- **离线冒烟 fixture（v1.2.0 追加）**：`cmd/langhuan-eval/testdata/micro` 入库微型数据集（12 query / 90 段落 / 44 长文档，自全量采样派生），`make eval-smoke` 不再依赖 HF 下载，可在 CI 中端到端防回归（上述 standalone 双缺陷即此类问题）。
 - **文本重叠阈值**：0.6 初值可能偏严/偏松，首份报告的三档敏感性数据用于校准；阈值进 eval config，不硬编码。
 - **MIRACL qrels 的 train/dev 划分**：使用 dev split 避免与（未来可能的）微调数据重叠；若 dev gold passage 覆盖不足 200 query，回落到 train split 抽样并在 manifest 标注。
 - **DuRetrieval 语料规模**（百万级 passage）：已随 §4.1 决策暂缓；若未来接入，同 prepare 子采样策略处理。
@@ -251,5 +254,5 @@ make eval-smoke
 3. **重排值不值得开**（`hybrid_rerank` vs `hybrid`）：差值就是 rerank 模型在自有管线上的真实增益；未配置 rerank 模型时该行显示 N/A 及原因。
 4. **结论是否可信**（阈值敏感性表）：不同阈值的 ndcg 差异过大（例如 @0.5 与 @0.8 相差 >15 个百分点）时，命中判定偏松或偏严，先校准 `overlap.threshold` 再下业务结论；两次 run 对比必须核对指纹表一致。
 
-**典型读数参考**（MIRACL-zh，真实 embedding 模型）：bge 类中文模型在 track-a 的 hybrid recall@10 通常应明显高于 fts_only（中文口语 query 对词法检索不友好）；track-b 相对 track-a 的衰减主要来自长文档干扰项增多与分块边界。绝对数值无及格线，**一切以同指纹的相对比较为准**。
+**典型读数参考**（MIRACL-zh，真实 embedding 模型）：FTS 查询侧停用词过滤落地后，中文疑问句的 fts_only recall@10 约 0.12~0.13（词法通道对问句天然偏弱，关键词型 query 才是其主场）；track-a 的 hybrid recall@10 应**严格不低于** vector_only（混合增益成立）；track-b 相对 track-a 的衰减主要来自长文档干扰项增多与分块边界。绝对数值无及格线，**一切以同指纹的相对比较为准**。
 
