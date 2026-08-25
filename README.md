@@ -69,7 +69,7 @@ make standalone   # 或 go run ./cmd/langhuan，或直接 ./langhuan
 
 > No Docker, PostgreSQL, or Redis needed. Just run the binary—Langhuan auto-provisions everything under `~/.langhuan-data/`.
 
-**standalone 能力边界**：进程内内存队列（进程退出时未完成任务丢失，由 source cleanup 补偿与用户重试恢复）；数据量建议 < 数万条 embedding（向量检索为精确暴力扫描，召回率 100%）；检索功能完整（向量 + 中文全文 + RRF + rerank）。生产高并发场景推荐下方的 PostgreSQL + Redis 部署。
+**standalone 能力边界**：数据库持久化队列（v1.1.0 起，进程重启不丢任务）；数据量建议 < 数万条 embedding（向量检索为精确暴力扫描，召回率 100%）；检索功能完整（向量 + 中文全文 + RRF + rerank）。生产高并发场景推荐下方的 PostgreSQL + Redis 部署。
 
 ### 生产部署（PostgreSQL + Redis）Production Deployment
 
@@ -86,7 +86,7 @@ docker compose up -d --build
 ### 手动安装 Manual Install
 
 - [Ubuntu 24 / macOS 安装 PostgreSQL + pgvector + zhparser](docs/DATABASE_GUIDELINES.md#72-手动安装-pgvector--zhparserubuntu-24--macos)
-- [架构与设计](docs/ARCHITECTURE.md) · [数据库开发指南](docs/DATABASE_GUIDELINES.md) · [备份与恢复](docs/operations/backup-restore.md) · [路线图](ROADMAP.md)
+- [架构与设计](docs/ARCHITECTURE.md) · [数据库开发指南](docs/DATABASE_GUIDELINES.md) · [备份与恢复](docs/operations/backup-restore.md) · [路线图](ROADMAP.md) · [检索评测报告](RETRIEVAL_BENCHMARK.md)
 
 ## 与 RAG 平台的定位差异 Positioning
 
