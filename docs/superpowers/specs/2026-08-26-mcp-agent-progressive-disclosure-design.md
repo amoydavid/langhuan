@@ -56,11 +56,11 @@
 - 其余命中子块仍以元数据形式列在 `matched_children`（数量、位置、通道分数可见，正文不重复）。
 - 理由：纯 ID 清单会逼 agent 盲钻（两段式退化成三段式）；Grep 先例的精髓是返回匹配行本身。384 字证据让多数查询一轮结束，需要完整上下文时经 `chunk_get(chunk_id)`（父块 ID）钻取。
 
-### D4：默认值按协议面区分
+### D4：默认值统一为 `full`，`lean` 全部显式 opt-in
 
-- **MCP 默认 `lean`**：agent 是 MCP 的主用户，旧行为（胖结果）本来就是待修正项。
-- **REST 默认 `full`**：现有调用方（console、评测、用户脚本）行为不变，显式传参才切换。
-- MCP 请求 `detail: "full"` 可显式取回父块正文。
+- **REST 与 MCP 均默认 `full`**：新档位不改变任何现有调用方的默认行为（console、评测、用户脚本、已接入的 agent 全部无感）；需要瘦结果的调用方显式传 `detail: "lean"`。
+- `knowledge_search` 的 MCP 工具描述中明确引导：agent 上下文敏感或只需定位时建议 `lean`，需要完整上下文时用默认 `full` 或 `chunk_get` 钻取。
+- 代价（已知并接受）：不会传参的 agent 默认仍收到胖结果，靠工具描述引导迁移。
 
 ### D5：发现/阅读类工具复用现有 service，只补 MCP 协议面
 
@@ -124,7 +124,7 @@ REST 已有等价端点（console 在用：知识库列表/文档列表/文档�
 
 ### 4.2 MCP
 
-`knowledge_search` input 新增 `detail`（枚举，**默认 lean**），output 同 §4.1 投影。工具描述更新：明确两档语义与"需要完整上下文时用 `chunk_get(chunk_id)` 取父块"的钻取路径。
+`knowledge_search` input 新增 `detail`（枚举，默认 `full`），output 同 §4.1 投影。工具描述更新：明确两档语义与"需要完整上下文时用 `chunk_get(chunk_id)` 取父块"的钻取路径。
 
 新增工具（typed tool + `withRawInputSchema/withRawOutputSchema` 现有模式）：
 
@@ -156,7 +156,7 @@ document_get         ->  { knowledge_base_id, document_id, max_chars? }
   - **web console**：`retrieval-test.tsx` 渲染子块正文 → 本版本同步改为元数据行（父块正文已在上方完整展示，子块正文本就是其子串，信息不丢失）；
   - **langhuan-eval**：拼接移除，指标逐位不变（D6 验收）；
   - **外部 REST 调用方**：v1.2.0 CHANGELOG 显式声明；需要子块正文的场景改用 `detail=lean` 的 `evidence` 或 `chunk_get`。
-- MCP `knowledge_search` 默认档位由（事实上的）full 变为 lean：行为变更，写入 CHANGELOG 与工具描述。
+- MCP 档位默认值与现状一致（full），无默认行为变更；`lean` 为新增可选档位。
 
 ## 7. 测试与验收标准
 
