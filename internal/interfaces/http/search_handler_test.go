@@ -127,3 +127,40 @@ func TestSingleSearchKeepsArrayBodyAndAddsHeaders(t *testing.T) {
 		t.Fatalf("X-Generation-IDs = %q want %q", got, genID.String())
 	}
 }
+
+func TestSearchHandlerParsesDetailParam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	workspaceID, userID, knowledgeBaseID := uuid.New(), uuid.New(), uuid.New()
+
+	var lastDetail value.SearchResultDetail
+	run := func(body string) int {
+		fake := &searchHTTPServiceFake{results: []*dto.SearchResult{{ChunkID: uuid.New()}}}
+		handler := searchHandler{service: fake}
+		router := gin.New()
+		router.POST("/knowledge-bases/:id/search", func(c *gin.Context) {
+			c.Set(authContextKey, value.AuthContext{WorkspaceID: workspaceID, UserID: userID, Role: value.RoleMember})
+			handler.search(c)
+		})
+		req := httptest.NewRequest(http.MethodPost, "/knowledge-bases/"+knowledgeBaseID.String()+"/search", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		if recorder.Code == http.StatusOK {
+			if len(fake.inputs) != 1 {
+				t.Fatalf("inputs = %#v", fake.inputs)
+			}
+			lastDetail = fake.inputs[0].Detail
+		}
+		return recorder.Code
+	}
+
+	if code := run(`{"query":"q"}`); code != http.StatusOK {
+		t.Fatalf("缺省 detail 应通过，status=%d", code)
+	}
+	if code := run(`{"query":"q","detail":"lean"}`); code != http.StatusOK || lastDetail != value.SearchDetailLean {
+		t.Fatalf("lean 应通过且透传，status=%d detail=%q", code, lastDetail)
+	}
+	if code := run(`{"query":"q","detail":"fat"}`); code != http.StatusBadRequest {
+		t.Fatalf("非法 detail 应 400，status=%d", code)
+	}
+}

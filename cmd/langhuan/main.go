@@ -1009,8 +1009,11 @@ func (a *mineruSelectorAdapter) SelectMinerU(ctx context.Context, workspaceID uu
 
 func buildHTTPRouter(services *runtimeServices) http.Handler {
 	mcpServer := langmcp.NewServer(langmcp.Dependencies{
-		KnowledgeBases: langmcp.NewMCPKnowledgeBaseService(services.knowledgeBases),
-		DocumentIngest: langmcp.NewMCPDocumentIngestService(services.documentIngest),
+		KnowledgeBases:    langmcp.NewMCPKnowledgeBaseService(services.knowledgeBases),
+		KnowledgeBaseList: services.knowledgeBases,
+		DocumentList:      services.documents,
+		DocumentGet:       services.documents,
+		DocumentIngest:    langmcp.NewMCPDocumentIngestService(services.documentIngest),
 		DocumentStatus: service.NewProgrammaticDocumentStatusService(&mcpDocumentStatusReader{
 			documents: services.documents, jobs: services.jobs,
 		}),

@@ -32,6 +32,7 @@ func TestNewServerRegistersAllTools(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"knowledge_base_create", "document_ingest", "document_status",
 		"knowledge_search", "document_delete", "document_retry", "chunk_get",
+		"knowledge_base_list", "document_list", "document_get",
 	}, names)
 }
 
@@ -84,6 +85,9 @@ func TestScopeToolFilterHidesToolsOutsideScope(t *testing.T) {
 		{Name: "knowledge_search"},
 		{Name: "document_delete"},
 		{Name: "chunk_get"},
+		{Name: "knowledge_base_list"},
+		{Name: "document_list"},
+		{Name: "document_get"},
 	}
 	// 只读 key：documents:read + search:read。
 	auth := value.NewAPIKeyAuthContext(uuid.New(), uuid.New(),
@@ -91,7 +95,9 @@ func TestScopeToolFilterHidesToolsOutsideScope(t *testing.T) {
 		[]uuid.UUID{uuid.New()})
 	ctx := value.ContextWithAuthContext(context.Background(), auth)
 	filtered := scopeToolFilter(ctx, all)
-	require.ElementsMatch(t, []string{"document_status", "knowledge_search", "chunk_get"}, toolNames(filtered))
+	require.ElementsMatch(t, []string{
+		"document_status", "knowledge_search", "chunk_get", "document_list", "document_get",
+	}, toolNames(filtered))
 }
 
 func TestScopeToolFilterReturnsAllForSession(t *testing.T) {
@@ -286,7 +292,7 @@ func TestToolsMarshalWithoutSchemaConflict(t *testing.T) {
 	require.True(t, ok)
 	result, ok := jsonResp.Result.(mcplib.ListToolsResult)
 	require.True(t, ok)
-	require.Len(t, result.Tools, 7, "应注册 7 个工具")
+	require.Len(t, result.Tools, 10, "应注册 10 个工具")
 
 	for _, tool := range result.Tools {
 		t.Run(tool.Name, func(t *testing.T) {

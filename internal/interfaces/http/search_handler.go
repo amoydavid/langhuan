@@ -40,6 +40,18 @@ type searchRequest struct {
 	VectorTopK  *int   `json:"vector_top_k"`
 	KeywordTopK *int   `json:"keyword_top_k"`
 	FinalTopK   *int   `json:"final_top_k"`
+	// Detail 响应档位：full=父块正文+子块元数据（默认）；lean=最佳命中子块
+	// 正文（evidence）+父块钻取句柄。空值按 full 处理。
+	Detail string `json:"detail"`
+}
+
+// parseSearchDetail 解析并校验响应档位参数。
+func parseSearchDetail(raw string) (value.SearchResultDetail, error) {
+	detail := value.SearchResultDetail(raw)
+	if err := value.ValidateSearchResultDetail(detail); err != nil {
+		return "", err
+	}
+	return detail, nil
 }
 
 // writeRunHeaders 把 SearchRun 响应头写入 HTTP 响应。
@@ -68,9 +80,15 @@ func (h searchHandler) search(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "检索参数无效")
 		return
 	}
+	detail, err := parseSearchDetail(request.Detail)
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "detail 只支持 full/lean")
+		return
+	}
 	response, err := h.service.Search(c.Request.Context(), service.SearchInput{
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Query: request.Query,
 		VectorTopK: request.VectorTopK, KeywordTopK: request.KeywordTopK, FinalTopK: request.FinalTopK,
+		Detail: detail,
 	})
 	// SearchRun 创建后的错误也先写 Header，再映射原领域错误。
 	if response != nil {
@@ -93,6 +111,7 @@ type multiSearchRequest struct {
 	VectorTopK       *int        `json:"vector_top_k"`
 	KeywordTopK      *int        `json:"keyword_top_k"`
 	FinalTopK        *int        `json:"final_top_k"`
+	Detail           string      `json:"detail"`
 }
 
 type multiSearchResponse struct {
@@ -121,11 +140,16 @@ func (h searchHandler) multiSearchHandler(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "检索参数无效")
 		return
 	}
+	detail, err := parseSearchDetail(request.Detail)
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "detail 只支持 full/lean")
+		return
+	}
 	response, err := h.multiSearchSvc.Search(c.Request.Context(), service.MultiKnowledgeSearchInput{
 		WorkspaceID: authCtx.WorkspaceID, Access: authCtx.ResourceAccess(),
 		KnowledgeBaseIDs: request.KnowledgeBaseIDs, Query: request.Query,
 		VectorTopK: request.VectorTopK, KeywordTopK: request.KeywordTopK, FinalTopK: request.FinalTopK,
-		RequestedScope: value.SearchScopeSelected,
+		RequestedScope: value.SearchScopeSelected, Detail: detail,
 	})
 	if response != nil {
 		writeRunHeaders(c, response.Run)

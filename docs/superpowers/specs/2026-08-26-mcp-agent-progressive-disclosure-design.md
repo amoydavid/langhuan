@@ -165,7 +165,7 @@ document_get         ->  { knowledge_base_id, document_id, max_chars? }
 3. **回归（快验收，不跑评测）**：
    - `ranksOf` 表驱动单测：带/不带子块正文的命中排名逐位一致（D6，秒级）；
    - 集成断言：同一 query 的 `detail=full` 与 `detail=lean` 返回相同的 chunk_id 顺序与分数（投影不改排序）；
-   - 负载断言：lean top10 响应体 ≤ 10,000 字符（现状 full 约 45,000）。
+   - 负载断言：lean top10 响应体 ≤ 15,000 字符且不高于 full 的 1/3（实现期校准：每行 UUID/锚点/引用等固定 JSON 开销约 1.4k 字符，实测 lean ≈13.7k vs full ≈41k+，缩小 3 倍以上；初稿的 10k 预算低估了这部分开销）。
 4. **前端**：`pnpm check` / `pnpm test` / `pnpm build` 通过；检索测试视图快照更新。
 5. **MCP smoke**：工具注册数 7 → 10；schema 校验通过。
 

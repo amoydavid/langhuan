@@ -18,13 +18,17 @@ import (
 // Dependencies 注入 MCP server 所需的全部 application service。
 type Dependencies struct {
 	KnowledgeBases MCPKnowledgeBaseService
-	DocumentIngest MCPDocumentIngestService
-	DocumentStatus *service.ProgrammaticDocumentStatusService
-	DocumentDelete MCPDocumentDeleteService
-	DocumentRetry  MCPDocumentRetryService
-	ChunkGet       MCPChunkGetService
-	MultiSearch    *service.MultiKnowledgeSearchService
-	InlineLimit    int64
+	// KnowledgeBaseList / DocumentList / DocumentGet 支撑发现/阅读类只读工具。
+	KnowledgeBaseList MCPKnowledgeBaseListService
+	DocumentList      MCPDocumentListService
+	DocumentGet       MCPDocumentGetService
+	DocumentIngest    MCPDocumentIngestService
+	DocumentStatus    *service.ProgrammaticDocumentStatusService
+	DocumentDelete    MCPDocumentDeleteService
+	DocumentRetry     MCPDocumentRetryService
+	ChunkGet          MCPChunkGetService
+	MultiSearch       *service.MultiKnowledgeSearchService
+	InlineLimit       int64
 	// EnableLocalhostProtection enables mcp-go's DNS rebinding protection.
 	EnableLocalhostProtection bool
 }

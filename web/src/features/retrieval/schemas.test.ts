@@ -32,7 +32,6 @@ describe('retrievalResultsSchema', () => {
             chunk_id: chunkId,
             chunk_revision_id: revisionId,
             role: 'child',
-            content: '通过 DATABASE_DSN 指定 PostgreSQL。',
             source_anchor: {
               source_type: 'markdown',
               line_start: 24,

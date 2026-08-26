@@ -136,3 +136,21 @@ func NewMCPChunkGetService(svc ChunkGetter) MCPChunkGetService {
 func (a *chunkGetAdapter) Get(ctx context.Context, workspaceID, knowledgeBaseID, chunkID uuid.UUID) (*dto.Chunk, error) {
 	return a.svc.Get(ctx, workspaceID, knowledgeBaseID, chunkID)
 }
+
+// MCPKnowledgeBaseListService 是发现类工具的知识库列表契约。
+// *service.KnowledgeBaseService 直接满足。
+type MCPKnowledgeBaseListService interface {
+	List(ctx context.Context, access value.ResourceAccess) ([]*dto.KnowledgeBase, error)
+}
+
+// MCPDocumentListService 是发现类工具的文档列表契约。
+// *service.DocumentService 直接满足。
+type MCPDocumentListService interface {
+	List(ctx context.Context, filter service.DocumentListFilter) ([]*dto.Document, error)
+}
+
+// MCPDocumentGetService 是阅读类工具的文档详情契约（含归一化正文）。
+// *service.DocumentService 直接满足。
+type MCPDocumentGetService interface {
+	Get(ctx context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.Document, error)
+}

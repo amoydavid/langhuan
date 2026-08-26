@@ -449,7 +449,7 @@ func (b *specBuilder) searchOps() []op {
 		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/search", tag: "检索", summary: "单知识库检索",
 			reqBody: searchRequest{}, respBody: []*dto.SearchResult{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeSearchRead},
 			responseHeaders: searchHeaders,
-			description:     "Body 继续为 []SearchResult；运行级元数据通过响应头 X-Search-ID、X-Retrieval-Status、X-Generation-IDs 承载。"},
+			description:     "Body 继续为 []SearchResult；运行级元数据通过响应头 X-Search-ID、X-Retrieval-Status、X-Generation-IDs 承载。detail 可选 full（默认，完整父块正文 + matched_children 元数据，v1.2.0 起子块不再返回正文）或 lean（每命中返回最佳命中子块正文 evidence，父块正文置空、chunk_id 作钻取句柄）。"},
 		{method: http.MethodPost, path: wsBase + "/search", tag: "检索", summary: "多知识库检索",
 			reqBody: multiSearchRequest{}, respBody: multiSearchResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeSearchRead},
 			responseHeaders: searchHeaders,

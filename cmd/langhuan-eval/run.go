@@ -387,18 +387,13 @@ func sortedThresholdMetrics(summary map[float64]metricsSummary) []thresholdMetri
 func ranksOf(items []searchResultItem, golds []string, threshold float64) []int {
 	covered := make([]bool, len(golds))
 	var ranks []int
-	var builder strings.Builder
 	for position, item := range items {
-		builder.Reset()
-		builder.WriteString(item.Content)
-		for _, child := range item.MatchedChildren {
-			builder.WriteString("\n")
-			builder.WriteString(child.Content)
-		}
-		content := builder.String()
+		// 命中判定只用父块正文：命中子块正文构造上是父块的子串（chunker 父子
+		// 装配即拼接），v1.2.0 起子块正文不再随契约返回，拼接项恒等地不改变
+		// bigram 覆盖（ranksOfChildContentIdentity 有表驱动证明）。
 		newlyCovered := false
 		for index, gold := range golds {
-			if !covered[index] && overlapRatio(content, gold) >= threshold {
+			if !covered[index] && overlapRatio(item.Content, gold) >= threshold {
 				covered[index] = true
 				newlyCovered = true
 			}

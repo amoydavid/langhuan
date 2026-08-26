@@ -40,6 +40,8 @@ type MultiKnowledgeSearchInput struct {
 	KeywordTopK      *int
 	FinalTopK        *int
 	RequestedScope   value.SearchScope
+	// Detail 选择响应档位（full/lean）；空值按 full 处理。投影不改排序。
+	Detail value.SearchResultDetail
 }
 
 // knowledgeBaseSearchSnapshot 描述一个被选中知识库在检索开始时的只读快照。
@@ -245,6 +247,7 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 	if finalTopK < len(results) {
 		results = results[:finalTopK]
 	}
+	dto.ProjectSearchDetail(results, value.NormalizeSearchResultDetail(input.Detail))
 	// 推断 ranking stage：若所有结果共享同一 stage 则用它，否则 RRF 兜底。
 	runRankingStage = inferMultiRankingStage(results)
 	// 构造每个 KB 的 Generation snapshot（按 KB UUID 排序）。
@@ -590,6 +593,8 @@ func groupMultiSearchResults(results []*dto.SearchResult) []*dto.SearchResult {
 			}
 			return result.MatchedChildren[i].ChunkID.String() < result.MatchedChildren[j].ChunkID.String()
 		})
+		// 归并后的最佳命中子块可能在任一来源行上，按排序结果重建 lean 证据。
+		result.Evidence = dto.MatchedEvidenceOf(result.MatchedChildren[0])
 		merged = append(merged, result)
 	}
 	sort.Slice(merged, func(i, j int) bool {

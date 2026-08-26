@@ -17,7 +17,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-// registerTools 注册七个 typed tools。
+// registerTools 注册十个 typed tools。
 func registerTools(srv *mcpserver.MCPServer, deps Dependencies) {
 	registerKnowledgeBaseCreate(srv, deps)
 	registerDocumentIngest(srv, deps)
@@ -26,6 +26,9 @@ func registerTools(srv *mcpserver.MCPServer, deps Dependencies) {
 	registerDocumentDelete(srv, deps)
 	registerDocumentRetry(srv, deps)
 	registerChunkGet(srv, deps)
+	registerKnowledgeBaseListTool(srv, deps)
+	registerDocumentListTool(srv, deps)
+	registerDocumentGetTool(srv, deps)
 }
 
 // authFromRequest 从 request.Context() 读取已鉴权的 AuthContext。
@@ -339,6 +342,7 @@ type knowledgeSearchInput struct {
 	VectorTopK       *int     `json:"vector_top_k,omitempty" jsonschema:"向量检索候选数，默认使用服务端配置"`
 	KeywordTopK      *int     `json:"keyword_top_k,omitempty" jsonschema:"关键词检索候选数，默认使用服务端配置"`
 	FinalTopK        *int     `json:"final_top_k,omitempty" jsonschema:"最终返回的结果数，默认使用服务端配置"`
+	Detail           string   `json:"detail,omitempty" jsonschema:"响应档位，full（默认）返回完整父块正文与命中子块元数据；lean 只返回每个命中的最佳命中子块正文 evidence，并以父块 chunk_id 作为钻取句柄。上下文敏感时建议 lean；需要完整上下文时用默认档位或 chunk_get 取父块"`
 }
 
 type knowledgeSearchOutput struct {
@@ -385,11 +389,15 @@ func registerKnowledgeSearch(srv *mcpserver.MCPServer, deps Dependencies) {
 			kbIDs = append(kbIDs, auth.KnowledgeBaseIDs...)
 			requestedScope = value.SearchScopeAPIKeyBoundAll
 		}
+		detail := value.SearchResultDetail(in.Detail)
+		if err := value.ValidateSearchResultDetail(detail); err != nil {
+			return toErrorResult(fmt.Errorf("%w: detail 只支持 full/lean", domainerrors.ErrValidation)), nil
+		}
 		response, err := deps.MultiSearch.Search(ctx, service.MultiKnowledgeSearchInput{
 			WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
 			KnowledgeBaseIDs: kbIDs, Query: in.Query,
 			VectorTopK: in.VectorTopK, KeywordTopK: in.KeywordTopK, FinalTopK: in.FinalTopK,
-			RequestedScope: requestedScope,
+			RequestedScope: requestedScope, Detail: detail,
 		})
 		if err != nil {
 			return toSearchErrorResult(err, response), nil

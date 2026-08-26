@@ -428,9 +428,6 @@ export function RetrievalTest({
                           key={child.chunk_id}
                           className='flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-xs'
                         >
-                          <span className='min-w-0 flex-1 truncate text-foreground'>
-                            {child.content.replace(/\s+/g, ' ').trim()}
-                          </span>
                           <span>{sourceAnchorLabel(child.source_anchor)}</span>
                           <span>RRF {score(child.score)}</span>
                         </li>

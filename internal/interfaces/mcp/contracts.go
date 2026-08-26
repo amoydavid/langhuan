@@ -85,6 +85,10 @@ func toolScopeRequirement(name string) (value.APIScope, bool) {
 		return value.ScopeDocumentsRead, true
 	case "knowledge_search":
 		return value.ScopeSearchRead, true
+	case "knowledge_base_list":
+		return value.ScopeKnowledgeBasesRead, true
+	case "document_list", "document_get":
+		return value.ScopeDocumentsRead, true
 	}
 	return "", false
 }

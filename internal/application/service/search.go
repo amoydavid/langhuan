@@ -30,6 +30,8 @@ type SearchInput struct {
 	WorkspaceID, KnowledgeBaseID       uuid.UUID
 	Query                              string
 	VectorTopK, KeywordTopK, FinalTopK *int
+	// Detail 选择响应档位（full/lean）；空值按 full 处理。投影不改排序。
+	Detail value.SearchResultDetail
 }
 
 // SearchServiceDeps contains hybrid-search persistence and embedding dependencies.
@@ -320,6 +322,8 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 				}
 				return result.MatchedChildren[i].ChunkID.String() < result.MatchedChildren[j].ChunkID.String()
 			})
+			// 归并后的最佳命中子块可能在任一来源行上，按排序结果重建 lean 证据。
+			result.Evidence = dto.MatchedEvidenceOf(result.MatchedChildren[0])
 		}
 		// Rerank：在 parent grouping 之后、final truncate 之前执行一次重排。
 		stats.groupedCandidateCount = len(results)
@@ -383,6 +387,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 		if len(results) > options.finalTopK {
 			results = results[:options.finalTopK]
 		}
+		dto.ProjectSearchDetail(results, value.NormalizeSearchResultDetail(input.Detail))
 		return nil
 	})
 	if err != nil {

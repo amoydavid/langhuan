@@ -40,7 +40,6 @@ const results: RetrievalResult[] = [
         chunk_id: matchedChildId,
         chunk_revision_id: '70000000-0000-4000-8000-000000000007',
         role: 'child',
-        content: '通过 DATABASE_DSN 指定 PostgreSQL。',
         source_anchor: { line_start: 24, line_end: 31 },
         score: 0.0325,
         vector_score: 0.84,
