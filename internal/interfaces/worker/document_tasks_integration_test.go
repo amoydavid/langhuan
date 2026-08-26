@@ -16,6 +16,7 @@ import (
 	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
+	"github.com/dajee/langhuan/internal/infrastructure/config"
 	"github.com/dajee/langhuan/internal/infrastructure/db"
 	"github.com/dajee/langhuan/internal/ports/queue"
 	"github.com/dajee/langhuan/internal/testsupport"
@@ -25,7 +26,7 @@ import (
 func TestV2DocumentRevisionChunkingIntegration(t *testing.T) {
 	ctx := context.Background()
 	testDSN := testsupport.NewMigratedPostgres(t)
-	gormDB, err := db.Open(testDSN)
+	gormDB, _, err := db.Open(config.DatabaseConfig{Driver: "postgres", DSN: testDSN})
 	if err != nil {
 		t.Fatal(err)
 	}
