@@ -1,0 +1,213 @@
+{
+  "fingerprint": {
+    "generated_at": "2026-08-26T16:10:58+08:00",
+    "dataset": "vcsum-heading-llm",
+    "dataset_dir": ".eval-data/vcsum-heading-llm",
+    "manifest_sha256": "f2dd5415e59e39072e73fca831846c9b322e63366b6d159a4cec50ed69f28ad7",
+    "seed": 20260826,
+    "query_count": 139,
+    "track_a_corpus_size": 1297,
+    "track_b_corpus_size": 227,
+    "chunking": {
+      "child_chunk_size": 384,
+      "chunker_version": 3,
+      "enable_parent_child": true,
+      "parent_chunk_size": 4096,
+      "strategy": "auto"
+    },
+    "embedding": {
+      "dimensions": 1024,
+      "model_name": "bge-m3",
+      "parameters": {
+        "batch_size": 32
+      },
+      "provider": "openai"
+    },
+    "rerank": {
+      "candidate_top_k": 50,
+      "model_name": "BAAI/bge-reranker-v2-m3"
+    },
+    "matrix": {
+      "final_top_k": 10,
+      "top_k": 50
+    },
+    "overlap_threshold": 0.6,
+    "repo_head": "ebf52af0120baee92dc9e89ec89a3aafb283ec34",
+    "server_base_url": "http://127.0.0.1:57076",
+    "server_mode": "standalone"
+  },
+  "tracks": [
+    {
+      "name": "track-b",
+      "label": "会议转写长文档检索（无结构连续文本，覆盖分块+父子+检索全链路）",
+      "corpus_size": 227,
+      "query_count": 139,
+      "combos": [
+        {
+          "name": "vector_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8849,
+                "recall@10": 0.9209,
+                "mrr@10": 0.7709,
+                "ndcg@10": 0.8078
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8633,
+                "recall@10": 0.8921,
+                "mrr@10": 0.7481,
+                "ndcg@10": 0.7836
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8201,
+                "recall@10": 0.8489,
+                "mrr@10": 0.7097,
+                "ndcg@10": 0.7441
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 15,
+            "missed_doc_recalled": 11,
+            "missed_doc_not_recalled": 4
+          }
+        },
+        {
+          "name": "fts_only",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.2662,
+                "recall@10": 0.2662,
+                "mrr@10": 0.259,
+                "ndcg@10": 0.2609
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.2518,
+                "recall@10": 0.2518,
+                "mrr@10": 0.2482,
+                "ndcg@10": 0.2491
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.2446,
+                "recall@10": 0.2446,
+                "mrr@10": 0.241,
+                "ndcg@10": 0.2419
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 104,
+            "missed_doc_recalled": 5,
+            "missed_doc_not_recalled": 99
+          }
+        },
+        {
+          "name": "hybrid",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8993,
+                "recall@10": 0.9281,
+                "mrr@10": 0.7944,
+                "ndcg@10": 0.8274
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8705,
+                "recall@10": 0.8993,
+                "mrr@10": 0.7729,
+                "ndcg@10": 0.804
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8273,
+                "recall@10": 0.8561,
+                "mrr@10": 0.7381,
+                "ndcg@10": 0.7671
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 14,
+            "missed_doc_recalled": 10,
+            "missed_doc_not_recalled": 4
+          }
+        },
+        {
+          "name": "hybrid_rerank",
+          "available": true,
+          "by_threshold": [
+            {
+              "threshold": 0.5,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.9496,
+                "recall@10": 0.9568,
+                "mrr@10": 0.882,
+                "ndcg@10": 0.9006
+              }
+            },
+            {
+              "threshold": 0.6,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.9209,
+                "recall@10": 0.9281,
+                "mrr@10": 0.8616,
+                "ndcg@10": 0.8781
+              }
+            },
+            {
+              "threshold": 0.8,
+              "metrics": {
+                "query_count": 139,
+                "recall@5": 0.8777,
+                "recall@10": 0.8849,
+                "mrr@10": 0.8221,
+                "ndcg@10": 0.8376
+              }
+            }
+          ],
+          "miss_attribution": {
+            "missed": 10,
+            "missed_doc_recalled": 7,
+            "missed_doc_not_recalled": 3
+          }
+        }
+      ]
+    }
+  ]
+}
