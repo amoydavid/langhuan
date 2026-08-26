@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestVCSumMeetingAligned(t *testing.T) {
@@ -106,15 +108,14 @@ func TestVCSumTrackBPassagesHeadingVariants(t *testing.T) {
 		EOSIndex: []int{1, 2},
 		Context:  [][]string{{"a1"}, {"b1"}, {"c1"}},
 	}
-	records := map[int]vcsumSegment{0: {Agenda: "议题甲"}, 1: {Agenda: "议题乙"}}
 	utterances := vcsumUtterances(meeting.Context)
 
-	plain := vcsumTrackBPassages(vcsumVariantPlain, meeting, utterances, records)
+	plain := vcsumTrackBPassages(vcsumVariantPlain, meeting, utterances, nil)
 	if len(plain) != 3 {
 		t.Fatalf("plain passages = %v, want 原样 3 段", plain)
 	}
 
-	neutral := vcsumTrackBPassages(vcsumVariantHeadingNeutral, meeting, utterances, records)
+	neutral := vcsumTrackBPassages(vcsumVariantHeadingNeutral, meeting, utterances, map[int]string{0: "话题段0", 1: "话题段1"})
 	want := []string{"## 话题段0", "a1", "b1", "## 话题段1", "c1"}
 	if len(neutral) != len(want) {
 		t.Fatalf("neutral len = %d, want %d", len(neutral), len(want))
@@ -125,14 +126,34 @@ func TestVCSumTrackBPassagesHeadingVariants(t *testing.T) {
 		}
 	}
 
-	heading := vcsumTrackBPassages(vcsumVariantHeading, meeting, utterances, records)
+	heading := vcsumTrackBPassages(vcsumVariantHeading, meeting, utterances, map[int]string{0: "议题甲", 1: "议题乙"})
 	if heading[0] != "## 议题甲" || heading[3] != "## 议题乙" {
 		t.Fatalf("heading passages = %v", heading)
 	}
-	// agenda 为空的段回退中性标题，保证注入不缺段。
-	emptyAgenda := map[int]vcsumSegment{0: {Agenda: ""}, 1: {Agenda: "议题乙"}}
-	if got := vcsumHeadingPassage(vcsumVariantHeading, emptyAgenda[0], 0); got != "## 话题段0" {
-		t.Fatalf("空 agenda 回退 = %q", got)
+	// 标题缺失的段回退中性标题，保证注入不缺段。
+	fallback := vcsumTrackBPassages(vcsumVariantHeadingLLM, meeting, utterances, map[int]string{})
+	if fallback[0] != "## 话题段0" || fallback[3] != "## 话题段1" {
+		t.Fatalf("llm 回退 passages = %v", fallback)
+	}
+}
+
+func TestCleanVCSumLLMTitle(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{"DeFi变革与展望", "DeFi变革与展望"},
+		{"  \"电影产业与资本的对话\"。", "电影产业与资本的对话"},
+		{"国际货币体系改革\n\n（补充说明）", "国际货币体系改革"},
+		{"汽车芯片短缺与应对策略!", "汽车芯片短缺与应对策略"},
+		{"「元宇宙的生态发展需完善」", "元宇宙的生态发展需完善"},
+		{"  ", ""},
+	}
+	for _, testCase := range cases {
+		if got := cleanVCSumLLMTitle(testCase.raw); got != testCase.want {
+			t.Fatalf("cleanVCSumLLMTitle(%q) = %q, want %q", testCase.raw, got, testCase.want)
+		}
+	}
+	long := strings.Repeat("题", 40)
+	if got := cleanVCSumLLMTitle(long); utf8.RuneCountInString(got) != 30 {
+		t.Fatalf("超长标题未截断到 30 字：%d", utf8.RuneCountInString(got))
 	}
 }
 

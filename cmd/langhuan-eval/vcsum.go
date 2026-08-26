@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // VCSUM 数据集（https://github.com/hahahawu/VCSum，MIT）：
@@ -36,10 +39,12 @@ const (
 //	""               原文转写（基线）
 //	heading          每个话题段首注入人工话题标题（边界对齐 + 标题进上下文头）
 //	heading-neutral  注入无信息量标题（仅隔离「边界对齐」单一变量）
+//	heading-llm      注入 LLM 从段正文生成的标题（可实现版对照：能吃到人工上限的几成）
 const (
 	vcsumVariantPlain          = ""
 	vcsumVariantHeading        = "heading"
 	vcsumVariantHeadingNeutral = "heading-neutral"
+	vcsumVariantHeadingLLM     = "heading-llm"
 )
 
 //go:embed vcsum_queries.json
@@ -51,6 +56,15 @@ type vcsumPrepareOptions struct {
 	SourceBaseURL string
 	QueryMeetings int
 	Variant       string
+	LLM           vcsumLLMOptions
+}
+
+// vcsumLLMOptions 是 heading-llm 变体的标题生成端点（OpenAI-compatible chat）。
+type vcsumLLMOptions struct {
+	BaseURL     string
+	Model       string
+	APIKeyFile  string
+	Concurrency int
 }
 
 // vcsumDatasetDirName 返回变体对应的数据集目录与 manifest 名称。
@@ -59,21 +73,6 @@ func vcsumDatasetDirName(variant string) string {
 		return vcsumDatasetName
 	}
 	return vcsumDatasetName + "-" + variant
-}
-
-// vcsumHeadingPassage 返回变体在段首注入的标题 passage；非 heading 变体不注入。
-func vcsumHeadingPassage(variant string, record vcsumSegment, segIndex int) string {
-	switch variant {
-	case vcsumVariantHeading:
-		title := strings.TrimSpace(record.Agenda)
-		if title == "" {
-			title = fmt.Sprintf("话题段%d", segIndex)
-		}
-		return "## " + title
-	case vcsumVariantHeadingNeutral:
-		return fmt.Sprintf("## 话题段%d", segIndex)
-	}
-	return ""
 }
 
 // vcsumMeeting 是 overall_context.txt 的一行。
@@ -102,9 +101,9 @@ func prepareVCSUM(options vcsumPrepareOptions) error {
 		options.QueryMeetings = vcsumQueryMeetings
 	}
 	switch options.Variant {
-	case vcsumVariantPlain, vcsumVariantHeading, vcsumVariantHeadingNeutral:
+	case vcsumVariantPlain, vcsumVariantHeading, vcsumVariantHeadingNeutral, vcsumVariantHeadingLLM:
 	default:
-		return fmt.Errorf("未知 vcsum 变体 %q（可用：空 / heading / heading-neutral）", options.Variant)
+		return fmt.Errorf("未知 vcsum 变体 %q（可用：空 / heading / heading-neutral / heading-llm）", options.Variant)
 	}
 	datasetDir := filepath.Join(options.DataDir, vcsumDatasetDirName(options.Variant))
 	if err := os.MkdirAll(datasetDir, 0o755); err != nil {
@@ -155,13 +154,17 @@ func prepareVCSUM(options vcsumPrepareOptions) error {
 	var qrels []evalQrel
 	var trackA []trackADoc
 	var trackB []trackBDoc
+	headingTitles, err := vcsumBuildHeadingTitles(options, aligned, segments)
+	if err != nil {
+		return err
+	}
 	queryMeetings := make(map[string]struct{}, options.QueryMeetings)
 	for index, meeting := range aligned {
 		utterances := vcsumUtterances(meeting.Context)
 		trackB = append(trackB, trackBDoc{
 			DocID:    vcsumMeetingDocID(meeting.ID),
 			Title:    "会议" + meeting.ID + "转写",
-			Passages: vcsumTrackBPassages(options.Variant, meeting, utterances, segments[meeting.ID]),
+			Passages: vcsumTrackBPassages(options.Variant, meeting, utterances, headingTitles[meeting.ID]),
 		})
 		if index < options.QueryMeetings {
 			queryMeetings[meeting.ID] = struct{}{}
@@ -209,6 +212,9 @@ func prepareVCSUM(options vcsumPrepareOptions) error {
 	}
 	if options.Variant != vcsumVariantPlain {
 		m.GeneratedBy += "；变体 " + options.Variant + "（话题段首注入标题，oracle 实验）"
+	}
+	if options.Variant == vcsumVariantHeadingLLM {
+		m.GeneratedBy += "；标题由 " + options.LLM.Model + " 生成（温度 0，缓存于 cache/vcsum-llm-titles）"
 	}
 	if err := writeJSONL(filepath.Join(datasetDir, "queries.jsonl"), queries); err != nil {
 		return err
@@ -265,18 +271,260 @@ func vcsumUtterances(context [][]string) []string {
 // vcsumTrackBPassages 组装 track-b 长文档段落：heading 变体在每个话题段首
 // 注入标题 passage（markdown 解析器识别为 heading 块 → chunker 沿话题边界
 // 切分并把标题写入各块 HeadingPath/ContextHeader）。
-func vcsumTrackBPassages(variant string, meeting vcsumMeeting, utterances []string, records map[int]vcsumSegment) []string {
+func vcsumTrackBPassages(variant string, meeting vcsumMeeting, utterances []string, titles map[int]string) []string {
 	if variant == vcsumVariantPlain {
 		return utterances
 	}
 	passages := make([]string, 0, len(utterances)+len(meeting.EOSIndex))
 	for segIndex, end := range meeting.EOSIndex {
-		if heading := vcsumHeadingPassage(variant, records[segIndex], segIndex); heading != "" {
-			passages = append(passages, heading)
+		title := strings.TrimSpace(titles[segIndex])
+		if title == "" {
+			title = fmt.Sprintf("话题段%d", segIndex)
 		}
+		passages = append(passages, "## "+title)
 		passages = append(passages, utterances[vcsumSegmentStart(meeting, segIndex):end+1]...)
 	}
 	return passages
+}
+
+// vcsumBuildHeadingTitles 返回 meetingID -> segIndex -> 标题文本（不含 ## 前缀）。
+// plain 变体返回空 map；heading 用人工 agenda；heading-neutral 用固定中性标题；
+// heading-llm 调 LLM 从段正文生成（带缓存，失败段回退中性标题）。
+func vcsumBuildHeadingTitles(
+	options vcsumPrepareOptions,
+	aligned []vcsumMeeting,
+	segments map[string]map[int]vcsumSegment,
+) (map[string]map[int]string, error) {
+	result := make(map[string]map[int]string, len(aligned))
+	if options.Variant == vcsumVariantPlain {
+		return result, nil
+	}
+	for _, meeting := range aligned {
+		meetingTitles := make(map[int]string, len(meeting.EOSIndex))
+		for segIndex := range meeting.EOSIndex {
+			switch options.Variant {
+			case vcsumVariantHeading:
+				meetingTitles[segIndex] = strings.TrimSpace(segments[meeting.ID][segIndex].Agenda)
+			case vcsumVariantHeadingNeutral:
+				meetingTitles[segIndex] = fmt.Sprintf("话题段%d", segIndex)
+			case vcsumVariantHeadingLLM:
+				// 由 generateVCSumLLMTitles 填充。
+			}
+		}
+		result[meeting.ID] = meetingTitles
+	}
+	if options.Variant != vcsumVariantHeadingLLM {
+		return result, nil
+	}
+	generated, err := generateVCSumLLMTitles(options, aligned, segments)
+	if err != nil {
+		return nil, err
+	}
+	fallbacks := 0
+	for _, meeting := range aligned {
+		for segIndex := range meeting.EOSIndex {
+			title := strings.TrimSpace(generated[vcsumSegmentDocID(meeting.ID, segIndex)])
+			if title == "" {
+				title = fmt.Sprintf("话题段%d", segIndex)
+				fallbacks++
+			}
+			result[meeting.ID][segIndex] = title
+		}
+	}
+	if fallbacks > 0 {
+		fmt.Printf("[vcsum] LLM 标题生成失败回退中性标题的段数：%d\n", fallbacks)
+	}
+	return result, nil
+}
+
+// vcsumLLMTitleCache 是缓存文件结构：模型或 prompt 版本变化时整体失效重生成。
+type vcsumLLMTitleCache struct {
+	Model         string            `json:"model"`
+	PromptVersion string            `json:"prompt_version"`
+	Titles        map[string]string `json:"titles"` // 段 docid -> 标题
+}
+
+const vcsumLLMTitlePromptVersion = "v1"
+
+// generateVCSumLLMTitles 为全部对齐会议的话题段生成标题，缓存于
+// <cacheDir>/vcsum-llm-titles/<model>.json。并发调用 LLM，逐批落盘，
+// 中断重跑只补缺失段。
+func generateVCSumLLMTitles(
+	options vcsumPrepareOptions,
+	aligned []vcsumMeeting,
+	segments map[string]map[int]vcsumSegment,
+) (map[string]string, error) {
+	if options.LLM.BaseURL == "" || options.LLM.Model == "" {
+		return nil, fmt.Errorf("heading-llm 变体需要 -llm-base-url 与 -llm-model")
+	}
+	cachePath := filepath.Join(options.CacheDir, "vcsum-llm-titles", sanitizeName(options.LLM.Model)+".json")
+	cache := vcsumLLMTitleCache{Model: options.LLM.Model, PromptVersion: vcsumLLMTitlePromptVersion, Titles: map[string]string{}}
+	if body, err := os.ReadFile(cachePath); err == nil {
+		var loaded vcsumLLMTitleCache
+		if err := json.Unmarshal(body, &loaded); err == nil &&
+			loaded.Model == cache.Model && loaded.PromptVersion == cache.PromptVersion {
+			cache.Titles = loaded.Titles
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		return nil, err
+	}
+	apiKey := ""
+	if options.LLM.APIKeyFile != "" {
+		body, err := os.ReadFile(options.LLM.APIKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("读取 llm api key file 失败: %w", err)
+		}
+		apiKey = strings.TrimSpace(string(body))
+	}
+
+	type segJob struct {
+		docID string
+		text  string
+	}
+	jobs := make([]segJob, 0)
+	for _, meeting := range aligned {
+		for segIndex, end := range meeting.EOSIndex {
+			docID := vcsumSegmentDocID(meeting.ID, segIndex)
+			if strings.TrimSpace(cache.Titles[docID]) != "" {
+				continue
+			}
+			utterances := vcsumUtterances(meeting.Context[vcsumSegmentStart(meeting, segIndex) : end+1])
+			jobs = append(jobs, segJob{docID: docID, text: strings.Join(utterances, "\n\n")})
+		}
+	}
+	fmt.Printf("[vcsum] LLM 标题生成：%s（%s），待生成 %d 段（缓存命中 %d）\n",
+		options.LLM.Model, options.LLM.BaseURL, len(jobs), len(cache.Titles))
+	if len(jobs) == 0 {
+		return cache.Titles, nil
+	}
+
+	workers := options.LLM.Concurrency
+	if workers < 1 {
+		workers = 4
+	}
+	sem := make(chan struct{}, workers)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	failed := 0
+	for _, job := range jobs {
+		wg.Add(1)
+		go func(job segJob) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			title, err := vcsumCallLLMForTitle(options.LLM, apiKey, job.text)
+			if err != nil {
+				fmt.Printf("  [warn] %s 生成失败: %v\n", job.docID, err)
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			cache.Titles[job.docID] = title
+			mu.Unlock()
+			if len(cache.Titles)%100 == 0 {
+				mu.Lock()
+				body, err := json.MarshalIndent(cache, "", " ")
+				mu.Unlock()
+				if err == nil {
+					_ = os.WriteFile(cachePath, body, 0o644)
+				}
+				fmt.Printf("  已生成 %d 段\n", len(cache.Titles))
+			}
+		}(job)
+	}
+	wg.Wait()
+	if failed > 0 {
+		fmt.Printf("[vcsum] 生成失败段数 %d（这些段将回退中性标题，可重跑 prepare 补齐）\n", failed)
+	}
+	body, err := json.MarshalIndent(cache, "", " ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(cachePath, body, 0o644); err != nil {
+		return nil, err
+	}
+	return cache.Titles, nil
+}
+
+// vcsumCallLLMForTitle 调 OpenAI-compatible chat 接口生成一个段标题。
+func vcsumCallLLMForTitle(options vcsumLLMOptions, apiKey, text string) (string, error) {
+	prompt := "给下面这段中文会议转写起一个简短的话题标题（6~15个字，概括讨论主题，" +
+		"像目录条目一样）。只输出标题本身，不要任何解释、引号或标点结尾。\n\n" + text
+	body, err := json.Marshal(map[string]any{
+		"model": options.Model, "temperature": 0,
+		"messages": []map[string]string{{"role": "user", "content": prompt}},
+	})
+	if err != nil {
+		return "", err
+	}
+	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(options.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	client := &http.Client{Timeout: 5 * time.Minute}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		response, err := client.Do(request)
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Second)
+			continue
+		}
+		raw, err := io.ReadAll(io.LimitReader(response.Body, 4*1024*1024))
+		response.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("HTTP %d: %s", response.StatusCode, truncateForLog(string(raw), 200))
+			time.Sleep(time.Second)
+			continue
+		}
+		var decoded struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(raw, &decoded); err != nil || len(decoded.Choices) == 0 {
+			lastErr = fmt.Errorf("响应缺少 choices")
+			continue
+		}
+		title := cleanVCSumLLMTitle(decoded.Choices[0].Message.Content)
+		if title == "" {
+			lastErr = fmt.Errorf("生成标题为空")
+			continue
+		}
+		return title, nil
+	}
+	return "", lastErr
+}
+
+// cleanVCSumLLMTitle 清洗模型输出：取首行、去引号/空白/句末标点，限长 30 字。
+func cleanVCSumLLMTitle(raw string) string {
+	firstLine, _, _ := strings.Cut(raw, "\n")
+	firstLine = strings.TrimSpace(firstLine)
+	for {
+		trimmed := strings.Trim(firstLine, "\"'“”‘’《》「」 \t")
+		trimmed = strings.TrimRight(trimmed, "。.!！?？：:；;，, ")
+		if trimmed == firstLine {
+			break
+		}
+		firstLine = trimmed
+	}
+	if count := utf8.RuneCountInString(firstLine); count > 30 {
+		firstLine = string([]rune(firstLine)[:30])
+	}
+	return firstLine
 }
 
 func parseVCSumMeetings(path string) ([]vcsumMeeting, error) {

@@ -57,7 +57,11 @@ func runPrepareCommand(args []string) error {
 	seed := fs.Int64("seed", 20260824, "确定性采样 seed")
 	vcsumSource := fs.String("vcsum-source", vcsumSourceBase, "vcsum 源文件根端点（GitHub raw）")
 	vcsumQueryMeetings := fs.Int("vcsum-query-meetings", vcsumQueryMeetings, "vcsum 取前 N 场对齐会议的话题段构造 query")
-	vcsumVariant := fs.String("vcsum-variant", vcsumVariantPlain, "vcsum 语料变体：空=原文 / heading=注入人工话题标题 / heading-neutral=注入中性标题（oracle 实验）")
+	vcsumVariant := fs.String("vcsum-variant", vcsumVariantPlain, "vcsum 语料变体：空=原文 / heading=注入人工话题标题 / heading-neutral=注入中性标题 / heading-llm=注入 LLM 生成标题")
+	llmBaseURL := fs.String("llm-base-url", "http://127.0.0.1:11434/v1", "heading-llm 变体的 LLM 端点（OpenAI-compatible chat）")
+	llmModel := fs.String("llm-model", "qwen2.5:7b-instruct", "heading-llm 变体的标题生成模型")
+	llmAPIKeyFile := fs.String("llm-api-key-file", "", "LLM 端点 API key 文件（本地端点留空）")
+	llmConcurrency := fs.Int("llm-concurrency", 4, "LLM 标题生成并发数")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -86,6 +90,10 @@ func runPrepareCommand(args []string) error {
 			DataDir: target, CacheDir: cache,
 			SourceBaseURL: *vcsumSource, QueryMeetings: *vcsumQueryMeetings,
 			Variant: *vcsumVariant,
+			LLM: vcsumLLMOptions{
+				BaseURL: *llmBaseURL, Model: *llmModel,
+				APIKeyFile: *llmAPIKeyFile, Concurrency: *llmConcurrency,
+			},
 		})
 	default:
 		return fmt.Errorf("未知数据集 %q（可用：miracl-zh / vcsum）", *dataset)

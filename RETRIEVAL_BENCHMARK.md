@@ -183,6 +183,23 @@ bge-m3（本地 Ollama）与 Qwen3-Embedding-0.6B（SiliconFlow 云端）双模�
 2. **Oracle-A ≫ Oracle-B（vector +6.5pp、FTS +36.7pp）→ 收益全部来自话题标题进入 ContextHeader，与边界无关。** Oracle-A 的 track-b 追平了 track-a 基线（0.9640）：全链路损耗被「块级话题上下文头」完全消除，未命中 16→5（与 track-a 的固有 5 个一致）。
 3. **新的最大杠杆候选：块级上下文头富化（contextual retrieval）。** 在导入时为每个 chunk 生成话题描述（LLM 生成或更简单的规则方案）拼入 EmbeddingContent，不动 chunker。Oracle-A 是「人工金标标题」的上限（且 query 与标题同源于数据集标注，真实收益会折价），但 36.7pp 的 FTS 增益和 7.9pp 的向量增益说明头部空间足够大，值得做可实现版本验证。
 
+### 4.6 LLM 标题可实现版对照（2026-08-26，heading-llm）
+
+`prepare -vcsum-variant heading-llm`：1297 段标题全部由本地 `qwen2.5:7b-instruct`（温度 0、全文输入、按段 sha 缓存）生成后注入，其余与 Oracle-A 完全同构。
+
+| track-b recall@10 | 基线 | heading-llm（7B） | Oracle-A 上限 |
+|---|---|---|---|
+| vector_only | 0.8849 | 0.8849（±0） | 0.9640 |
+| fts_only | 0.2014 | 0.2446（+4.3pp） | 0.5683 |
+| hybrid | 0.8921 | 0.8921（±0） | 0.9640 |
+| hybrid_rerank | 0.9424 | 0.9281（−1.4pp） | 0.9640 |
+
+判读：
+
+- **按预注册规则（vector ≥ +4pp 才立项）：不立项。** 7B 标题只吃到 FTS 增益的约 12%（4.3/36.7pp），向量通道零增益，rerank 略降；未命中归因还出现 3 个「文档未召回」（7B 标题偶发偏题会把相似度拉向错误段）。
+- **测量学偏差必须标注**：本 benchmark 的 query 基于人工 agenda 撰写，用词锚定人工标题（query bigram 覆盖：人工标题 49.3% vs 7B 标题 16.0%）。这使 Oracle-A 偏高、heading-llm 偏低——真实用户 query 对两者中性，真实收益介于两者之间。因此该结果是**下界**，不足以关闭方向，但足以说明**生成质量/措辞对齐是瓶颈**（7B 概括内容是准的，但换一种说法，与 query 的措辞方向脱节）。
+- **后续可选**（未执行）：换更强生成模型（云端 flash 档即可）、或调整生成 prompt 让标题更贴近「提问式话题短语」；同时在产品化前需要一套与标题无关撰写的 query 集来消除本偏差。
+
 ## 5. 推荐配置
 
 基于全部实验数据，生产环境推荐如下（也是回归基线的参照配置）：
@@ -206,7 +223,7 @@ bge-m3（本地 Ollama）与 Qwen3-Embedding-0.6B（SiliconFlow 云端）双模�
 3. **FTS 停用词表扩充**：当前词表刻意保守（宁漏勿错）；扩充必须附 `make eval` 新旧对比。
 4. **数据集扩展**（T6）：接入关键词型 query 数据集（T2Retrieval 查许可证 / DuRetrieval），验证 FTS 修复对关键词场景无伤害，并覆盖第二 query 风格。
 5. ~~语义分块 oracle 实验~~ **已闭环（2026-08-26，§4.5）**：完美语义边界的上限增益 ≤±2pp，正式排除语义分块；收益主体是话题标题进 ContextHeader——新方向见第 6 条。
-6. **块级上下文头富化**（新最大杠杆候选）：导入时为 chunk 生成话题描述拼入 EmbeddingContent（LLM 生成版 Anthropic contextual retrieval，或先做零成本规则版）；oracle 上限 +7.9pp vector / +36.7pp FTS，需先做生成质量与成本的可实现版本验证。
+6. **块级上下文头富化**（§4.5/§4.6 已测两档）：oracle 上限 +7.9pp vector / +36.7pp FTS；本地 7B 生成版仅 +4.3pp FTS、vector 零增益——按预注册规则暂不立项，**瓶颈在生成措辞与 query 对齐**（benchmark 本身对 LLM 标题偏严，结果为下界）。重启该方向的前提：更强的生成模型或提问式 prompt，且先造一套与标题无关的 query 集消除偏差。
 
 ## 7. 如何复现
 
@@ -244,6 +261,7 @@ make eval-vcsum
 | `docs/eval/20260826-105110_vcsum_bge-m3/` | 第 4 轮 | VCSUM child 512 对照（参数仍非杠杆） |
 | `docs/eval/20260826-112454_vcsum-heading-neutral_bge-m3/` | 第 5 轮 | **Oracle-B：纯边界对齐（±2pp 内，语义分块排除）** |
 | `docs/eval/20260826-114250_vcsum-heading_bge-m3/` | 第 5 轮 | **Oracle-A：边界+话题标题（+7.9pp vector / +36.7pp FTS，收益在上下文头）** |
+| `docs/eval/20260826-150907_vcsum-heading-llm_bge-m3/` | 第 6 轮 | heading-llm：7B 生成标题（仅吃到 FTS 增益 12%，生成质量是瓶颈） |
 
 ## 附录 B：相关文档
 
