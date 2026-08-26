@@ -94,8 +94,8 @@ func runEval(configPath string) error {
 	fmt.Printf("可评测 query：%d / %d\n", evaluatable, len(dataset.Queries))
 
 	allTracks := []trackSpec{
-		{Name: "track-a", Label: "段落检索（单段落文档，隔离分块变量）", Docs: trackADocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: false},
-		{Name: "track-b", Label: "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）", Docs: trackBDocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: true},
+		{Name: "track-a", Label: trackALabelFor(dataset.Manifest.Dataset), Docs: trackADocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: false},
+		{Name: "track-b", Label: trackBLabelFor(dataset.Manifest.Dataset), Docs: trackBDocsOf(dataset), Slug: boot.WorkspaceSlug, LongDoc: true},
 	}
 	var tracks []trackSpec
 	for _, track := range allTracks {
@@ -181,6 +181,21 @@ type trackSpec struct {
 	Docs              []ingestDoc
 	// LongDoc 标记长文档轨道：归因用文章 id（docid '#' 前缀）识别 gold 文档。
 	LongDoc bool
+}
+
+// trackALabelFor / trackBLabelFor 按数据集给出轨道的人读描述。
+func trackALabelFor(dataset string) string {
+	if dataset == vcsumDatasetName {
+		return "话题段检索（单话题段文档，隔离分块变量）"
+	}
+	return "段落检索（单段落文档，隔离分块变量）"
+}
+
+func trackBLabelFor(dataset string) string {
+	if dataset == vcsumDatasetName {
+		return "会议转写长文档检索（无结构连续文本，覆盖分块+父子+检索全链路）"
+	}
+	return "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）"
 }
 
 type ingestDoc struct {

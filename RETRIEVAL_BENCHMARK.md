@@ -31,6 +31,8 @@
 
 **数据集**：[MIRACL-zh](https://github.com/project-miracl/miracl)（Apache-2.0，Wikipedia 中文语料，人工标注段落级相关性）。确定性子采样：**200 条真实搜索 query**，seed=20260824，manifest sha256 可复现。
 
+**第二数据集（2026-08-26）**：[VCSUM](https://github.com/hahahawu/VCSum)（MIT，239 场真实中文会议转写，人工标注话题切分）——代表**无结构连续文本**（会议/ASR 口语），测同一套系统在 chunker 弱势语料上的表现。取数据完整性对齐的 227 场为语料（话题段 1297 份/长文档 227 份），前 30 场的 139 个话题段配人工撰写 query（一段一问，`cmd/langhuan-eval/vcsum_queries.json`）。
+
 **双轨道**回答两个不同的问题：
 
 | 轨道 | 语料 | 度量目标 |
@@ -139,6 +141,26 @@ bge-m3（本地 Ollama）与 Qwen3-Embedding-0.6B（SiliconFlow 云端）双模�
 | `vector_top_k/keyword_top_k=0` 禁用单路召回 | 检索配置语义扩展 |
 | 评测 harness + 确定性数据集 + 微型离线 fixture | 工具链（`make eval` / `eval-smoke`） |
 
+### 4.4 无结构连续文本轨道（VCSUM，2026-08-26）
+
+同一套四格矩阵跑在会议转写语料上（bge-m3 + bge-reranker-v2-m3，139 query）：
+
+| 轨道 | 组合 | child=384（默认） | child=512 |
+|---|---|---|---|
+| track-a（话题段文档） | vector / hybrid / hybrid_rerank recall@10 | 0.9640 / 0.9640 / 0.9640 | 0.9712 / 0.9712 / 0.9712 |
+| track-b（会议长文档） | vector_only | 0.8849 | 0.8993 |
+| track-b | fts_only | 0.2014 | 0.2302 |
+| track-b | hybrid | 0.8921 | 0.9209 |
+| track-b | **hybrid_rerank** | **0.9424**（ndcg 0.8687） | 0.9137（ndcg 0.8294） |
+
+结论：
+
+- **无结构长文本上全链路损耗被 rerank 大幅补偿**：track-a→track-b 损耗从无 rerank 的 ~7-8pp 收窄到 2.2pp（0.9640→0.9424）。rerank 在此语料上是最大单点增益（recall +5.0pp、ndcg +8.8pp vs hybrid），印证推荐配置「rerank 必开」。
+- **未命中主因仍是「gold 文档已召回、块级匹配损耗」**（默认配置 16 个未命中里 15 个）：与分块观察（约 9% 子块横跨人工话题边界、22% 话题切换点 50 字内无块边界）方向一致——损耗在边界，不在召回。
+- **FTS 显著强于维基百科场景**（0.55 vs 0.13）：query 为话题描述型且简体一致（无繁简混杂），印证 4.2 节「FTS 弱在问句与繁简，不在关键词本身」。
+- **child 384→512 仍非杠杆**：track-b hybrid +2.9pp 但 hybrid_rerank −2.9pp，track-a +0.7pp——两组数据互相抵消，维持默认 384。
+- **语义分块的判定性实验已具备数据基础**：人工话题边界（eos_index）可直接构造 heading 注入的 oracle 对照语料，量化「边界完全对齐话题」的上限增益（见 §6）。
+
 ## 5. 推荐配置
 
 基于全部实验数据，生产环境推荐如下（也是回归基线的参照配置）：
@@ -161,6 +183,7 @@ bge-m3（本地 Ollama）与 Qwen3-Embedding-0.6B（SiliconFlow 云端）双模�
 2. **长文档的文档内章节排序**（~3% query）：重排可缓解未根治；可能方向包括段落级查询扩展或按 section 的多路召回。
 3. **FTS 停用词表扩充**：当前词表刻意保守（宁漏勿错）；扩充必须附 `make eval` 新旧对比。
 4. **数据集扩展**（T6）：接入关键词型 query 数据集（T2Retrieval 查许可证 / DuRetrieval），验证 FTS 修复对关键词场景无伤害，并覆盖第二 query 风格。
+5. **语义分块 oracle 实验**（VCSUM 已铺好数据）：用人工话题边界构造 heading 注入变体语料，对照量化「完美语义边界」的上限增益；若仍在 ±2pp 内即可正式排除语义分块投入。
 
 ## 7. 如何复现
 
@@ -176,6 +199,10 @@ make eval
 
 # 无网络环境冒烟（mock embedding + 入库微型数据集；指标无语义意义）
 make eval-smoke
+
+# 会议转写轨道（无结构连续文本；语料约 30MB，query 集为仓库内人工资产）
+cp eval.config.yaml eval.config.vcsum.yaml   # 把 dataset.dir 改为 .eval-data/vcsum
+make eval-vcsum
 ```
 
 报告输出于 `docs/eval/<时间戳>_<数据集>_<模型>/`（`report.md` + `metrics.json`）。对比两次 run：`diff` 两份 metrics.json，指纹一致时指标差异才可归因于代码/配置变化。
@@ -190,6 +217,8 @@ make eval-smoke
 | `docs/eval/20260825-094908_miracl-zh_bge-m3/` | **第 2 轮** | **FTS 修复后完整基线（四格矩阵 + 归因），推荐配置的数据来源** |
 | `docs/eval/20260825-101652_miracl-zh_bge-m3/` | 第 3 轮 | E2：parent 8192（阴性结果） |
 | `docs/eval/20260825-102820_miracl-zh_bge-m3/` | 第 3 轮 | E3：child 256（微弱正结果） |
+| `docs/eval/20260826-101543_vcsum_bge-m3/` | 第 4 轮 | **VCSUM 无结构语料基线（默认 384）** |
+| `docs/eval/20260826-105110_vcsum_bge-m3/` | 第 4 轮 | VCSUM child 512 对照（参数仍非杠杆） |
 
 ## 附录 B：相关文档
 

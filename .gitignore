@@ -22,3 +22,4 @@ deploy.yaml
 # 离线检索评测（langhuan-eval）：数据集缓存与本地配置不进 git，报告可提交
 .eval-data/
 eval.config.yaml
+eval.config.vcsum*.yaml

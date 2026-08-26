@@ -1,4 +1,4 @@
-.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build eval eval-prepare eval-smoke
+.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build eval eval-prepare eval-smoke eval-vcsum eval-vcsum-prepare
 
 # 测试专用 PostgreSQL 镜像（pgvector + zhparser，见 docker/postgres-test/Dockerfile）
 TEST_PG_IMAGE ?= langhuan-test-postgres:pg17
@@ -56,6 +56,15 @@ eval:
 
 eval-prepare:
 	go run ./cmd/langhuan-eval prepare
+
+# VCSUM 会议转写评测（无结构连续文本轨道；query 集为仓库内人工资产）
+eval-vcsum:
+	@test -f eval.config.vcsum.yaml || { echo "缺少 eval.config.vcsum.yaml（复制 eval.config.yaml 并把 dataset.dir 改为 .eval-data/vcsum）" >&2; exit 1; }
+	@test -f .eval-data/vcsum/manifest.json || $(MAKE) eval-vcsum-prepare
+	go run ./cmd/langhuan-eval run -config eval.config.vcsum.yaml
+
+eval-vcsum-prepare:
+	go run ./cmd/langhuan-eval prepare -dataset vcsum
 
 # 离线冒烟：本地确定性 mock embedding + 入库微型数据集（无 HF/网络依赖），验证评测全链路（指标无语义意义）
 eval-smoke:

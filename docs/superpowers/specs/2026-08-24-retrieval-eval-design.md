@@ -54,6 +54,20 @@
 - **`docid` 格式为 `文章ID#段落号`（如 `7#0`、`39#5`），同前缀 passage 来自同一篇 Wikipedia 文章**——这是长文档轨道（6.2）聚合的依据。
 - qrels 人工标注 passage 级相关性，含 train/dev split；评测使用 dev split。
 
+### 4.3 VCSUM（2026-08-26 新增，无结构连续文本轨道）
+
+VCSUM（`github.com/hahahawu/VCSum`，ACL 2023 Findings，MIT）是 239 场真实中文会议转写（230+ 小时，B 站视频 ASR），带**人工标注的话题切分**（`eos_index`，每段闭区间结束下标）与段级标题/摘要。接入动机：MIRACL-zh 语料是结构化维基百科，heading 策略的主场；VCSUM 代表"会议转写/ASR 口语"这类**无结构连续长文本**，是分块策略（heuristic/滑窗兜底）的弱势场景，用于回答"当前 chunker 在此类语料上的真实损耗"与"语义分块是否值得投入"。
+
+关键事实与构造规则（已核实）：
+
+- 原始文件（GitHub raw，`prepare -dataset vcsum` 自动下载约 30MB 到 `.eval-data/cache/vcsum/`）：`overall_context.txt`（每行一场会议：`id`/`eos_index`/`context`（逐 utterance 句子列表）/`speaker`）与 `short_{train,dev,test}.txt`（每行一个话题段：`id` 形如 `13_0`、`agenda` 段标题、`discussion` 段摘要、`context` 段内 utterance）。
+- **数据完整性门槛**：只有 `eos_index` 切分与 short_* 段记录逐 utterance 完全一致的会议进入语料（实测 227/239；其余 12 场整场剔除，不做修补）。
+- Track A：每个**人工话题段**一份短文档（docid `vcsum-m<会议>#<段>`，标题用 `agenda`），隔离分块变量；
+  Track B：每场**完整会议**一份长文档（docid `vcsum-m<会议>`，utterance 为段落），覆盖分块+父子+检索全链路。
+- query 集：**仓库内人工撰写资产** `cmd/langhuan-eval/vcsum_queries.json`（一段一问，基于该段 `agenda`+`discussion` 改写为自然问句；取前 30 场对齐会议的 139 个话题段）。query 是 benchmark 定义的一部分，修改需在 PR 中说明理由。
+- gold 判定与 MIRACL 轨道一致：检索结果（track-b 为父块+命中子块拼接）与 gold 段文本的字符 bigram 包含率 ≥ 阈值。
+- 入口：`make eval-vcsum`（配置 `eval.config.vcsum*.yaml`，本地文件不进 git）。
+
 ## 5. 数据集设计
 
 ### 5.1 双轨道

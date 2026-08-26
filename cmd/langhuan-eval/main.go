@@ -45,6 +45,7 @@ func run(args []string) error {
 func runPrepareCommand(args []string) error {
 	fs := flag.NewFlagSet("prepare", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	dataset := fs.String("dataset", "miracl-zh", "数据集：miracl-zh（维基百科段落/长文）或 vcsum（中文会议转写，无结构连续文本）")
 	dataDir := fs.String("data-dir", ".eval-data", "数据集根目录（相对仓库根）")
 	cacheDir := fs.String("cache-dir", ".eval-data/cache", "原始文件共享缓存目录（相对仓库根；不同数据集共用，避免重复下载）")
 	mirror := fs.String("mirror", "https://hf-mirror.com", "HuggingFace 镜像端点")
@@ -54,6 +55,8 @@ func runPrepareCommand(args []string) error {
 	distractorArticles := fs.Int("distractor-articles", 300, "Track B 干扰文章数")
 	maxPassages := fs.Int("max-passages", 40, "Track B 单篇文章段落截断上限")
 	seed := fs.Int64("seed", 20260824, "确定性采样 seed")
+	vcsumSource := fs.String("vcsum-source", vcsumSourceBase, "vcsum 源文件根端点（GitHub raw）")
+	vcsumQueryMeetings := fs.Int("vcsum-query-meetings", vcsumQueryMeetings, "vcsum 取前 N 场对齐会议的话题段构造 query")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -69,12 +72,22 @@ func runPrepareCommand(args []string) error {
 	if !filepath.IsAbs(cache) {
 		cache = filepath.Join(repoRoot, cache)
 	}
-	return prepareMIRACLChinese(prepareOptions{
-		DataDir: target, CacheDir: cache,
-		Mirror: *mirror, Fallback: *fallback,
-		Queries: *queries, Distractors: *distractors,
-		DistractorArticles: *distractorArticles, MaxPassagesPerArticle: *maxPassages, Seed: *seed,
-	})
+	switch *dataset {
+	case "miracl-zh", "": // 缺省兼容历史用法
+		return prepareMIRACLChinese(prepareOptions{
+			DataDir: target, CacheDir: cache,
+			Mirror: *mirror, Fallback: *fallback,
+			Queries: *queries, Distractors: *distractors,
+			DistractorArticles: *distractorArticles, MaxPassagesPerArticle: *maxPassages, Seed: *seed,
+		})
+	case "vcsum":
+		return prepareVCSUM(vcsumPrepareOptions{
+			DataDir: target, CacheDir: cache,
+			SourceBaseURL: *vcsumSource, QueryMeetings: *vcsumQueryMeetings,
+		})
+	default:
+		return fmt.Errorf("未知数据集 %q（可用：miracl-zh / vcsum）", *dataset)
+	}
 }
 
 func runRunCommand(args []string) error {
@@ -97,6 +110,7 @@ func usage() {
 
 常用示例：
   go run ./cmd/langhuan-eval prepare            # 首次约下载 730MB 语料（走镜像）
+  go run ./cmd/langhuan-eval prepare -dataset vcsum   # 会议转写语料（约 30MB）
   go run ./cmd/langhuan-eval run                # 使用 eval.config.yaml（或默认值）
   make eval                                     # 等价于上面两步
 
