@@ -185,14 +185,14 @@ type trackSpec struct {
 
 // trackALabelFor / trackBLabelFor 按数据集给出轨道的人读描述。
 func trackALabelFor(dataset string) string {
-	if dataset == vcsumDatasetName {
+	if strings.HasPrefix(dataset, vcsumDatasetName) {
 		return "话题段检索（单话题段文档，隔离分块变量）"
 	}
 	return "段落检索（单段落文档，隔离分块变量）"
 }
 
 func trackBLabelFor(dataset string) string {
-	if dataset == vcsumDatasetName {
+	if strings.HasPrefix(dataset, vcsumDatasetName) {
 		return "会议转写长文档检索（无结构连续文本，覆盖分块+父子+检索全链路）"
 	}
 	return "长文档检索（Wikipedia 文章聚合，覆盖分块+父子+检索全链路）"

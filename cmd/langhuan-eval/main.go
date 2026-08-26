@@ -57,6 +57,7 @@ func runPrepareCommand(args []string) error {
 	seed := fs.Int64("seed", 20260824, "确定性采样 seed")
 	vcsumSource := fs.String("vcsum-source", vcsumSourceBase, "vcsum 源文件根端点（GitHub raw）")
 	vcsumQueryMeetings := fs.Int("vcsum-query-meetings", vcsumQueryMeetings, "vcsum 取前 N 场对齐会议的话题段构造 query")
+	vcsumVariant := fs.String("vcsum-variant", vcsumVariantPlain, "vcsum 语料变体：空=原文 / heading=注入人工话题标题 / heading-neutral=注入中性标题（oracle 实验）")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -84,6 +85,7 @@ func runPrepareCommand(args []string) error {
 		return prepareVCSUM(vcsumPrepareOptions{
 			DataDir: target, CacheDir: cache,
 			SourceBaseURL: *vcsumSource, QueryMeetings: *vcsumQueryMeetings,
+			Variant: *vcsumVariant,
 		})
 	default:
 		return fmt.Errorf("未知数据集 %q（可用：miracl-zh / vcsum）", *dataset)

@@ -31,6 +31,17 @@ const (
 	vcsumQueryMeetings       = 30
 )
 
+// vcsum 语料变体（oracle 实验，RETRIEVAL_BENCHMARK.md §6）：
+//
+//	""               原文转写（基线）
+//	heading          每个话题段首注入人工话题标题（边界对齐 + 标题进上下文头）
+//	heading-neutral  注入无信息量标题（仅隔离「边界对齐」单一变量）
+const (
+	vcsumVariantPlain          = ""
+	vcsumVariantHeading        = "heading"
+	vcsumVariantHeadingNeutral = "heading-neutral"
+)
+
 //go:embed vcsum_queries.json
 var vcsumQueryAsset []byte
 
@@ -39,6 +50,30 @@ type vcsumPrepareOptions struct {
 	CacheDir      string
 	SourceBaseURL string
 	QueryMeetings int
+	Variant       string
+}
+
+// vcsumDatasetDirName 返回变体对应的数据集目录与 manifest 名称。
+func vcsumDatasetDirName(variant string) string {
+	if variant == vcsumVariantPlain {
+		return vcsumDatasetName
+	}
+	return vcsumDatasetName + "-" + variant
+}
+
+// vcsumHeadingPassage 返回变体在段首注入的标题 passage；非 heading 变体不注入。
+func vcsumHeadingPassage(variant string, record vcsumSegment, segIndex int) string {
+	switch variant {
+	case vcsumVariantHeading:
+		title := strings.TrimSpace(record.Agenda)
+		if title == "" {
+			title = fmt.Sprintf("话题段%d", segIndex)
+		}
+		return "## " + title
+	case vcsumVariantHeadingNeutral:
+		return fmt.Sprintf("## 话题段%d", segIndex)
+	}
+	return ""
 }
 
 // vcsumMeeting 是 overall_context.txt 的一行。
@@ -66,7 +101,12 @@ func prepareVCSUM(options vcsumPrepareOptions) error {
 	if options.QueryMeetings <= 0 {
 		options.QueryMeetings = vcsumQueryMeetings
 	}
-	datasetDir := filepath.Join(options.DataDir, vcsumDatasetName)
+	switch options.Variant {
+	case vcsumVariantPlain, vcsumVariantHeading, vcsumVariantHeadingNeutral:
+	default:
+		return fmt.Errorf("未知 vcsum 变体 %q（可用：空 / heading / heading-neutral）", options.Variant)
+	}
+	datasetDir := filepath.Join(options.DataDir, vcsumDatasetDirName(options.Variant))
 	if err := os.MkdirAll(datasetDir, 0o755); err != nil {
 		return err
 	}
@@ -121,7 +161,7 @@ func prepareVCSUM(options vcsumPrepareOptions) error {
 		trackB = append(trackB, trackBDoc{
 			DocID:    vcsumMeetingDocID(meeting.ID),
 			Title:    "会议" + meeting.ID + "转写",
-			Passages: utterances,
+			Passages: vcsumTrackBPassages(options.Variant, meeting, utterances, segments[meeting.ID]),
 		})
 		if index < options.QueryMeetings {
 			queryMeetings[meeting.ID] = struct{}{}
@@ -162,10 +202,13 @@ func prepareVCSUM(options vcsumPrepareOptions) error {
 	}
 
 	m := manifest{
-		Dataset: vcsumDatasetName, Seed: vcsumSeed,
+		Dataset: vcsumDatasetDirName(options.Variant), Seed: vcsumSeed,
 		QueryCount: len(queries), TrackACorpusSize: len(trackA), TrackBCorpusSize: len(trackB),
 		SourceFiles: sourceSums,
 		GeneratedBy: "langhuan-eval vcsum（query 集为仓库内人工撰写资产 vcsum_queries.json，一段一问）",
+	}
+	if options.Variant != vcsumVariantPlain {
+		m.GeneratedBy += "；变体 " + options.Variant + "（话题段首注入标题，oracle 实验）"
 	}
 	if err := writeJSONL(filepath.Join(datasetDir, "queries.jsonl"), queries); err != nil {
 		return err
@@ -217,6 +260,23 @@ func vcsumUtterances(context [][]string) []string {
 		utterances[index] = strings.Join(sentences, "\n")
 	}
 	return utterances
+}
+
+// vcsumTrackBPassages 组装 track-b 长文档段落：heading 变体在每个话题段首
+// 注入标题 passage（markdown 解析器识别为 heading 块 → chunker 沿话题边界
+// 切分并把标题写入各块 HeadingPath/ContextHeader）。
+func vcsumTrackBPassages(variant string, meeting vcsumMeeting, utterances []string, records map[int]vcsumSegment) []string {
+	if variant == vcsumVariantPlain {
+		return utterances
+	}
+	passages := make([]string, 0, len(utterances)+len(meeting.EOSIndex))
+	for segIndex, end := range meeting.EOSIndex {
+		if heading := vcsumHeadingPassage(variant, records[segIndex], segIndex); heading != "" {
+			passages = append(passages, heading)
+		}
+		passages = append(passages, utterances[vcsumSegmentStart(meeting, segIndex):end+1]...)
+	}
+	return passages
 }
 
 func parseVCSumMeetings(path string) ([]vcsumMeeting, error) {

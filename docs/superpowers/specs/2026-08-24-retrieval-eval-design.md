@@ -67,6 +67,7 @@ VCSUM（`github.com/hahahawu/VCSum`，ACL 2023 Findings，MIT）是 239 场真�
 - query 集：**仓库内人工撰写资产** `cmd/langhuan-eval/vcsum_queries.json`（一段一问，基于该段 `agenda`+`discussion` 改写为自然问句；取前 30 场对齐会议的 139 个话题段）。query 是 benchmark 定义的一部分，修改需在 PR 中说明理由。
 - gold 判定与 MIRACL 轨道一致：检索结果（track-b 为父块+命中子块拼接）与 gold 段文本的字符 bigram 包含率 ≥ 阈值。
 - 入口：`make eval-vcsum`（配置 `eval.config.vcsum*.yaml`，本地文件不进 git）。
+- **变体（oracle 实验）**：`prepare -dataset vcsum -vcsum-variant heading|heading-neutral` 在话题段首注入标题（真实 agenda / 中性 `话题段N`），产物写入 `.eval-data/vcsum-heading[-neutral]/`，用于隔离「边界对齐」与「标题进 ContextHeader」两个变量（结果见 RETRIEVAL_BENCHMARK.md §4.5：边界 ±2pp 内，收益在上下文头）。
 
 ## 5. 数据集设计
 

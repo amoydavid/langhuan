@@ -100,6 +100,54 @@ func TestVCSumUtterancesJoinsSentences(t *testing.T) {
 	}
 }
 
+func TestVCSumTrackBPassagesHeadingVariants(t *testing.T) {
+	meeting := vcsumMeeting{
+		ID:       "1",
+		EOSIndex: []int{1, 2},
+		Context:  [][]string{{"a1"}, {"b1"}, {"c1"}},
+	}
+	records := map[int]vcsumSegment{0: {Agenda: "议题甲"}, 1: {Agenda: "议题乙"}}
+	utterances := vcsumUtterances(meeting.Context)
+
+	plain := vcsumTrackBPassages(vcsumVariantPlain, meeting, utterances, records)
+	if len(plain) != 3 {
+		t.Fatalf("plain passages = %v, want 原样 3 段", plain)
+	}
+
+	neutral := vcsumTrackBPassages(vcsumVariantHeadingNeutral, meeting, utterances, records)
+	want := []string{"## 话题段0", "a1", "b1", "## 话题段1", "c1"}
+	if len(neutral) != len(want) {
+		t.Fatalf("neutral len = %d, want %d", len(neutral), len(want))
+	}
+	for index := range want {
+		if neutral[index] != want[index] {
+			t.Fatalf("neutral[%d] = %q, want %q", index, neutral[index], want[index])
+		}
+	}
+
+	heading := vcsumTrackBPassages(vcsumVariantHeading, meeting, utterances, records)
+	if heading[0] != "## 议题甲" || heading[3] != "## 议题乙" {
+		t.Fatalf("heading passages = %v", heading)
+	}
+	// agenda 为空的段回退中性标题，保证注入不缺段。
+	emptyAgenda := map[int]vcsumSegment{0: {Agenda: ""}, 1: {Agenda: "议题乙"}}
+	if got := vcsumHeadingPassage(vcsumVariantHeading, emptyAgenda[0], 0); got != "## 话题段0" {
+		t.Fatalf("空 agenda 回退 = %q", got)
+	}
+}
+
+func TestVCSumDatasetDirName(t *testing.T) {
+	if got := vcsumDatasetDirName(vcsumVariantPlain); got != "vcsum" {
+		t.Fatalf("plain dir = %q", got)
+	}
+	if got := vcsumDatasetDirName(vcsumVariantHeading); got != "vcsum-heading" {
+		t.Fatalf("heading dir = %q", got)
+	}
+	if got := vcsumDatasetDirName(vcsumVariantHeadingNeutral); got != "vcsum-heading-neutral" {
+		t.Fatalf("neutral dir = %q", got)
+	}
+}
+
 func TestVCSumQueryAssetCoversOnlyQueryMeetings(t *testing.T) {
 	var asset []vcsumQueryAssetItem
 	if err := json.Unmarshal(vcsumQueryAsset, &asset); err != nil {
