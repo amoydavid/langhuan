@@ -129,12 +129,14 @@ REST 已有等价端点（console 在用：知识库列表/文档列表/文档�
 新增工具（typed tool + `withRawInputSchema/withRawOutputSchema` 现有模式）：
 
 ```text
-knowledge_base_list  ->  { knowledge_bases: [{id, name, description, document_count, updated_at}] }
+knowledge_base_list  ->  { knowledge_bases: [{id, name, description, updated_at}] }
 document_list        ->  { knowledge_base_id, page?, page_size? }
-                          ->  { documents: [{id, name, kind, status, error_message, updated_at}], page, page_size, has_more }
+                          ->  { documents: [{id, title, kind, status, error_message, updated_at}], page, page_size, has_more }
 document_get         ->  { knowledge_base_id, document_id, max_chars? }
-                          ->  { id, name, kind, status, updated_at, truncated, content, outline: [{path: [], anchor}] }
+                          ->  { id, title, kind, status, updated_at, truncated, content, outline: [{path: [], line}] }
 ```
+
+实现期校准（2026-08-26）：`knowledge_base_list` 未携带 `document_count`（避免逐库计数查询；agent 需要规模时用 document_list）；`outline` 由归一化 Markdown 的标题行扫描生成而非直接读 ParseManifest（信息等价——manifest 的 heading 块本就来自该 Markdown，且带代码围栏状态跟踪避免围栏内 `#` 行误判）。
 
 全部标注 `readOnlyHint`。鉴权沿用现有模式：workspace 隔离 + API Key 绑定知识库收敛（`ResourceAccess`）+ 对应 scope。
 
