@@ -492,6 +492,32 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 - 版本号、二进制、Web Console、MCP server、文档和可观测信息报告同一个 release version。
 - 仓库明确记录从 v1.0.0 开始的数据兼容承诺和后续迁移准入规则。
 
+### v1.2.0 - 检索质量闭环与 MCP Agent 工效（已完成）
+
+目标：用评测裁决关闭检索侧的开放问题，把开发重心转向检索的消费工效——为经 MCP 使用琅嬛的 agent 提供渐进披露的检索结果与环境发现能力。
+
+**检索评测扩展与四项方向裁决（工程基础设施，零产品代码）**：
+
+- 新增 VCSUM 无结构连续文本评测轨道（中文会议转写，MIT；227 场数据完整性对齐，139 条人工 query 一段一问入库为可复现资产）：`make eval-vcsum`。基线确认无结构长文档上 hybrid+rerank recall@10=0.9424，rerank 把全链路损耗从 ~8pp 收窄到 2.2pp。
+- 语义分块 oracle 实验（heading 注入 A/B 变体）：完美语义边界的上限增益 ≤±2pp，**语义分块方向正式排除**；收益全部来自话题标题进入上下文头（+7.9pp vector / +36.7pp FTS）。
+- LLM 上下文头生成两档对照（本地 7B / DeepSeek-V4-Flash）：模型跨档结果不动（vector +0~0.7pp），瓶颈是摘要措辞与提问措辞的错位，按预注册规则不立项。
+- 繁简归一化实测（miracl simplified 变体，OpenCC 单字表）：hybrid/rerank 零收益，方向关闭；长文档轨剩余落差 100% 归属文档内章节竞争。
+- 全部 10 份评测报告带指纹归档于 `docs/eval/`，演进与判读记录在 `RETRIEVAL_BENCHMARK.md` §4.4–§4.7。
+
+**MCP Agent 工效（主特性）**：
+
+- `knowledge_search`（REST 与 MCP）新增响应档位 `detail: full|lean`（均默认 full，lean 显式 opt-in）：lean 档每个命中返回最佳命中子块正文（`evidence`）并以父块 `chunk_id` 作钻取句柄，父块正文置空；两档行粒度与排序语义一致，投影在最终排序截断之后执行。
+- **破坏性变更**：`matched_children[].content` 从 REST/MCP 契约移除（构造性冗余——子块正文是父块正文的子串）；元数据（chunk_id/anchor/通道分数）保留。需要子块正文的调用方改用 `detail=lean` 的 `evidence` 或 `chunk_get`。
+- MCP 工具 7 → 10：新增只读发现/阅读工具 `knowledge_base_list`、`document_list`（分页）、`document_get`（归一化全文 + 章节大纲 + `max_chars` 截断），复用现有 service，无 schema 迁移。
+
+验收标准（全部满足）：
+
+1. 同一 query 两档 detail 返回相同 chunk_id 顺序与分数（投影不改排序，有断言）。
+2. lean top10 序列化 ≤15000 字符且 ≤full 的 1/3（实测 13.7k vs 41k+）。
+3. `matched_children[].content` 不出现在任何序列化输出（REST/MCP/eval 客户端，有断言）。
+4. langhuan-eval 命中判定恒等：带/不带子块正文的排名逐位一致（表驱动单测对照 v1.1.x 行为）。
+5. `go test ./...`（50 包）、`make test-integration`（51 包，临时 docker PG）、web `pnpm check/test/build`（333 测试）全绿。
+
 ## 暂不进入首版的能力
 
 - Chat/Agent/回答生成。
@@ -504,7 +530,7 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 ## 未来方向
 
 - 接入 PostgreSQL AGE 做图索引和图查询。
-- 增加外部写入 entities/relations 的 API。
+- ~~增加外部写入 entities/relations 的 API。~~ 2026-08-26 评估后搁置：外部写入破坏「索引是文档的确定性函数」不变量（Generation 快照/确定性重放的根基）；重开条件为真实用户对图查询有明确拉力且接受系统自有抽取阶段。
 - ~~增加 rerank adapter。~~ 已于当前版本交付：`rerank_compatible` Provider、Generation 重排快照、单库/多库重排与结构化日志。
 - 增加更多 parser adapter。
 - 扩展 workspace 权限模型，例如资源级权限或更细粒度的 token scope。

@@ -270,6 +270,10 @@ cp eval.config.example.yaml eval.config.yaml   # 一次性：配置真实 Embedd
 make eval-prepare
 make eval
 
+# 会议转写轨道（无结构连续文本；语料约 30MB，query 集为仓库内人工资产）
+cp eval.config.yaml eval.config.vcsum.yaml   # 把 dataset.dir 改为 .eval-data/vcsum
+make eval-vcsum
+
 # 离线冒烟（无真实 API 环境验证评测全链路；本地 mock embedding，指标无语义意义）
 make eval-smoke
 ```
