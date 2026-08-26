@@ -71,9 +71,9 @@ REST 已有等价端点（console 在用：知识库列表/文档列表/文档�
 - `document_get`：文档详情 + 全文（`NormalizedMarkdown`，`max_chars` 上限默认 50000，超出截断并标记 `truncated`）+ `outline`。scope：`documents:read`。
 - `outline` 从 `ParseManifest` 的 heading 块序列化生成：`[{path: [标题路径], anchor}]`；无标题结构的文档（如纯 TXT）`outline` 为空数组，前端/agent 以 `content` 为准。第一版不做 大纲→chunk 映射（钻取路径仍是 search → chunk_get）。
 
-### D6：评测客户端同步，指标必须逐位不变
+### D6：评测客户端同步（单测证明，不跑评测）
 
-`cmd/langhuan-eval/run.go` 的 `ranksOf` 当前把 `item.Content + MatchedChildren[].Content` 拼接做重叠判定。子块正文 ⊆ 父块正文 ⇒ 移除后 bigram 集合不变 ⇒ 指标数学上不变。实现时删除该拼接，并以**同指纹重跑 `make eval`（miracl）与 `make eval-vcsum` 双数据集 metrics.json 逐位一致**作为回归验收。
+`cmd/langhuan-eval/run.go` 的 `ranksOf` 当前把 `item.Content + MatchedChildren[].Content` 拼接做重叠判定。子块正文 ⊆ 父块正文 ⇒ 移除后 bigram 集合不变 ⇒ 指标数学上不变。实现时删除该拼接，**以 `ranksOf` 的表驱动单测证明恒等**（同一批结果，带/不带子块正文的命中排名完全一致）——纯函数测试，秒级。本特性不触碰 chunker/RRF/默认检索参数/embedding 链路，按 AGENTS.md 评测回归规则在 PR 中标注"不适用"；若实现过程中检索内部逻辑被意外改动（超出投影层），必须回到本节补跑 `make eval` 对比。
 
 ### D7：已否决的备选
 
@@ -162,8 +162,9 @@ document_get         ->  { knowledge_base_id, document_id, max_chars? }
 
 1. **单元**：lean 投影（最佳子块选择按 score、同分按 chunk_id 稳序）、`MatchedChild` 序列化不含 content、outline 生成（有标题/无标题文档）。
 2. **集成（临时 docker PG，遵循 5.10）**：detail 两档 E2E；发现类工具的 workspace 隔离与 API Key 绑定收敛；`document_get` 截断。
-3. **回归（硬验收）**：
-   - `make eval` 与 `make eval-vcsum` 在本变更前后同指纹 metrics.json **逐位一致**（D6）；
+3. **回归（快验收，不跑评测）**：
+   - `ranksOf` 表驱动单测：带/不带子块正文的命中排名逐位一致（D6，秒级）；
+   - 集成断言：同一 query 的 `detail=full` 与 `detail=lean` 返回相同的 chunk_id 顺序与分数（投影不改排序）；
    - 负载断言：lean top10 响应体 ≤ 10,000 字符（现状 full 约 45,000）。
 4. **前端**：`pnpm check` / `pnpm test` / `pnpm build` 通过；检索测试视图快照更新。
 5. **MCP smoke**：工具注册数 7 → 10；schema 校验通过。
