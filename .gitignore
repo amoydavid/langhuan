@@ -23,3 +23,4 @@ deploy.yaml
 .eval-data/
 eval.config.yaml
 eval.config.vcsum*.yaml
+eval.config.miracl-simplified.yaml

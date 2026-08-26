@@ -200,6 +200,27 @@ bge-m3（本地 Ollama）与 Qwen3-Embedding-0.6B（SiliconFlow 云端）双模�
 - **测量学偏差必须标注**：本 benchmark 的 query 基于人工 agenda 撰写，用词锚定人工标题（query bigram 覆盖：人工标题 49.3% vs 7B 标题 16.0%）。这使 Oracle-A 偏高、heading-llm 偏低——真实用户 query 对两者中性，真实收益介于两者之间。因此该结果是**下界**，不足以关闭方向，但足以说明**生成质量/措辞对齐是瓶颈**（7B 概括内容是准的，但换一种说法，与 query 的措辞方向脱节）。
 - **后续可选**（未执行）：换更强生成模型（云端 flash 档即可）、或调整生成 prompt 让标题更贴近「提问式话题短语」；同时在产品化前需要一套与标题无关撰写的 query 集来消除本偏差。
 
+### 4.7 繁简归一化实验（2026-08-26，已闭环：无收益）
+
+`prepare -dataset miracl-zh -miracl-variant simplified`：语料按 OpenCC 单字表转简体（36% gold 段落为繁体、query 全简体），采样与基线逐项一致（200/5298/709），模拟「入库侧繁简归一化」的全收益。
+
+| recall@10 | 基线 | simplified | Δ |
+|---|---|---|---|
+| track-a vector | 0.9799 | 0.9781 | −0.2pp |
+| track-a fts | 0.1278 | 0.1601 | +3.2pp |
+| track-a hybrid | 0.9826 | 0.9775 | −0.5pp |
+| track-b vector | 0.7918 | 0.7866 | −0.5pp |
+| track-b fts | 0.1198 | 0.1727 | +5.3pp |
+| track-b hybrid | 0.7919 | 0.7876 | −0.4pp |
+| track-b hybrid_rerank | 0.7938 | 0.7930 | −0.1pp |
+
+判读：
+
+- **产品通道（hybrid / hybrid+rerank）零收益**——vector 通道已把繁简语义匹配解决（bge-m3 双脚本训练，繁/简同义在嵌入空间内距离近），FTS 变强的那部分与 vector 完全重叠，RRF 融合下边际贡献 ≈ 0。
+- **FTS 仅 0.13→0.16/0.17**：归一化只修好「词形不可达」一层，问句型 query 上 AND 语义的根本弱势仍在——FTS 弱势的大头不是繁简。
+- **track-b 的 6 个未命中（5 章节竞争 + 1 未召回）在归一化后纹丝不动**：长文档轨的 ~19pp 落差至此 100% 归属于文档内章节竞争。
+- **结论：繁简归一化从待办中关闭**（对当前 query 分布无产品收益，且向量化输入本就不需要）。保留的重估条件：出现关键词型 query 评测轨道（T2Retrieval/DuRetrieval 类）或真实繁体语料用户时再开——那类场景 FTS 是主场引擎，归一化是让 hybrid 保有第二引擎的保险。
+
 ## 5. 推荐配置
 
 基于全部实验数据，生产环境推荐如下（也是回归基线的参照配置）：
@@ -212,13 +233,13 @@ bge-m3（本地 Ollama）与 Qwen3-Embedding-0.6B（SiliconFlow 云端）双模�
 | 分块 | **维持默认**：auto 父子，父 4096 / 子 384 | E2/E3 实验显示参数仅 ±0.5pp，不足以改默认合同；子块 256 为可选微调项 |
 | 候选深度 | 每路 top_k=50、final_top_k=10 | 全部实验的标准配置，与推荐 rerank candidate_top_k 对齐 |
 | Embedding 批大小 | 32 | 评测全链路使用值 |
-| 繁体为主的语料 | 导入前转简体（暂无内建归一化） | 繁简混杂是已量化的未命中主因之一 |
+| 繁体为主的语料 | 无需预处理（语义检索由 embedding 兜住；§4.7 实测归一化对 hybrid 无收益） | 已实测关闭；关键词型 query 场景除外 |
 
 > 独立部署（standalone SQLite）与生产部署（PostgreSQL+zhparser）的检索语义一致；本报告数据采集自 standalone 实例（FTS 走 gse 分词），PG 侧 FTS 行为依赖 zhparser，改停用词表或分词相关代码时建议两方言各跑一次 `make eval`。
 
 ## 6. 已知短板与改进路线（按数据支撑的优先级）
 
-1. **繁简归一化**（最大剩余杠杆）：索引与查询侧统一转简体后进 FTS/匹配，直接针对归因出的未命中主因。
+1. ~~繁简归一化~~ **已测关闭（2026-08-26，§4.7）**：产品通道零收益（vector 已解决语义侧），track-b 未命中纹丝不动——19pp 落差 100% 归属章节竞争。重估条件：关键词型 query 轨道或真实繁体语料。
 2. **长文档的文档内章节排序**（~3% query）：重排可缓解未根治；可能方向包括段落级查询扩展或按 section 的多路召回。
 3. **FTS 停用词表扩充**：当前词表刻意保守（宁漏勿错）；扩充必须附 `make eval` 新旧对比。
 4. **数据集扩展**（T6）：接入关键词型 query 数据集（T2Retrieval 查许可证 / DuRetrieval），验证 FTS 修复对关键词场景无伤害，并覆盖第二 query 风格。
@@ -263,6 +284,7 @@ make eval-vcsum
 | `docs/eval/20260826-114250_vcsum-heading_bge-m3/` | 第 5 轮 | **Oracle-A：边界+话题标题（+7.9pp vector / +36.7pp FTS，收益在上下文头）** |
 | `docs/eval/20260826-150907_vcsum-heading-llm_bge-m3/` | 第 6 轮 | heading-llm：7B 生成标题（仅吃到 FTS 增益 12%，生成质量是瓶颈） |
 | `docs/eval/20260826-161058_vcsum-heading-llm_bge-m3/` | 第 6 轮 | heading-llm：DeepSeek-V4-Flash 生成标题（vector +0.7pp，模型跨档而结果几乎不动，瓶颈=措辞错位） |
+| `docs/eval/20260826-204939_miracl-zh-simplified_bge-m3/` | 第 7 轮 | **繁简归一化：产品通道零收益，方向关闭** |
 
 ## 附录 B：相关文档
 

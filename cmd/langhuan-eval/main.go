@@ -55,6 +55,7 @@ func runPrepareCommand(args []string) error {
 	distractorArticles := fs.Int("distractor-articles", 300, "Track B 干扰文章数")
 	maxPassages := fs.Int("max-passages", 40, "Track B 单篇文章段落截断上限")
 	seed := fs.Int64("seed", 20260824, "确定性采样 seed")
+	miraclVariant := fs.String("miracl-variant", "", "miracl-zh 语料变体：空=原文 / simplified=语料转简体（归一化收益测量）")
 	vcsumSource := fs.String("vcsum-source", vcsumSourceBase, "vcsum 源文件根端点（GitHub raw）")
 	vcsumQueryMeetings := fs.Int("vcsum-query-meetings", vcsumQueryMeetings, "vcsum 取前 N 场对齐会议的话题段构造 query")
 	vcsumVariant := fs.String("vcsum-variant", vcsumVariantPlain, "vcsum 语料变体：空=原文 / heading=注入人工话题标题 / heading-neutral=注入中性标题 / heading-llm=注入 LLM 生成标题")
@@ -84,6 +85,7 @@ func runPrepareCommand(args []string) error {
 			Mirror: *mirror, Fallback: *fallback,
 			Queries: *queries, Distractors: *distractors,
 			DistractorArticles: *distractorArticles, MaxPassagesPerArticle: *maxPassages, Seed: *seed,
+			Variant: *miraclVariant,
 		})
 	case "vcsum":
 		return prepareVCSUM(vcsumPrepareOptions{

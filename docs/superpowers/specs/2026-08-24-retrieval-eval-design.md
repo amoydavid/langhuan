@@ -82,6 +82,7 @@ VCSUM（`github.com/hahahawu/VCSum`，ACL 2023 Findings，MIT）是 239 场真�
 **Track B - 长文档检索**（测分块 + 父子 + 检索全链路）：
 
 - 仅 MIRACL-zh：把同一文章（`docid` 同前缀）的全部 passage 按段落号顺序聚合为一篇 Markdown 长文档（标题用文章 `title`，段落间以空行分隔）。
+- **变体（2026-08-26）**：`prepare -miracl-variant simplified` 按 OpenCC 单字表把语料转简体（表缓存于 cache/opencc，sha 进 manifest），用于测繁简归一化收益——结论无收益已关闭，见 RETRIEVAL_BENCHMARK.md §4.7。
 - 使用与 Track A 相同的 query 与 gold passage；gold 判定从"文档级"降为"chunk 级文本重叠"（5.2）。
 - 规模：约 200–500 篇长文档（由采样 query 涉及的文章数决定）。
 

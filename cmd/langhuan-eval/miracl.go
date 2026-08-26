@@ -27,6 +27,9 @@ type prepareOptions struct {
 	DistractorArticles    int
 	MaxPassagesPerArticle int
 	Seed                  int64
+	// Variant 为 "simplified" 时语料文本按 OpenCC 单字表转简体
+	// （模拟入库侧繁简归一化的收益上限），产物写入 miracl-zh-simplified/。
+	Variant string
 }
 
 const (
@@ -46,7 +49,22 @@ type miraclPassage struct {
 
 func prepareMIRACLChinese(options prepareOptions) error {
 	hf := newHFClient(options.Mirror, options.Fallback, options.CacheDir)
-	datasetDir := filepath.Join(options.DataDir, "miracl-zh")
+	if options.Variant != "" && options.Variant != "simplified" {
+		return fmt.Errorf("未知 miracl 变体 %q（可用：空 / simplified）", options.Variant)
+	}
+	datasetName := "miracl-zh"
+	var t2sTable map[rune]string
+	var t2sSum string
+	if options.Variant == "simplified" {
+		datasetName = "miracl-zh-simplified"
+		var err error
+		t2sTable, t2sSum, err = loadT2STable(options.CacheDir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("[miracl] simplified 变体：OpenCC 单字表 %d 条已加载\n", len(t2sTable))
+	}
+	datasetDir := filepath.Join(options.DataDir, datasetName)
 	if err := os.MkdirAll(datasetDir, 0o755); err != nil {
 		return err
 	}
@@ -155,6 +173,18 @@ func prepareMIRACLChinese(options prepareOptions) error {
 	trackA := buildTrackA(scan.goldPassages, goldDocIDs, scan.passagePool, options.Distractors)
 	trackB, droppedArticles := buildTrackB(scan.articlePassages, goldArticles, scan.articlePool,
 		options.DistractorArticles, options.MaxPassagesPerArticle)
+	if t2sTable != nil {
+		for index := range trackA {
+			trackA[index].Title = convertToSimplified(trackA[index].Title, t2sTable)
+			trackA[index].Text = convertToSimplified(trackA[index].Text, t2sTable)
+		}
+		for index := range trackB {
+			trackB[index].Title = convertToSimplified(trackB[index].Title, t2sTable)
+			for passage, text := range trackB[index].Passages {
+				trackB[index].Passages[passage] = convertToSimplified(text, t2sTable)
+			}
+		}
+	}
 
 	// 落地查询与 qrels；gold 段落全部缺失的 query 丢弃并记录。
 	queries := make([]evalQuery, 0, len(qids))
@@ -190,11 +220,15 @@ func prepareMIRACLChinese(options prepareOptions) error {
 		return err
 	}
 	m := manifest{
-		Dataset: "miracl-zh", Seed: options.Seed, QueryCount: len(queries),
+		Dataset: datasetName, Seed: options.Seed, QueryCount: len(queries),
 		TrackACorpusSize: len(trackA), TrackBCorpusSize: len(trackB),
 		Distractors: options.Distractors, DistractorArticles: options.DistractorArticles,
 		MaxPassagesPerArticle: options.MaxPassagesPerArticle,
 		SourceFiles:           sourceSums, GeneratedBy: "langhuan-eval prepare (miracl-zh dev)",
+	}
+	if options.Variant == "simplified" {
+		m.SourceFiles[openCCTSCharactersName] = t2sSum
+		m.GeneratedBy += "；simplified 变体：语料按 OpenCC 单字表转简体（query 原为简体，模拟入库侧归一化；单字级无词组消歧）"
 	}
 	manifestFile, err := os.Create(filepath.Join(datasetDir, "manifest.json"))
 	if err != nil {
