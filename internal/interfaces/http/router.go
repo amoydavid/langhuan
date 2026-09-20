@@ -61,6 +61,7 @@ type Dependencies struct {
 	SearchReplay              SearchReplayHTTPService
 	Jobs                      JobQueryService
 	SourceConnections         SourceConnectionService
+	WebSources                WebSourceService
 	MCPHandler                stdhttp.Handler
 	SPA                       fs.FS
 	MaxFileSizeBytes          int64
@@ -551,7 +552,28 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				adminGroup.GET("/source-connections/:connection_id", connectionH.get)
 				adminGroup.PATCH("/source-connections/:connection_id", connectionH.update)
 				adminGroup.DELETE("/source-connections/:connection_id", connectionH.delete)
+				// 连接测试（v1.3.0 spec §9.4）：同链 Session-only admin。
+				adminGroup.POST("/source-connections/:connection_id/test", connectionH.testConnection)
 			}
+		}
+
+		// web 内容源管理（v1.3.0 spec §9.2，挂 KB 下）。
+		// 读：member+（Session）或 knowledge-bases:read scope 的 Bearer；
+		// 写：admin/owner（Session，RequireAdminForSession）或
+		// knowledge-bases:write scope 的 Bearer（与 KB PATCH/sync/source-policy 同链）。
+		if deps.WebSources != nil {
+			wsSourceH := webSourceHandler{svc: deps.WebSources}
+			sourceRead := progGroup.Group("/knowledge-bases/:id/web-sources",
+				RequireScopeForAPIKey(value.ScopeKnowledgeBasesRead), RequireKnowledgeBaseForAPIKey("id"))
+			sourceRead.GET("", wsSourceH.list)
+			sourceRead.GET("/:source_id", wsSourceH.get)
+			sourceWrite := progGroup.Group("/knowledge-bases/:id/web-sources",
+				RequireScopeForAPIKey(value.ScopeKnowledgeBasesWrite), RequireKnowledgeBaseForAPIKey("id"),
+				RequireAdminForSession())
+			sourceWrite.POST("", wsSourceH.create)
+			sourceWrite.PATCH("/:source_id", wsSourceH.update)
+			sourceWrite.POST("/:source_id/sync", wsSourceH.sync)
+			sourceWrite.DELETE("/:source_id", wsSourceH.delete)
 		}
 
 		// owner-only routes.

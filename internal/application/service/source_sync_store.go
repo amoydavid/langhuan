@@ -18,6 +18,18 @@ type DueKnowledgeBase struct {
 	SourceConnectionID uuid.UUID
 }
 
+// DueWebSource 描述一个到期需要同步的 web 内容源（kb_sources.kind='web'）的最小调度信息。
+// 由 SourceSyncStore.ListDueWebSources 返回，供 Meta Scheduler 分组限流入队。
+// ConnectionID 是源 config fetch.connection_id 的解析结果（无连接的 http 引擎为零值）；
+// Config 保留原始源配置，供调度器推进 next_sync_at（sync.cron）使用。
+type DueWebSource struct {
+	WorkspaceID     uuid.UUID
+	KnowledgeBaseID uuid.UUID
+	ID              uuid.UUID
+	ConnectionID    uuid.UUID
+	Config          map[string]any
+}
+
 // KnowledgeBaseSyncRepository 是来源同步所需的只读知识库访问端口。
 // 复用现有 KnowledgeBaseRepository 的 Get 语义，独立成接口以便测试注入 fake。
 type KnowledgeBaseSyncRepository interface {
@@ -76,20 +88,29 @@ type SyncResult struct {
 
 // UpdateDocumentRequest 描述一次稳定文档更新（spec 6.3 更新路径）的输入。
 // 通过 external_id 复用既有 Document、递增 revision_no、写入新 Revision+Job。
+// KbSourceID/SourceMeta 供 web 源路径使用：前者做同事务归属校验（跨源冲突拒绝），
+// 后者与 content_hash 在同一事务写入（spec §8）。
 type UpdateDocumentRequest struct {
 	WorkspaceID     uuid.UUID
 	KnowledgeBaseID uuid.UUID
 	ExternalID      string
 	DocumentID      uuid.UUID
 	RevisionID      uuid.UUID
-	Title           string
-	ParentNodeID    uuid.UUID
-	RawStorageKey   string
-	SHA256          string
-	SizeBytes       int64
-	ContentType     string
-	FileType        string
-	Reason          value.DocumentRevisionReason
+	// KbSourceID 非 nil 时要求锁定的 Document 归属该源，否则返回 ErrConflict。
+	KbSourceID *uuid.UUID
+	// GenerationID 是本次解析的目标索引代次：写入 parse Job 的 payload
+	// （index_generation_id），worker 的 lineage 校验依赖该键。
+	GenerationID  uuid.UUID
+	Title         string
+	ParentNodeID  uuid.UUID
+	RawStorageKey string
+	SHA256        string
+	SizeBytes     int64
+	ContentType   string
+	FileType      string
+	Reason        value.DocumentRevisionReason
+	// SourceMeta 与 content_hash 同事务写入 documents.source_meta；nil 表示不修改。
+	SourceMeta map[string]any
 }
 
 // RetryDocumentRequest 描述一次重试：复用最新未完成/失败的 revision，
@@ -99,9 +120,12 @@ type RetryDocumentRequest struct {
 	KnowledgeBaseID uuid.UUID
 	DocumentID      uuid.UUID
 	RevisionID      uuid.UUID
-	SHA256          string
-	Title           string
-	ParentNodeID    uuid.UUID
+	// GenerationID 是本次解析的目标索引代次：新建/回填 parse Job 的 payload
+	// （index_generation_id），worker 的 lineage 校验依赖该键。
+	GenerationID uuid.UUID
+	SHA256       string
+	Title        string
+	ParentNodeID uuid.UUID
 }
 
 // SyncWriteResult 是一次稳定写入（更新/重试）返回给服务层的结果。
@@ -139,6 +163,8 @@ type SourceSyncStore interface {
 	// 并聚合最新 source revision 与失败/重试信号，供 diff 计算使用。
 	ListSourceDocuments(ctx context.Context, kbID uuid.UUID) ([]LocalDocView, error)
 	// UpsertSourceFolder 锁定 workspace/KB/external_id 更新 parent/name；缺失则插入。
+	// 命中既有行时会把 DB 实际 id 回填到入参 folder.ID（调用方依赖该 id 注册
+	// 父子映射，见 store 实现注释）——传入对象会被原地修改。
 	UpsertSourceFolder(ctx context.Context, folder *model.FileTreeNode) error
 	// CreateSyncedDocumentRevisionJob 在单个 workspace 事务内：锁定既有 Document
 	// （按 workspace/kb/external_id FOR UPDATE），revision_no=max+1，写 Revision+Job，
@@ -164,4 +190,46 @@ type SourceSyncStore interface {
 	// UpdateSyncResult 用 jsonb_set 把 SyncResult 写入 source_config.sync_last_result，
 	// 保留其它 root/cursor/cron/latch 键。
 	UpdateSyncResult(ctx context.Context, workspaceID, kbID uuid.UUID, result SyncResult) error
+
+	// ---- web 源编排（v1.3.0）：同步运行态以 kb_sources 行为单位 ----
+
+	// GetSyncKbSource 读取一个内容源（含 config 与运行态列）；已软删返回 ErrNotFound。
+	GetSyncKbSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (*model.KbSource, error)
+	// ConsumeSourceForceLatch 原子读取并清空源级 force latch（kb_sources.sync_requested_force）。
+	ConsumeSourceForceLatch(ctx context.Context, workspaceID, kbID, sourceID, jobID uuid.UUID) (bool, error)
+	// FinalizeSourceSyncJobForSource 在源行锁定事务内：标记源级 source_sync Job 终态
+	//（按 kb_source_id 定位），读取源级 latch；为 true 则新建下一个源级 Job 返回。
+	FinalizeSourceSyncJobForSource(ctx context.Context, workspaceID, kbID, sourceID, jobID uuid.UUID, status value.JobStatus, errorMessage string) (*model.Job, error)
+	// UpdateSourceSyncCursor 把安全 watermark 写入 kb_sources.sync_cursor（jsonb，
+	// 键 "sync_cursor"，RFC3339——与飞书 KB source_config 同形）；零值清除。
+	UpdateSourceSyncCursor(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, cursor time.Time) error
+	// UpdateSourceSyncResult 把 SyncResult 写入 kb_sources.sync_last_result（整列替换）。
+	UpdateSourceSyncResult(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, result SyncResult) error
+	// UpdateDocumentSourceMeta 原样替换 documents.source_meta（不建 revision）。
+	// 304 unchanged 路径用它刷新 last_fetch_at 等观测值；合并语义由调用方完成。
+	UpdateDocumentSourceMeta(ctx context.Context, workspaceID, documentID uuid.UUID, sourceMeta map[string]any) error
+
+	// ---- web 源调度（v1.3.0 spec §9.1）：Meta Scheduler 的到期扫描与入队前限流 ----
+
+	// ListDueWebSources 列出到期 web 源（kind=web、status=active、未软删、
+	// next_sync_at 非空且 <= now）。next_sync_at 为 NULL 的源不视为到期
+	// （无 cron 仅手动触发）。结果按 (workspace, kb, id) 排序保证分组稳定。
+	ListDueWebSources(ctx context.Context, now time.Time) ([]DueWebSource, error)
+	// CountActiveBySource 统计某源进行中的源级 source_sync 任务数（pending/running）。
+	// 供调度器入队前快速跳过 busy 源；同源串行的权威保证是
+	// RequestSourceSyncForSource 事务内的 reuse-or-create。
+	CountActiveBySource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (int, error)
+	// CountActiveWebSourceJobs 全局统计目标为 web 源（kb_source_id 非空）的
+	// active source_sync 任务数（pending/running，跨 workspace）。飞书任务不占
+	// web 源全局在飞配额（spec §9.1 执行隔离）。
+	CountActiveWebSourceJobs(ctx context.Context) (int, error)
+	// RequestSourceSyncForSource 在源行锁定事务内：源级 force latch = old OR requestedForce；
+	// 存在该源 pending/running 的源级 source_sync Job 则复用（created=false），否则新建
+	// （created=true，行上标注源 config 的 fetch.connection_id）。
+	RequestSourceSyncForSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, requestedForce bool) (job *model.Job, created bool, err error)
+	// FailSourceSyncEnqueueForSource 标记源级 source_sync Job 首次入队失败
+	// （仅 pending 可转换），保留 force latch 与到期状态供调度器重试。
+	FailSourceSyncEnqueueForSource(ctx context.Context, workspaceID, kbID, sourceID, jobID uuid.UUID, message string) error
+	// UpdateWebSourceNextSyncAt 更新 kb_sources.next_sync_at；零值置 NULL（停止定时调度）。
+	UpdateWebSourceNextSyncAt(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, nextSyncAt time.Time) error
 }

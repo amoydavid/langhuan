@@ -2,7 +2,7 @@
 CREATE TABLE workspace_source_connections (
     id                     TEXT PRIMARY KEY,
     workspace_id           TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    provider               TEXT NOT NULL CHECK (provider IN ('feishu')),
+    provider               TEXT NOT NULL CHECK (provider IN ('feishu','firecrawl','jina','browser')),
     name                   TEXT NOT NULL,
     config                 TEXT NOT NULL DEFAULT '{}' CHECK (json_type(config) = 'object'),
     credentials_ciphertext BLOB,
@@ -44,6 +44,36 @@ CREATE TABLE knowledge_bases (
 );
 CREATE UNIQUE INDEX uq_knowledge_bases_active_name
     ON knowledge_bases (workspace_id, lower(name)) WHERE deleted_at IS NULL;
+
+-- kb_sources：知识库下的内容源（PG 000025 的 SQLite 等价物，v1.3.0 web 内容源）。
+-- 承载源级配置（config）与同步运行态（sync_cursor/next_sync_at/sync_requested_force/
+-- sync_last_result）；deleted_at IS NULL 为活行。documents/jobs 的复合外键引用
+-- UNIQUE (workspace_id, kb_id, id)，保证引用行的 KB 与源所属 KB 一致。
+CREATE TABLE kb_sources (
+    id                  TEXT PRIMARY KEY,
+    workspace_id        TEXT NOT NULL,
+    kb_id               TEXT NOT NULL,
+    kind                TEXT NOT NULL DEFAULT 'web' CHECK (kind IN ('web')),
+    name                TEXT NOT NULL CHECK (trim(name) <> ''),
+    status              TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
+    config              TEXT NOT NULL DEFAULT '{}' CHECK (json_type(config) = 'object'),
+    sync_cursor         TEXT NOT NULL DEFAULT '{}' CHECK (json_type(sync_cursor) = 'object'),
+    next_sync_at        DATETIME,
+    sync_requested_force INTEGER NOT NULL DEFAULT 0,
+    sync_last_result    TEXT NOT NULL DEFAULT '{}' CHECK (json_type(sync_last_result) = 'object'),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    deleted_at DATETIME,
+    UNIQUE (workspace_id, id),
+    UNIQUE (workspace_id, kb_id, id),
+    CONSTRAINT kb_sources_kb_fk
+        FOREIGN KEY (workspace_id, kb_id)
+        REFERENCES knowledge_bases (workspace_id, id) ON DELETE CASCADE
+);
+CREATE INDEX idx_kb_sources_workspace_kb ON kb_sources (workspace_id, kb_id);
+-- 同库活源名称唯一（软删后释放名字，供重建同名源）。
+CREATE UNIQUE INDEX uq_kb_sources_active_name
+    ON kb_sources (workspace_id, kb_id, lower(name)) WHERE deleted_at IS NULL;
 
 -- knowledge_base_index_generations：索引版本/快照（含 000006/7 SET NULL、000008 删 failed_count、000014 rerank）
 CREATE TABLE knowledge_base_index_generations (
@@ -107,7 +137,7 @@ CREATE INDEX idx_index_generations_rerank_model_id
 CREATE INDEX idx_index_generations_rerank_provider_id
     ON knowledge_base_index_generations (rerank_provider_id) WHERE rerank_provider_id IS NOT NULL;
 
--- documents：文档（含 000018 external_id、000022 content_hash）
+-- documents：文档（含 000018 external_id、000022 content_hash、000025 kb_source_id/source_meta）
 CREATE TABLE documents (
     id                  TEXT PRIMARY KEY,
     workspace_id        TEXT NOT NULL,
@@ -122,6 +152,9 @@ CREATE TABLE documents (
     metadata            TEXT NOT NULL DEFAULT '{}' CHECK (json_type(metadata) = 'object'),
     external_id         TEXT,
     content_hash        TEXT,
+    -- 000025 web 内容源：页面溯源与每文档抓取运行态
+    kb_source_id        TEXT,
+    source_meta         TEXT NOT NULL DEFAULT '{}' CHECK (json_type(source_meta) = 'object'),
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     deleted_at DATETIME,
@@ -131,6 +164,14 @@ CREATE TABLE documents (
     CONSTRAINT documents_kb_fk
         FOREIGN KEY (workspace_id, knowledge_base_id)
         REFERENCES knowledge_bases (workspace_id, id) ON DELETE CASCADE,
+    -- 000025 web 内容源：页面溯源外键（PG 为 ON DELETE SET NULL (kb_source_id) 列限定）。
+    -- ⚠ SQLite 不支持列限定 SET NULL，会把整组引用列置 NULL（workspace_id NOT NULL
+    --    → 实际删除会失败，效果近似 RESTRICT）。源行只走软删不硬删，建议应用层处理；
+    --    这里按 SET NULL 翻译并保留分歧（与 index_generations_base_fk 同惯例）。
+    CONSTRAINT documents_kb_source_fk
+        FOREIGN KEY (workspace_id, knowledge_base_id, kb_source_id)
+        REFERENCES kb_sources (workspace_id, kb_id, id)
+        ON DELETE SET NULL,
     -- documents.active_revision_id 复合 FK（PG 用 ALTER + DEFERRABLE；SQLite 不支持
     -- ALTER TABLE ADD CONSTRAINT，改为内联表级 FK，前向引用 document_revisions 合法）：
     CONSTRAINT documents_active_revision_fk
@@ -145,6 +186,10 @@ CREATE TABLE documents (
 CREATE UNIQUE INDEX uq_documents_active_web_uri
     ON documents (workspace_id, knowledge_base_id, source_uri)
     WHERE kind = 'web' AND deleted_at IS NULL;
+-- 按源统计页面数 / 按源清理（PG 000025 的部分索引）。
+CREATE INDEX idx_documents_kb_source
+    ON documents (workspace_id, kb_source_id)
+    WHERE kb_source_id IS NOT NULL;
 CREATE INDEX idx_documents_kb_kind_status
     ON documents (workspace_id, knowledge_base_id, kind, status);
 CREATE UNIQUE INDEX uq_documents_workspace_kb_external
@@ -373,7 +418,7 @@ CREATE TABLE file_tree_nodes (
     CHECK (
         (node_type = 'root' AND parent_id IS NULL AND name = '' AND document_id IS NULL AND document_kind IS NULL)
         OR (node_type = 'folder' AND parent_id IS NOT NULL AND trim(name) <> '' AND document_id IS NULL AND document_kind IS NULL)
-        OR (node_type = 'file' AND parent_id IS NOT NULL AND trim(name) <> '' AND document_id IS NOT NULL AND document_kind = 'file')
+        OR (node_type = 'file' AND parent_id IS NOT NULL AND trim(name) <> '' AND document_id IS NOT NULL AND document_kind IN ('file', 'web'))
     )
 );
 CREATE UNIQUE INDEX uq_file_tree_nodes_root
@@ -408,7 +453,7 @@ CREATE TABLE document_assets (
         ON DELETE CASCADE
 );
 
--- jobs：异步任务（target_check 为 000022 的四分支；含 000018 source_connection_id）
+-- jobs：异步任务（target_check 为 000025 的五分支；含 000018 source_connection_id、000025 kb_source_id）
 CREATE TABLE jobs (
     id                       TEXT PRIMARY KEY,
     workspace_id             TEXT NOT NULL,
@@ -417,6 +462,7 @@ CREATE TABLE jobs (
     document_revision_id     TEXT,
     index_generation_id      TEXT,
     source_connection_id     TEXT,
+    kb_source_id             TEXT,
     type                     TEXT NOT NULL,
     status                   TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed')),
     attempts                 INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -438,16 +484,28 @@ CREATE TABLE jobs (
         FOREIGN KEY (workspace_id, knowledge_base_id, index_generation_id)
         REFERENCES knowledge_base_index_generations (workspace_id, knowledge_base_id, id)
         ON DELETE CASCADE,
+    -- 000025 源级目标：source_sync/source_cleanup 的 target 可为 kb_sources.id
+    --（kb_source_id NULL 时外键不生效；PG 侧另有 enforce_jobs_source_target
+    -- 约束触发器校验源/KB 未软删，SQLite 无触发器等价实现，由应用层保证）。
+    CONSTRAINT jobs_source_fk
+        FOREIGN KEY (workspace_id, knowledge_base_id, kb_source_id)
+        REFERENCES kb_sources (workspace_id, kb_id, id)
+        ON DELETE CASCADE,
     CHECK (
-        (document_id IS NOT NULL AND document_revision_id IS NOT NULL AND index_generation_id IS NULL)
-        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NOT NULL)
-        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND type = 'source_sync')
-        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND type = 'source_cleanup')
+        (document_id IS NOT NULL AND document_revision_id IS NOT NULL AND index_generation_id IS NULL AND kb_source_id IS NULL)
+        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NOT NULL AND kb_source_id IS NULL)
+        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND kb_source_id IS NULL AND type = 'source_sync')
+        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND kb_source_id IS NULL AND type = 'source_cleanup')
+        OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id IS NULL AND kb_source_id IS NOT NULL AND type IN ('source_sync', 'source_cleanup'))
     )
 );
 CREATE INDEX idx_jobs_conn_active
     ON jobs (workspace_id, source_connection_id, type, status)
     WHERE source_connection_id IS NOT NULL;
+-- 按源统计 active 任务（CountActiveBySource，镜像 idx_jobs_conn_active）。
+CREATE INDEX idx_jobs_source_active
+    ON jobs (workspace_id, kb_source_id, type, status)
+    WHERE kb_source_id IS NOT NULL;
 
 -- document_ingest_idempotencies：导入幂等（正则 CHECK 移除）
 CREATE TABLE document_ingest_idempotencies (

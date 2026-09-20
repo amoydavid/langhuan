@@ -154,6 +154,15 @@ func (h documentHandler) list(c *gin.Context) {
 		}
 		filter.Kind = &kind
 	}
+	// kb_source_id：按产生文档的 web 内容源过滤（v1.3.0 源详情页，spec §9.4）。
+	if raw := strings.TrimSpace(c.Query("kb_source_id")); raw != "" {
+		sourceID, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(c, stdhttp.StatusBadRequest, "validation_error", "kb_source_id 必须是有效 UUID")
+			return
+		}
+		filter.KbSourceID = &sourceID
+	}
 	items, err := h.queryService.List(c.Request.Context(), filter)
 	if err != nil {
 		writeServiceError(c, err)

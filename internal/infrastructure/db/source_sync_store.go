@@ -355,6 +355,8 @@ type sourceDocRow struct {
 	RevisionStatus   *string    `gorm:"column:revision_status"`
 	RevisionID       *uuid.UUID `gorm:"column:revision_id"`
 	DeletedAt        *time.Time `gorm:"column:deleted_at"`
+	KbSourceID       *uuid.UUID `gorm:"column:kb_source_id"`
+	SourceMeta       JSONMap    `gorm:"column:source_meta"`
 }
 
 // ListSourceDocuments 返回该 KB 下所有 external_id 非空的文档（含已软删的），
@@ -384,7 +386,7 @@ func (s *SourceSyncDBStore) ListSourceDocuments(ctx context.Context, kbID uuid.U
 	if s.db.Dialector.Name() == "sqlite" {
 		err = s.db.WithContext(ctx).Raw(`
 SELECT d.id AS document_id, d.external_id, d.content_hash, d.status,
-       d.active_revision_id, d.deleted_at,
+       d.active_revision_id, d.deleted_at, d.kb_source_id, d.source_meta,
        (SELECT id FROM document_revisions WHERE workspace_id = d.workspace_id AND document_id = d.id AND revision_reason = ? ORDER BY revision_no DESC LIMIT 1) AS revision_id,
        (SELECT revision_no FROM document_revisions WHERE workspace_id = d.workspace_id AND document_id = d.id AND revision_reason = ? ORDER BY revision_no DESC LIMIT 1) AS revision_no,
        (SELECT status FROM document_revisions WHERE workspace_id = d.workspace_id AND document_id = d.id AND revision_reason = ? ORDER BY revision_no DESC LIMIT 1) AS revision_status
@@ -396,7 +398,7 @@ ORDER BY d.id
 	} else {
 		err = s.db.WithContext(ctx).Raw(`
 SELECT d.id AS document_id, d.external_id, d.content_hash, d.status,
-       d.active_revision_id, d.deleted_at,
+       d.active_revision_id, d.deleted_at, d.kb_source_id, d.source_meta,
        r.id AS revision_id, r.revision_no, r.status AS revision_status
 FROM documents d
 LEFT JOIN LATERAL (
@@ -461,6 +463,8 @@ WHERE workspace_id = ?
 			ActiveRevisionID: r.ActiveRevisionID,
 			LatestRevisionID: r.RevisionID,
 			DeletedAt:        r.DeletedAt,
+			KbSourceID:       r.KbSourceID,
+			SourceMeta:       normalizedDomainMap(r.SourceMeta),
 		}
 		if r.RevisionID != nil {
 			view.RevisionNo = dereferenceInt64(r.RevisionNo)
@@ -532,7 +536,15 @@ func (s *SourceSyncDBStore) UpsertSourceFolder(ctx context.Context, folder *mode
 			}
 			return nil
 		}
-		// 更新 parent/name/external_id（保留既有 id 与 document 关联）。
+		// 更新 parent/name（保留既有 id 与 document 关联）。
+		//
+		// 把既有行的 id 回填给调用方：folder.ID 由构造函数生成，命中既有行时
+		// DB 保留的是 existing.ID。调用方（upsertSyncFolder）随后用它注册
+		// token→nodeID 父子映射，若仍持新生成的 id，后续新增页面的 parent_id
+		// 会指向不存在的行——检查推迟到提交时（PG DEFERRABLE / SQLite
+		// defer_foreign_keys）才报外键失败，且错误不带本层包装（2026-09-17
+		// E2E 实测暴露：多源共享目录 / 重复同步 + 新增页面场景）。
+		folder.ID = existing.ID
 		now := time.Now().UTC()
 		result := tx.WithContext(ctx).Model(&FileTreeNodeRow{}).
 			Where("workspace_id = ? AND id = ?", folder.WorkspaceID, existing.ID).
@@ -585,6 +597,13 @@ func (s *SourceSyncDBStore) CreateSyncedDocumentRevisionJob(
 		if docRow.ID != request.DocumentID {
 			return fmt.Errorf("%w: 更新同步文档 external_id 对应 Document 与请求 DocumentID 不一致", domainerrors.ErrConflict)
 		}
+		// 源级归属校验（web 路径跨源冲突闸门）：请求携带 KbSourceID 时，目标文档必须
+		// 归属该源——飞书等 KB 级文档（kb_source_id NULL）与其它源的文档一律拒绝。
+		if request.KbSourceID != nil {
+			if docRow.KbSourceID == nil || *docRow.KbSourceID != *request.KbSourceID {
+				return fmt.Errorf("%w: 更新同步文档归属其它内容源（url_owned_by_other_source）", domainerrors.ErrConflict)
+			}
+		}
 
 		// revision_no = max(document_revisions.revision_no) + 1。
 		var maxNo int64
@@ -595,12 +614,20 @@ func (s *SourceSyncDBStore) CreateSyncedDocumentRevisionJob(
 		}
 		revisionNo := maxNo + 1
 
-		// 构造领域 Revision（带预分配 id）。
+		// 构造领域 Revision（带预分配 id）。revision.kind 是 documents(ws,kb,id,kind)
+		// 复合外键的一部分，必须继承锁定文档的 kind（file/web），不能硬编码。
+		// Web Revision 禁止 OriginalFilename/FileType（领域模型 contract）。
+		documentKind := value.DocumentKind(docRow.Kind)
+		originalFilename := request.Title
+		fileType := request.FileType
+		if documentKind == value.DocumentKindWeb {
+			originalFilename, fileType = "", ""
+		}
 		revision, err := model.NewDocumentRevisionWithID(request.RevisionID, model.NewDocumentRevisionInput{
 			WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
-			DocumentID: request.DocumentID, Kind: value.DocumentKindFile, DocumentKind: value.DocumentKindFile,
+			DocumentID: request.DocumentID, Kind: documentKind, DocumentKind: documentKind,
 			RevisionNo: revisionNo, Reason: request.Reason,
-			OriginalFilename: request.Title, FileType: request.FileType, ContentType: request.ContentType,
+			OriginalFilename: originalFilename, FileType: fileType, ContentType: request.ContentType,
 			RawStorageKey: request.RawStorageKey, SHA256: request.SHA256, SizeBytes: request.SizeBytes,
 			ProcessingVersion: model.CurrentProcessingVersion, Status: value.DocumentRevisionPending,
 		})
@@ -612,7 +639,12 @@ func (s *SourceSyncDBStore) CreateSyncedDocumentRevisionJob(
 			return err
 		}
 
-		// 构造幂等的 parse Job（document_parse_start）。
+		// 构造幂等的 parse Job（document_parse_start）。payload 必须携带目标
+		// generation：worker 的 lineage 校验要求 Job DB payload 含
+		// index_generation_id（与文件上传路径 document_ingest.go 同构）。
+		if request.GenerationID == uuid.Nil {
+			return fmt.Errorf("%w: 更新同步文档 GenerationID 不能为空", domainerrors.ErrValidation)
+		}
 		job, err := model.NewJob(model.NewJobInput{
 			WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
 			DocumentID: request.DocumentID, DocumentRevisionID: request.RevisionID,
@@ -621,6 +653,7 @@ func (s *SourceSyncDBStore) CreateSyncedDocumentRevisionJob(
 		if err != nil {
 			return err
 		}
+		job.Payload["index_generation_id"] = request.GenerationID.String()
 
 		// 写入 Revision + Job。
 		if err := tx.WithContext(ctx).Create(revisionRow).Error; err != nil {
@@ -632,15 +665,20 @@ func (s *SourceSyncDBStore) CreateSyncedDocumentRevisionJob(
 
 		// 更新 Document content_hash/status/title（active_revision_id 不在此切换，pipeline 发布时改）。
 		now := time.Now().UTC()
+		docUpdates := map[string]any{
+			"title":        request.Title,
+			"content_hash": nullableString(request.SHA256),
+			"status":       string(value.DocumentStatusPending),
+			"updated_at":   now,
+			"deleted_at":   nil, // 远端重新出现的已软删文档：复活。
+		}
+		// web 路径：source_meta 与 content_hash 同事务写入（spec §8）；nil 表示不修改。
+		if request.SourceMeta != nil {
+			docUpdates["source_meta"] = normalizedJSONMap(request.SourceMeta)
+		}
 		docUpdate := tx.WithContext(ctx).Model(&DocumentRow{}).
 			Where("workspace_id = ? AND id = ?", request.WorkspaceID, request.DocumentID).
-			Updates(map[string]any{
-				"title":        request.Title,
-				"content_hash": nullableString(request.SHA256),
-				"status":       string(value.DocumentStatusPending),
-				"updated_at":   now,
-				"deleted_at":   nil, // 远端重新出现的已软删文档：复活。
-			})
+			Updates(docUpdates)
 		if docUpdate.Error != nil {
 			return translateDBError(docUpdate.Error, "更新同步 Document 失败")
 		}
@@ -690,6 +728,10 @@ func (s *SourceSyncDBStore) RetrySourceRevision(
 	}
 	if request.DocumentID == uuid.Nil || request.RevisionID == uuid.Nil {
 		return nil, fmt.Errorf("%w: 重试同步文档 document/revision 不能为空", domainerrors.ErrValidation)
+	}
+	// parse Job 的 payload 必须携带目标 generation（worker lineage 校验依赖）。
+	if request.GenerationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: 重试同步文档 GenerationID 不能为空", domainerrors.ErrValidation)
 	}
 
 	var result *service.SyncWriteResult
@@ -741,13 +783,20 @@ func (s *SourceSyncDBStore) RetrySourceRevision(
 			First(&existingJob).Error
 		var jobID uuid.UUID
 		if findErr == nil {
-			// 重置既有 Job 为 pending。
+			// 重置既有 Job 为 pending，并回填 payload 的 index_generation_id：
+			// 旧版本写入的 Job 可能缺该键（worker lineage 校验会拒绝），重试即修复。
+			payload := JSONMap{}
+			for key, val := range existingJob.Payload {
+				payload[key] = val
+			}
+			payload["index_generation_id"] = request.GenerationID.String()
 			jobReset := tx.WithContext(ctx).Model(&JobRow{}).
 				Where("workspace_id = ? AND id = ?", request.WorkspaceID, existingJob.ID).
 				Updates(map[string]any{
 					"status":        string(value.JobStatusPending),
 					"error_class":   "",
 					"error_message": "",
+					"payload":       payload,
 					"updated_at":    now,
 				})
 			if jobReset.Error != nil {
@@ -764,6 +813,7 @@ func (s *SourceSyncDBStore) RetrySourceRevision(
 			if err != nil {
 				return err
 			}
+			job.Payload["index_generation_id"] = request.GenerationID.String()
 			if err := tx.WithContext(ctx).Create(jobV2ToRow(job)).Error; err != nil {
 				return translateDBError(err, "创建重试 parse Job 失败")
 			}

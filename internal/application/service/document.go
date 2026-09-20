@@ -18,12 +18,15 @@ type DocumentRepository interface {
 	Delete(ctx context.Context, workspaceID, documentID uuid.UUID) error
 }
 
-// DocumentListFilter scopes document listing and optionally narrows by kind.
+// DocumentListFilter scopes document listing and optionally narrows by kind
+// or by the web content source that produced the document (v1.3.0 §9.4 源详情页).
 type DocumentListFilter struct {
 	WorkspaceID     uuid.UUID
 	KnowledgeBaseID uuid.UUID
 	Kind            *value.DocumentKind
-	Access          value.ResourceAccess
+	// KbSourceID 非 nil 时仅返回该内容源产生的文档（documents.kb_source_id）。
+	KbSourceID *uuid.UUID
+	Access     value.ResourceAccess
 }
 
 // Delete soft-deletes a Document and atomically removes it from retrieval and the File Tree.

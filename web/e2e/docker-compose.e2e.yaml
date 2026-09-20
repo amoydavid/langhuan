@@ -1,0 +1,72 @@
+# E2E 专用编排：全部外部依赖桩与被测后端同生命周期，一次运行即弃。
+#
+# [site] 爬取目标（静态站点桩）：挂到「公网形」子网固定 IP 上。
+#   为什么这样挂：琅嬛后端的网页抓取链路带 SSRF 防护（spec §6.4，dial 期校验
+#   目标必须是公网单播地址，回环/私网/保留段一律拒绝），宿主直跑的本地桩无法
+#   通过校验。本子网是 docker 网桥的直连路由：后端发出的请求在网桥内到达桩
+#   容器，数据不离开宿主 VM，同时又能通过产品侧的公网校验。
+#   必须澄清：93.184.216.0/24 是真实可路由的公网段（不是 IANA 文档段——那是
+#   TEST-NET，恰是产品封锁的范围）。「不会泄到真实公网」依据的是网桥直连路由
+#   使其成为本机直连目的地、加上 global-setup 的前置探测失败即安全中止；唯一
+#   离开宿主的可能是宿主缺失网桥路由时的探测包本身（Docker Desktop 即此形态，
+#   探测会失败并中止编排）。
+#
+# [embeddings] OpenAI 兼容 embedding 桩：发布到宿主 127.0.0.1:47702。
+#   被测后端（宿主进程）经平台级 Provider（TrustedClient，允许明文 HTTP 回环）
+#   调用该端口；同 compose 生命周期，杜绝宿主孤儿桩进程导致的假绿。
+#
+# 生命周期：由 web/e2e/global-setup.ts 拉起、global-teardown.ts 销毁；
+# `make e2e-web` 在跑测试前后兜底清理同名 compose 项目与残留监听进程。
+
+name: langhuan-web-e2e
+
+networks:
+  public-shaped:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 93.184.216.0/24
+          gateway: 93.184.216.1
+
+services:
+  site:
+    image: node:20-alpine
+    working_dir: /stubs
+    volumes:
+      - ./stubs:/stubs:ro
+    command:
+      - node
+      - site.mjs
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.10
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:47701/healthz').then((r) => { if (!r.ok) throw new Error(String(r.status)) })
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  embeddings:
+    image: node:20-alpine
+    working_dir: /stubs
+    volumes:
+      - ./stubs:/stubs:ro
+    command:
+      - node
+      - embeddings.mjs
+    # 仅发布到宿主回环：宿主侧被测后端经 127.0.0.1:47702 调用，不对外暴露。
+    ports:
+      - '127.0.0.1:47702:47702'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:47702/healthz').then((r) => { if (!r.ok) throw new Error(String(r.status)) })
+      interval: 2s
+      timeout: 3s
+      retries: 15

@@ -28,6 +28,28 @@ type SchedulerStore interface {
 	ListFeishuKBsWithForceLatchAndNoActiveJob(ctx context.Context) ([]DueKnowledgeBase, error)
 }
 
+// WebSourceSchedulerStore 提供 web 内容源（kb_sources.kind='web'）调度所需的持久化能力。
+// 由 *db.SourceSyncDBStore 实现；复用 SchedulerStore 的 CountActiveByConnection
+// 作为有连接 web 源的 connection 组限流口径（web 源 Job 行上标注 source_connection_id）。
+type WebSourceSchedulerStore interface {
+	SchedulerStore
+	// ListDueWebSources 列出到期 web 源（active 且 next_sync_at <= now）。
+	ListDueWebSources(ctx context.Context, now time.Time) ([]DueWebSource, error)
+	// CountActiveBySource 统计某源进行中的源级 source_sync 任务数（同源串行检查）。
+	CountActiveBySource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (int, error)
+	// CountActiveWebSourceJobs 全局统计目标为 web 源的 active source_sync 任务数
+	// （在飞上限只封顶 web 源任务，飞书任务不占此配额，spec §9.1）。
+	CountActiveWebSourceJobs(ctx context.Context) (int, error)
+	// UpdateWebSourceNextSyncAt 推进源级 next_sync_at（零值清除）。
+	UpdateWebSourceNextSyncAt(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, nextSyncAt time.Time) error
+}
+
+// SourceSyncEnqueuer 把单个 web 内容源的同步入队（源级 source_sync Job）。
+// 由 *SourceSyncService 实现（EnqueueSyncForSource）。
+type SourceSyncEnqueuer interface {
+	EnqueueSyncForSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, options SyncOptions) (*model.Job, error)
+}
+
 // SourceSyncSchedulerDeps 注入 Meta Scheduler 的全部依赖。
 type SourceSyncSchedulerDeps struct {
 	// KBRepo 提供到期飞书知识库列表与 next_sync_at 推进。
@@ -36,8 +58,16 @@ type SourceSyncSchedulerDeps struct {
 	Store SchedulerStore
 	// SyncService 把单个 KB 入队（首次/定时同步）。
 	SyncService SyncEnqueuer
+	// WebStore 提供 web 源调度所需的持久化查询；与 SourceService 任一为 nil 时
+	// 跳过 web 源调度（保持仅飞书调度的旧行为）。
+	WebStore WebSourceSchedulerStore
+	// SourceService 把单个 web 源入队（源级 source_sync）。
+	SourceService SourceSyncEnqueuer
 	// MaxConcurrentPerConnection 是每个来源连接的最大并发同步数。
 	MaxConcurrentPerConnection int
+	// MaxConcurrentWebSyncs 是 web 源同步任务的全局在飞上限（仅统计 web 源任务；
+	// spec §9.1 执行隔离）。<=0 时由 NewSourceSyncScheduler 兜底为 2。
+	MaxConcurrentWebSyncs int
 	// Interval 是 Tick 周期；Run 循环据此休眠。<=0 时由 NewSourceSyncScheduler 兜底为 60s。
 	Interval time.Duration
 	// Logger 输出调度日志（不含正文/凭证）。
@@ -50,7 +80,10 @@ type SourceSyncScheduler struct {
 	kbRepo                     KnowledgeBaseSyncRepository
 	store                      SchedulerStore
 	syncService                SyncEnqueuer
+	webStore                   WebSourceSchedulerStore
+	sourceService              SourceSyncEnqueuer
 	maxConcurrentPerConnection int
+	maxConcurrentWebSyncs      int
 	interval                   time.Duration
 	logger                     Logger
 	cronParser                 cron.Parser
@@ -61,6 +94,10 @@ func NewSourceSyncScheduler(deps SourceSyncSchedulerDeps) *SourceSyncScheduler {
 	maxConcurrent := deps.MaxConcurrentPerConnection
 	if maxConcurrent <= 0 {
 		maxConcurrent = 2
+	}
+	maxWebSyncs := deps.MaxConcurrentWebSyncs
+	if maxWebSyncs <= 0 {
+		maxWebSyncs = 2
 	}
 	interval := deps.Interval
 	if interval <= 0 {
@@ -74,7 +111,10 @@ func NewSourceSyncScheduler(deps SourceSyncSchedulerDeps) *SourceSyncScheduler {
 		kbRepo:                     deps.KBRepo,
 		store:                      deps.Store,
 		syncService:                deps.SyncService,
+		webStore:                   deps.WebStore,
+		sourceService:              deps.SourceService,
 		maxConcurrentPerConnection: maxConcurrent,
+		maxConcurrentWebSyncs:      maxWebSyncs,
 		interval:                   interval,
 		logger:                     logger,
 		// 5 字段标准 cron 表达式：minute hour dom month dow。
@@ -112,12 +152,17 @@ func groupDueKBs(due []DueKnowledgeBase) []connectionGroup {
 
 // Tick 执行一次调度扫描：
 //  1. 列出所有到期飞书 KB → 按 connection 分组 → 限流入队 → 推进 next_sync_at。
-//  2. 恢复 latch 已置位但无 active Job 的滞留 KB（spec 8.2 latch 恢复）。
+//  2. 列出所有到期 web 内容源 → connection 分组（无连接单源组）→ connection 限额
+//     + 全局在飞上限入队 → 推进 next_sync_at（spec §9.1）。
+//  3. 恢复 latch 已置位但无 active Job 的滞留 KB（spec 8.2 latch 恢复）。
 func (s *SourceSyncScheduler) Tick(ctx context.Context) error {
 	if s.kbRepo == nil || s.store == nil || s.syncService == nil {
 		return fmt.Errorf("%w: Meta Scheduler 依赖未配置", domainerrors.ErrValidation)
 	}
 	if err := s.dispatch(ctx, uuid.Nil); err != nil {
+		return err
+	}
+	if err := s.dispatchWebSources(ctx, uuid.Nil); err != nil {
 		return err
 	}
 	return s.recoverLatchedSyncs(ctx)
@@ -145,7 +190,9 @@ func (s *SourceSyncScheduler) recoverLatchedSyncs(ctx context.Context) error {
 	return nil
 }
 
-// TryDispatchConnection 针对单个 connection 派发到期 KB（worker 完成后调用以续跑，避免空等）。
+// TryDispatchConnection 针对单个 connection 派发到期 KB 与到期 web 源
+// （worker 完成后调用以续跑，避免空等）。飞书与 web 源在同一 connection 组内
+// 共享 maxConcurrentPerConnection 限额口径；web 源另受全局在飞上限约束。
 func (s *SourceSyncScheduler) TryDispatchConnection(ctx context.Context, workspaceID, connectionID uuid.UUID) error {
 	if s.kbRepo == nil || s.store == nil || s.syncService == nil {
 		return fmt.Errorf("%w: Meta Scheduler 依赖未配置", domainerrors.ErrValidation)
@@ -155,7 +202,10 @@ func (s *SourceSyncScheduler) TryDispatchConnection(ctx context.Context, workspa
 	}
 	// TryDispatchConnection 按 connection 过滤到期 KB；workspaceID 用于日志，ListDueFeishuKBs 已按 connection 收敛。
 	_ = workspaceID
-	return s.dispatch(ctx, connectionID)
+	if err := s.dispatch(ctx, connectionID); err != nil {
+		return err
+	}
+	return s.dispatchWebSources(ctx, connectionID)
 }
 
 // dispatch 是 Tick/TryDispatchConnection 的共享实现。connectionFilter 为零值表示不过滤。

@@ -1,4 +1,4 @@
--- 反向回滚 knowledge_and_jobs：删除本切片建表的 14 张知识/任务表。
+-- 反向回滚 knowledge_and_jobs：删除本切片建表的 15 张知识/任务表。
 DROP TABLE IF EXISTS document_ingest_idempotencies;
 DROP TABLE IF EXISTS jobs;
 DROP TABLE IF EXISTS document_assets;
@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS faq_revision_questions;
 DROP TABLE IF EXISTS faq_revision_contents;
 DROP TABLE IF EXISTS document_revisions;
 DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS kb_sources;
 DROP TABLE IF EXISTS knowledge_base_index_generations;
 DROP TABLE IF EXISTS knowledge_bases;
 DROP TABLE IF EXISTS workspace_source_connections;

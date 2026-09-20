@@ -69,6 +69,9 @@ func (r *DocumentRepository) List(ctx context.Context, filter appservice.Documen
 		if filter.Kind != nil {
 			query = query.Where("kind = ?", *filter.Kind)
 		}
+		if filter.KbSourceID != nil {
+			query = query.Where("kb_source_id = ?", *filter.KbSourceID)
+		}
 		if err := query.
 			Order("documents.created_at DESC, documents.id DESC").
 			Find(&rows).Error; err != nil {

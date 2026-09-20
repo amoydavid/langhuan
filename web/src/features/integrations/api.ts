@@ -3,10 +3,12 @@ import {
   createSourceConnectionSchema,
   sourceConnectionListResponseSchema,
   sourceConnectionResponseSchema,
+  sourceConnectionTestResultSchema,
 } from './schemas'
 import type {
   CreateSourceConnectionInput,
   SourceConnection,
+  SourceConnectionTestResult,
   UpdateSourceConnectionInput,
 } from './types'
 
@@ -64,4 +66,16 @@ export async function deleteSourceConnection(
   await apiClient.delete(
     `${sourceConnectionsPath(workspaceSlug)}/${encodeURIComponent(connectionId)}`
   )
+}
+
+// 连接测试契约（T13）：探测成功与失败都返回 HTTP 200 + 结果体，前端按 ok 分支
+// 展示；「无法测试」（不存在 404、已停用/feishu 不支持 400）才走异常路径。
+export async function testSourceConnection(
+  workspaceSlug: string,
+  connectionId: string
+): Promise<SourceConnectionTestResult> {
+  const response = await apiClient.post<SourceConnectionTestResult>(
+    `${sourceConnectionsPath(workspaceSlug)}/${encodeURIComponent(connectionId)}/test`
+  )
+  return sourceConnectionTestResultSchema.parse(response.data)
 }

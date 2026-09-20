@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	"github.com/dajee/langhuan/internal/infrastructure/config"
@@ -39,6 +41,11 @@ type fakeSourceConnectionService struct {
 	deleteWorkspaceID uuid.UUID
 	deleteID          uuid.UUID
 	deleteErr         error
+
+	testWorkspaceID uuid.UUID
+	testID          uuid.UUID
+	testResult      *dto.SourceConnectionTestResult
+	testErr         error
 }
 
 func (f *fakeSourceConnectionService) Create(_ context.Context, input service.CreateSourceConnectionInput) (*dto.SourceConnection, error) {
@@ -77,6 +84,15 @@ func (f *fakeSourceConnectionService) Delete(_ context.Context, workspaceID, id 
 	f.deleteWorkspaceID = workspaceID
 	f.deleteID = id
 	return f.deleteErr
+}
+
+func (f *fakeSourceConnectionService) TestConnection(_ context.Context, workspaceID, connectionID uuid.UUID) (*dto.SourceConnectionTestResult, error) {
+	f.testWorkspaceID = workspaceID
+	f.testID = connectionID
+	if f.testErr != nil {
+		return nil, f.testErr
+	}
+	return f.testResult, nil
 }
 
 // newSourceConnectionFixture 构造一个 Session-only 的工作区 admin 路由环境。
@@ -245,6 +261,112 @@ func TestSourceConnectionHandlerCreateRejectsUnsupportedProvider(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+// TestSourceConnectionHandlerCreateProviderMatrix 固定 T12 的 handler 分支矩阵：
+// firecrawl/jina 凭证必填且不发送 app_id；browser 允许空凭证（token 可选）；
+// config（endpoint_url）原样透传给 service。
+func TestSourceConnectionHandlerCreateProviderMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name        string
+		body        string
+		wantStatus  int
+		wantCalled  bool
+		wantSecret  string
+		wantConfig  map[string]any
+		errContains string
+	}{
+		{
+			name:       "firecrawl 带 endpoint 覆盖",
+			body:       `{"provider":"firecrawl","name":"fc","app_secret":"fc-key","config":{"endpoint_url":"https://fc.internal"}}`,
+			wantStatus: http.StatusCreated, wantCalled: true, wantSecret: "fc-key",
+			wantConfig: map[string]any{"endpoint_url": "https://fc.internal"},
+		},
+		{
+			name:       "firecrawl 无 config",
+			body:       `{"provider":"firecrawl","name":"fc","app_secret":"fc-key"}`,
+			wantStatus: http.StatusCreated, wantCalled: true, wantSecret: "fc-key",
+		},
+		{
+			name:       "jina 仅凭证",
+			body:       `{"provider":"jina","name":"jina","app_secret":"jina-key"}`,
+			wantStatus: http.StatusCreated, wantCalled: true, wantSecret: "jina-key",
+		},
+		{
+			name:       "browser 空凭证 + endpoint",
+			body:       `{"provider":"browser","name":"cdp","config":{"endpoint_url":"ws://cdp:9222"}}`,
+			wantStatus: http.StatusCreated, wantCalled: true, wantSecret: "",
+			wantConfig: map[string]any{"endpoint_url": "ws://cdp:9222"},
+		},
+		{
+			name:       "browser 可选 token",
+			body:       `{"provider":"browser","name":"cdp","app_secret":"tok","config":{"endpoint_url":"ws://cdp:9222"}}`,
+			wantStatus: http.StatusCreated, wantCalled: true, wantSecret: "tok",
+			wantConfig: map[string]any{"endpoint_url": "ws://cdp:9222"},
+		},
+		{
+			name:        "firecrawl 缺凭证",
+			body:        `{"provider":"firecrawl","name":"fc"}`,
+			wantStatus:  http.StatusBadRequest,
+			errContains: "app_secret",
+		},
+		{
+			name:        "jina 缺凭证",
+			body:        `{"provider":"jina","name":"jina"}`,
+			wantStatus:  http.StatusBadRequest,
+			errContains: "app_secret",
+		},
+		{
+			name:        "firecrawl 携带 app_id",
+			body:        `{"provider":"firecrawl","name":"fc","app_id":"cli_a","app_secret":"k"}`,
+			wantStatus:  http.StatusBadRequest,
+			errContains: "app_id",
+		},
+		{
+			name:        "browser 携带 app_id",
+			body:        `{"provider":"browser","name":"cdp","app_id":"cli_a","config":{"endpoint_url":"ws://cdp:9222"}}`,
+			wantStatus:  http.StatusBadRequest,
+			errContains: "app_id",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := &dto.SourceConnection{ID: uuid.New(), Provider: "x", Name: "n", Status: "active"}
+			svc := &fakeSourceConnectionService{createItem: item}
+			router, _, _, sessionID := newSourceConnectionFixture(t, value.RoleAdmin, svc)
+
+			rec := authedSourceConnectionRequest(router, sessionID, http.MethodPost, "/api/v1/workspaces/acme/source-connections", tt.body)
+			require.Equal(t, tt.wantStatus, rec.Code)
+			require.Equal(t, tt.wantCalled, svc.createInput != nil)
+			if !tt.wantCalled {
+				return
+			}
+			require.Equal(t, tt.wantSecret, svc.createInput.AppSecret)
+			if tt.wantConfig == nil {
+				require.Empty(t, svc.createInput.Config)
+			} else {
+				require.Equal(t, tt.wantConfig, svc.createInput.Config)
+			}
+			if tt.errContains != "" {
+				require.Contains(t, rec.Body.String(), tt.errContains)
+			}
+		})
+	}
+}
+
+// TestSourceConnectionHandlerCreateForwardsServiceValidationError 断言 handler 不做
+// config 校验：browser 缺 endpoint 由 service/domain 报 ErrValidation 并映射 400。
+func TestSourceConnectionHandlerCreateForwardsServiceValidationError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &fakeSourceConnectionService{createErr: fmt.Errorf("%w: browser 连接必须在 config.endpoint_url 提供 CDP 端点", domainerrors.ErrValidation)}
+	router, _, _, sessionID := newSourceConnectionFixture(t, value.RoleAdmin, svc)
+
+	body := `{"provider":"browser","name":"cdp"}`
+	rec := authedSourceConnectionRequest(router, sessionID, http.MethodPost, "/api/v1/workspaces/acme/source-connections", body)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.NotNil(t, svc.createInput, "service 应被调用（handler 不拦截 config）")
+	require.Contains(t, rec.Body.String(), "endpoint_url")
+}
+
 func TestSourceConnectionHandlerCreateRejectsUnknownField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	svc := &fakeSourceConnectionService{createItem: &dto.SourceConnection{}}
@@ -289,4 +411,95 @@ func TestSourceConnectionRouteRequiresSession(t *testing.T) {
 
 	// 没有 session cookie -> 401，API Key 不被接受。
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestSourceConnectionHandlerTestConnectionReturns200 断言连接测试端点的核心契约
+// （T12 评审移交 b）：探测成功返回 200 + {ok, provider, duration_ms, message}。
+func TestSourceConnectionHandlerTestConnectionReturns200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &fakeSourceConnectionService{testResult: &dto.SourceConnectionTestResult{
+		OK: true, Provider: "firecrawl", DurationMS: 123, Message: "连接成功（firecrawl，耗时 123 ms）",
+	}}
+	router, workspaceID, _, sessionID := newSourceConnectionFixture(t, value.RoleAdmin, svc)
+
+	connectionID := uuid.New()
+	rec := authedSourceConnectionRequest(router, sessionID, http.MethodPost,
+		"/api/v1/workspaces/acme/source-connections/"+connectionID.String()+"/test", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, workspaceID, svc.testWorkspaceID)
+	require.Equal(t, connectionID, svc.testID)
+
+	var got dto.SourceConnectionTestResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.True(t, got.OK)
+	require.Equal(t, "firecrawl", got.Provider)
+	require.Equal(t, int64(123), got.DurationMS)
+	require.Contains(t, got.Message, "连接成功")
+}
+
+// TestSourceConnectionHandlerTestConnectionProbeFailureStill200 契约核心：探测失败
+// 是「结果」不是「错误」——仍返回 200，失败原因在 message。
+func TestSourceConnectionHandlerTestConnectionProbeFailureStill200(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &fakeSourceConnectionService{testResult: &dto.SourceConnectionTestResult{
+		OK: false, Provider: "jina", DurationMS: 45, Message: "jina 返回 HTTP 401",
+	}}
+	router, _, _, sessionID := newSourceConnectionFixture(t, value.RoleAdmin, svc)
+
+	rec := authedSourceConnectionRequest(router, sessionID, http.MethodPost,
+		"/api/v1/workspaces/acme/source-connections/"+uuid.New().String()+"/test", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got dto.SourceConnectionTestResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.False(t, got.OK)
+	require.Contains(t, got.Message, "HTTP 401")
+}
+
+// TestSourceConnectionHandlerTestConnectionErrorMapping 「无法测试」才走 error：
+// 已停用（ErrValidation，用户可自助解决）→ 400 而非 500；连接不存在 → 404。
+func TestSourceConnectionHandlerTestConnectionErrorMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{
+			name:   "已停用映射 400",
+			err:    fmt.Errorf("%w: 来源连接 %s 已停用，请先启用后再测试", domainerrors.ErrValidation, "conn"),
+			status: http.StatusBadRequest,
+		},
+		{
+			name:   "不存在映射 404",
+			err:    domainerrors.ErrNotFound,
+			status: http.StatusNotFound,
+		},
+		{
+			name:   "feishu 不支持测试映射 400",
+			err:    fmt.Errorf("%w: feishu 连接不支持连接测试", domainerrors.ErrValidation),
+			status: http.StatusBadRequest,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &fakeSourceConnectionService{testErr: tt.err}
+			router, _, _, sessionID := newSourceConnectionFixture(t, value.RoleAdmin, svc)
+			rec := authedSourceConnectionRequest(router, sessionID, http.MethodPost,
+				"/api/v1/workspaces/acme/source-connections/"+uuid.New().String()+"/test", "")
+			require.Equal(t, tt.status, rec.Code)
+		})
+	}
+}
+
+func TestSourceConnectionHandlerMemberCannotTestConnection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := &fakeSourceConnectionService{}
+	router, _, _, sessionID := newSourceConnectionFixture(t, value.RoleMember, svc)
+
+	rec := authedSourceConnectionRequest(router, sessionID, http.MethodPost,
+		"/api/v1/workspaces/acme/source-connections/"+uuid.New().String()+"/test", "")
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	// member 被中间件拦下：连接 ID 未被解析，service 不被调用。
+	require.Equal(t, uuid.Nil, svc.testID)
 }

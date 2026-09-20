@@ -79,6 +79,7 @@ function activeConnection(
     provider: 'feishu',
     name: '检索助手',
     app_id: 'cli_aaaaaaaaaaaa',
+    endpoint_url: '',
     status: 'active',
     created_at: '2026-08-01T00:00:00Z',
     updated_at: '2026-08-01T00:00:00Z',

@@ -37,9 +37,14 @@ export function LanguageForm() {
         className='grid gap-3 sm:grid-cols-2'
       >
         {SUPPORTED_LANGUAGES.map((lng) => (
-          <Label key={lng} className='group cursor-pointer font-normal'>
+          <Label
+            key={lng}
+            htmlFor={`settings-language-${lng}`}
+            className='group cursor-pointer font-normal'
+          >
             <RadioGroupItem
               value={lng}
+              id={`settings-language-${lng}`}
               aria-label={LANGUAGE_LABELS[lng]}
               className='sr-only'
             />

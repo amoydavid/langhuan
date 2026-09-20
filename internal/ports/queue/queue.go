@@ -52,6 +52,13 @@ func SourceSyncTaskID(workspaceID, kbID uuid.UUID) string {
 	return fmt.Sprintf("source_sync:%s:%s", workspaceID, kbID)
 }
 
+// SourceSyncTaskIDForSource 返回源级 source_sync 任务的稳定 TaskID（web 内容源）。
+// 按 (workspace, kb, source) 维度幂等：同一源同时只允许一个同步任务在队列中；
+// 与 KB 级 TaskID 天然不同名，互不挤占 asynq 去重空间。
+func SourceSyncTaskIDForSource(workspaceID, kbID, sourceID uuid.UUID) string {
+	return fmt.Sprintf("source_sync:%s:%s:%s", workspaceID, kbID, sourceID)
+}
+
 // SourceCleanupTaskID 返回 source_cleanup 任务的稳定 TaskID（幂等去重）。
 // 按 Job 维度幂等：同一清理 Job 同时只允许一个 source_cleanup 任务在队列中，
 // scheduler 重复派发也会被 asynq 去重。

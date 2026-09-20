@@ -24,3 +24,5 @@ deploy.yaml
 eval.config.yaml
 eval.config.vcsum*.yaml
 eval.config.miracl-simplified.yaml
+# Web 源全栈冒烟（make e2e-web）的临时产物：二进制、SQLite 数据、storageState 与 trace
+web/e2e/.tmp/

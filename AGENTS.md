@@ -276,6 +276,10 @@ make eval-vcsum
 
 # 离线冒烟（无真实 API 环境验证评测全链路；本地 mock embedding，指标无语义意义）
 make eval-smoke
+
+# Web 源全栈冒烟（web/e2e）：真实后端（standalone SQLite）+ 内嵌 SPA + Playwright 浏览器流程；
+# 爬取目标与 embedding 端点全本地；依赖本机 docker（站点桩挂在 e2e 专用网桥公网形地址）
+make e2e-web
 ```
 
 > 实际可用命令以 `cmd/langhuan` 当前 CLI 实现为准。

@@ -1,6 +1,6 @@
 # 琅嬛架构设计
 
-琅嬛是 RAG 工程中的知识转化与检索服务。当前主链路支持 File、FAQ 和 Web 三类 Document，完成解析、版本化分块、Embedding/FTS 投影、Generation 重建切换与混合检索；不调用 LLM 生成答案，不编排 Chat/Agent，也不实现图查询。Web Document 已有稳定数据合同，但 crawler 不在当前范围。
+琅嬛是 RAG 工程中的知识转化与检索服务。当前主链路支持 File、FAQ 和 Web 三类 Document，完成解析、版本化分块、Embedding/FTS 投影、Generation 重建切换与混合检索；不调用 LLM 生成答案，不编排 Chat/Agent，也不实现图查询。v1.3.0 起网站内容源（`kb_sources`）把整站/站点地图/URL 列表持续同步为 Web Document（见 8.2 节）。
 
 ## 1. 系统上下文
 
@@ -101,7 +101,7 @@ erDiagram
 
 - `file`：上传或同步得到的文件；在知识库 File Tree 中恰好有一个活动 file node。
 - `faq`：一组有序问题和一个回答；不进入 File Tree。
-- `web`：由规范化 URL 标识的网页来源；不进入 File Tree，当前不实现 crawler。
+- `web`：由规范化 URL 标识的网页来源，由网站内容源（`kb_sources`，见 8.2 节）同步产生；在知识库 File Tree 中挂 file node（`document_kind='web'`），以 `documents.kb_source_id` 溯源到产生它的源。
 
 `source_type` 表达 `upload|api|crawler|sync` 等采集渠道，不替代 kind。改变 kind 必须创建新 Document。
 
@@ -321,6 +321,41 @@ Worker payload显式包含 Workspace、KB、Document、Revision、Generation 和
 
 每个 Workspace 可注册多个飞书内部应用（`workspace_source_connections`，`provider='feishu'`）。`app_id` 等非敏感配置存 `config jsonb`；`app_secret` 经 `credential_cipher` AES-256-GCM 加密后存 `credentials_ciphertext`，**不写入 YAML**。飞书连接 cipher 复用主凭证密钥但 AAD 前缀为 `source-connection:`，与 model-provider 凭证物理隔离（同一密文不可跨用途解密）。List 接口不回显 secret。
 
+## 8.2 网站内容源（v1.3.0）
+
+琅嬛支持把网站作为知识库内容源持续同步。**站点即内容源**：源是 `kb_sources`（`kind='web'`）实体，挂在知识库下——KB 仍是唯一检索域，源只是摄取通道，页面一律以 `documents.kind='web'` 落库（规范化 URL 承载于 source anchor），按 URL 路径投影进 KB File Tree（`document_kind='web'` 的 file node），`documents.kb_source_id` + `documents.source_meta`（etag/last_modified/last_engine/final_url 等每文档抓取元数据）承载溯源与增量事实。管线复用现有 parse/chunk/index/publish，任务复用 `source_sync` 类型，与飞书同步双轨并行（DB 与 Repository 惯例见 `docs/DATABASE_GUIDELINES.md` 9.b 节，REST/MCP 消费面见 `docs/API_ACCESS.md` 8.2.1 节）。
+
+### 模式、引擎与增量
+
+- 三种发现模式：`crawl`（受限 BFS：规范化 URL 去重 + `max_depth`/`max_pages` + path glob 过滤 + `allow_subdomains`）、`sitemap`（sitemap.xml 展开）、`urls`（显式 URL 列表，可经 API 增删）。`mode`/`crawl.seed_url`/`sitemap.url` 创建后不可变（换站点 = 新建源替换旧源，源的重建成本远低于重建 KB）。
+- 四引擎 + `auto`：`http`（默认；SSRF-safe client + 条件请求）、`render`（go-rod 连接部署侧 CDP 渲染端）、`firecrawl`/`jina`（provider markdown 直通）。`fetch.engine != http` 时必须绑定同 workspace 对应 provider 的 active 来源连接；`auto` 以 `http` 起步，命中 JS-shell 启发式或正文低于 `auto_escalate.min_text_chars` 时用绑定连接的引擎重抓（无连接可升级则接受原结果 + warning `possible_js_shell`），后续同步沿用上次成功引擎（`source_meta.last_engine` 短路，失败回落再判定）。
+- **robots 门在琅嬛侧、先于所有引擎生效**（`crawl.respect_robots=true` 默认开）：发现与 Fetch 走同一道门，Disallow 跳过 + warning；robots.txt 拉取失败按允许处理并记 warning（保守可用性选择）。这比"provider 自行决定 robots"更严——firecrawl/jina 供应商侧的 robots 行为（firecrawl 遵守、jina 不保证）是额外变量，不受琅嬛配置控制。
+- **三级增量**（游标按源隔离，无新增状态机）：① sitemap `lastmod`/EditTime cursor 短路（`<= cursor` 且无重试需求直接跳过）；② HTTP 条件请求（仅 `http` 引擎，`If-None-Match`/`If-Modified-Since`，`304` 不建 revision）；③ `content_hash` 兜底（render/provider 无条件语义，hash 未变不建 revision）。force 全量重爬语义与飞书一致（hash 未变也建新 revision）。
+
+### 执行隔离
+
+爬取只发生在队列 worker 内，调度器与一切 API 入口只负责入队与合并。Meta Scheduler 扫描到期 web 源（`status='active'` 且 `next_sync_at <= now`）入队同一 `source_sync` 任务类型，在 connection 分组限流之上追加**全局在飞上限** `web_source.max_concurrent_syncs`（仅统计 target 为 web 源的 active Job；飞书任务由其既有 connection 限额管辖）——asynq 权重只是调度优先级，不做在飞封顶的话多个长爬取会挤占 parse/index 等短任务的 worker 槽。**任务超时按源推导**：`min(页数基准 × (request_timeout_seconds + request_delay_ms) × 2, sync_task_timeout_seconds)`，显式覆盖全局 `queue.task_timeout_seconds` 默认，避免大站爬取陷入"超时→重试→再超时"循环；同源单 active 任务由入队合并保证，超时中断后的恢复 = cursor watermark + diff 幂等，重跑不重复建 revision。进程级参数全部在 `config.yaml` 的 `web_source` 小节（见 `config.example.yaml`）。
+
+### SSRF 分层语义与渲染端部署
+
+SSRF 防护按引擎分层，部署者必须理解差异，系统不声称统一的端到端保证：
+
+| 引擎 | 防护边界 |
+|---|---|
+| `http` | 完整防护：dial 期 IP 校验、redirect 逐跳重校验、私网/环回/链路本地阻断；scheme 放开 http/https（私网已在 IP 层阻断，明文抓取与主流爬虫一致） |
+| `render` | 导航前在琅嬛侧解析 host 并拒绝私网地址；但页面子请求与 DNS 解析发生在浏览器进程侧，琅嬛的 dial hook 不生效——依赖浏览器侧能力或部署侧网络隔离 |
+| `firecrawl`/`jina` | 抓取在 provider 基础设施执行；琅嬛发送前仍做 URL/host 预校验（解析 + 私网拒绝），但不声称端到端保证 |
+
+render 引擎需要部署侧提供 CDP 渲染端（来源连接 `provider='browser'` 的 `endpoint_url`，并发受 `web_source.render_max_concurrent` 全局信号量约束），推荐矩阵：
+
+| 渲染端 | 定位 |
+|---|---|
+| Obscura | **默认推荐**：轻量 + 真 V8；私网默认禁用（`--allow-private-network` 需显式放开） |
+| browserless / headless Chrome | 兼容兜底：真实 Chrome 行为，站点兼容性最好 |
+| OxiBrowser | 极简站点；内建 CIDR 阻断 |
+
+连接测试契约（`POST .../source-connections/:connection_id/test`；`feishu` 不支持：firecrawl/jina 抓取固定测试页验证抓取链路，`browser` 与渲染端点完成 CDP `Browser.getVersion` 握手、不打开任何页面）：探测成功与失败同为 `200`，以 `ok` 字段区分——**与模型连接测试（失败 4xx/5xx）契约不同**，详见 `docs/API_ACCESS.md` 8.2 节。
+
 ## 9. 状态、删除与保留
 
 Document v2 状态固定为：
@@ -514,6 +549,6 @@ standalone 备份恢复见 `docs/operations/backup-restore.md` §9，设计与 r
 
 数据库验收覆盖复合外键、FAQ 完整性、父子分块 lineage 与 flat 回退、父块不入索引、完整父块检索上下文、文件树 cycle/name/delete、Revision 冲突、Generation 原子切换、FAQ 答案不入索引、HNSW 表达式兼容、跨租户负向矩阵和 Auth/Model 数据保留。
 
-当前非目标：正式 RLS policy、crawler、LLM 回答生成与图查询。
+当前非目标：正式 RLS policy、LLM 回答生成与图查询。（crawler 已随 v1.3.0 网站内容源落地，见 8.2 节。）
 
 > Rerank 检索策略由 Workspace 默认 Search Settings 管理：Vector/FTS + RRF + parent 聚合后，单库和多库都读取同一个 Workspace Rerank 快照执行一次重排，返回 `rerank_score` 与 `ranking_stage`（`rrf`/`rerank`/`rrf_fallback`）。多库可混用不同 Embedding Generation；各库先独立召回和 RRF，再在全局候选上统一 Rerank。不再要求各 Generation 的 Rerank 快照一致；历史 Generation 字段仅作兼容保留，不是搜索决策来源。只有 Workspace owner/admin 可以修改 Search Settings。

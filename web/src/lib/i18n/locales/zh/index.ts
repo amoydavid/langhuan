@@ -18,6 +18,7 @@ import { routes } from './routes'
 import { searchSettings } from './searchSettings'
 import { settings } from './settings'
 import { ui } from './ui'
+import { webSource } from './webSource'
 import { workspaceReadiness } from './workspaceReadiness'
 import { workspaces } from './workspaces'
 
@@ -46,6 +47,7 @@ export const zh = {
   routes,
   settings,
   workspaceReadiness,
+  webSource,
   workspaces,
   ui,
 }

@@ -398,6 +398,16 @@ OR (document_id IS NULL AND document_revision_id IS NULL AND index_generation_id
 - 配置 `retrieval.search_run_retention`（默认 `168h`），且**必须不大于 `retired_generation_retention`**：SearchRun 的 Generation snapshot 通过 `ON DELETE RESTRICT` 引用 Generation projection，SearchRun 必须先于 retired Generation projection 物理清理，否则 Generation 删除会被 RESTRICT 阻断，回放也会引用到已不存在的 Generation。
 - SearchRun 清理同样按 Workspace 进入 `WithinWorkspace`，按 `expires_at` 与 UUID 稳定排序，`FOR UPDATE SKIP LOCKED`，不绕过 RLS-ready 边界。
 
+### 9.b 网站内容源（迁移 000025 / 000026）
+
+网站内容源引入源级实体 `kb_sources`（本版仅 `kind='web'`），沿用库内复合外键与双层模型惯例：
+
+- `kb_sources` 携带完整 lineage：`(workspace_id, kb_id)` 复合外键指向 `knowledge_bases`（`ON DELETE CASCADE`），`UNIQUE (workspace_id, kb_id, id)` 供 `documents`/`jobs` 的复合外键引用（保证引用行与源所属 KB 一致）；同库活源名称唯一由部分唯一索引 `uq_kb_sources_active_name`（`WHERE deleted_at IS NULL`）约束，软删后释放名字。`config`/`sync_cursor`/`sync_last_result` 均为 jsonb object（CHECK `jsonb_typeof`）；源级配置与运行态键（cursor/force latch/last_result）同行存放，但读写拆分：CRUD 在 `kb_source_repository.go`，同步运行态在 `kb_source_sync_store.go`，共用 `KbSourceRow` + `kbSourceToRow`/`kbSourceFromRow` 双层转换。
+- `documents.kb_source_id` + `source_meta jsonb`（默认 `'{}'`）：页面溯源列经复合外键 `(workspace_id, knowledge_base_id, kb_source_id)` 引用源，`ON DELETE SET NULL (kb_source_id)` 限定只置空溯源列、不动租户键；`source_meta` 存 etag/last_modified/last_engine 等每文档抓取元数据，非 web 文档保持 `'{}'`。部分索引 `idx_documents_kb_source` 支持按源统计页面/失败计数。
+- `workspace_source_connections.provider` CHECK 由 `'feishu'` 放宽为四值 `feishu|firecrawl|jina|browser`；web 引擎凭证仍走 `credentials_ciphertext`（`source-connection:` AAD 前缀，见 9.z）。
+- `jobs.kb_source_id`：`jobs_target_check` 放宽为五选一，第五分支仅允许 `source_sync`/`source_cleanup` 以源级目标落库（与 document/generation/KB 目标互斥）；部分索引 `idx_jobs_source_active` 镜像 9.z 的 `idx_jobs_conn_active`，供 `CountActiveBySource`（源级 active 任务统计：调度入队前的同源串行检查与源删除的在飞守卫）使用。全局在飞上限另走 `CountActiveWebSourceJobs`（跨 workspace 的全局条件计数，无 workspace 前导条件、不走此索引）。约束触发器 `enforce_jobs_source_target`（INSERT/UPDATE 各一，DEFERRABLE）在写入或改指源目标时校验源与所属 KB 未软删；触发面刻意收窄到「携带/变更源目标」——任务落库后源被软删不冻结在飞任务，worker 仍可推进到终态。
+- 迁移 000026 把 `file_tree_nodes` 的 file 节点 `document_kind` 由 `'file'` 放宽为 `file|web`（幂等替换 `shape_check`），web 页面按 URL 路径投影进 KB 文件树。
+
 ## 10. 迁移与测试
 
 - 迁移位于 `internal/infrastructure/migrate/migrations/`，版本严格递增，每个 up 有对应 down。

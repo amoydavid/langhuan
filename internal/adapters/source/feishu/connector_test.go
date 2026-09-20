@@ -256,7 +256,7 @@ func TestListTreeWalksWikiNodesRecursively(t *testing.T) {
 	}
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	nodes := snapshot.Nodes
 	require.True(t, snapshot.Complete, "首版假设 Complete=true")
@@ -311,7 +311,7 @@ func TestListTreeWalksDriveFolderRecursively(t *testing.T) {
 	}
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: rootFolder})
+		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: rootFolder}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	nodes := snapshot.Nodes
 	require.Len(t, nodes, 3, "应返回 root 下 2 文件 + subfolder 下 1 文件 共3个节点")
@@ -374,7 +374,7 @@ func TestListTreeWikiPropagatesGetNodeError(t *testing.T) {
 	api.getNodeErr[rootToken] = sourceport.ErrSourceNotFound
 
 	_, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, sourceport.ErrSourceNotFound),
 		"应传播 ErrSourceNotFound，got %v", err)
@@ -396,7 +396,7 @@ func TestListTreeWikiPropagatesListChildrenError(t *testing.T) {
 	api.listChildrenErr[rootToken] = fmt.Errorf("%w: 鉴权失败", sourceport.ErrSourceUnavailable)
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, sourceport.ErrSourceUnavailable),
 		"致命错误应传播 ErrSourceUnavailable，got %v", err)
@@ -427,7 +427,7 @@ func TestListTreeDrivePagination(t *testing.T) {
 	api.driveHasMore[drivePageKey{folder, page2}] = false
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: folder})
+		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: folder}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	nodes := snapshot.Nodes
 	require.Len(t, nodes, 3, "两页文件都应被收集")
@@ -484,7 +484,7 @@ func TestListTreeWikiIncompleteOnRecoverablePageFailure(t *testing.T) {
 	api.wikiChildrenPagedErr[key][page2] = errors.New("飞书限流，请稍后重试")
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.NoError(t, err, "可恢复错误不应导致 ListTree 返回 error")
 	assert.False(t, snapshot.Complete, "可恢复分页失败必须标记 Complete=false")
 	require.NotEmpty(t, snapshot.Warnings, "partial snapshot 应携带 warning")
@@ -521,7 +521,7 @@ func TestListTreeDriveIncompleteOnRecoverablePageFailure(t *testing.T) {
 	api.driveListPagedErr[drivePageKey{folder, page2}] = errors.New("飞书限流，请稍后重试")
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: folder})
+		model.SyncRoot{Kind: sourceport.SyncRootDriveFolder, Token: folder}, sourceport.ListOptions{})
 	require.NoError(t, err, "可恢复错误不应导致 ListTree 返回 error")
 	assert.False(t, snapshot.Complete, "可恢复分页失败必须标记 Complete=false")
 	require.NotEmpty(t, snapshot.Warnings, "partial snapshot 应携带 warning")
@@ -568,7 +568,7 @@ func TestListTreeWikiSubtreeRecoverableFailure(t *testing.T) {
 	_ = grandB2Token
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	assert.False(t, snapshot.Complete, "子树失败应标记 Complete=false")
 	require.NotEmpty(t, snapshot.Warnings)
@@ -608,7 +608,7 @@ func TestListTreeCompleteCalculatesMaxEditTime(t *testing.T) {
 	}
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	require.True(t, snapshot.Complete, "完整遍历应 Complete=true")
 	// MaxEditTime 应等于 editMsA（3000ms）对应的时间。
@@ -649,7 +649,7 @@ func TestListTreePartialStillReportsMaxEditTime(t *testing.T) {
 	api.wikiChildrenPagedErr[key][page2] = errors.New("第二页限流")
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	assert.False(t, snapshot.Complete)
 	// 已收集节点中最大 EditTime = 5000ms。
@@ -672,7 +672,7 @@ func TestListTreeFatalAuthErrorReturnsNoSnapshot(t *testing.T) {
 	api.listChildrenErr[rootToken] = fmt.Errorf("%w: token 失效", sourceport.ErrSourceUnavailable)
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, sourceport.ErrSourceUnavailable),
 		"致命鉴权错误应传播 ErrSourceUnavailable，got %v", err)
@@ -696,7 +696,7 @@ func TestListTreeEmptyAndCompleteIsLegal(t *testing.T) {
 	api.wikiChildren[wikiChildKey{spaceID, rootToken}] = nil
 
 	snapshot, err := testConnector(api).ListTree(context.Background(), testConn(),
-		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken})
+		model.SyncRoot{Kind: sourceport.SyncRootWikiNode, Token: rootToken}, sourceport.ListOptions{})
 	require.NoError(t, err)
 	assert.True(t, snapshot.Complete, "空且完整的快照应 Complete=true")
 	// 根节点自身应在结果中（walkWiki 总会先放入根节点）。

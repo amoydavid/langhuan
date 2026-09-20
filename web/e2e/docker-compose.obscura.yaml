@@ -1,0 +1,78 @@
+# E2E opt-in 附加编排：Obscura 渲染端（真实 CDP 浏览器集成验证，2026-09-17 已实测跑通）。
+#
+# 用法（在基础编排 make e2e-web 的 embeddings 起着的前提下）：
+#   docker compose -f web/e2e/docker-compose.obscura.yaml up -d
+#   然后建 browser 连接：endpoint_url = ws://127.0.0.1:9222/devtools/browser
+#   再建 engine=render（或 auto）的网站源指向 JS-shell 站点：
+#       http://93.184.216.11:47801/
+#
+# 为什么两个服务都要：普通静态站点抓不出「render 是否真的执行了 JS」——
+# 本编排的 spa-site 页面正文**只存在于 <script> 字符串里**（DOM 初始仅有空
+# 挂载点），只有真浏览器执行脚本后才能取到正文，因此抓取结果可直接判定
+# render 通道是否生效（http 引擎只会拿到空壳，触发 auto 升级）。
+#
+# 实测结论：
+#   1. Obscura v0.2.2 的 CDP 与琅嬛 render 引擎配合正常：导航、执行脚本、
+#      取渲染后 outerHTML 全通；auto 引擎由 http 升级到 render 后
+#      documents.source_meta.last_engine = "render" 落库，检索命中 JS 正文。
+#   2. 琅嬛侧需先修 rod 兼容性（fetch_render.go 改用原生 RuntimeEvaluate）：
+#      rod 的 Page.Eval/HTML/WaitStable 走 callFunctionOn 的 remote object
+#      引用传参，Obscura 对引用参数支持不完整（解析为 null）。
+#   3. 已知限制：Obscura CDP server 在连接异常断开后可能进入退化状态
+#      （拒绝后续握手），需 `docker restart` 恢复；琅嬛侧一次失败后重试前
+#      建议先重启容器。
+#   4. 容器内 SSRF 拦截：Obscura 默认拒绝私网目标，本编排的站点桩挂在与
+#      site 相同的「公网形」子网（93.184.216.0/24，见 docker-compose.e2e.yaml
+#      头注的安全模型），因此无需 --allow-private-network。
+#
+# 清理：docker compose -f web/e2e/docker-compose.obscura.yaml down
+
+name: langhuan-web-e2e-obscura
+
+networks:
+  public-shaped:
+    external: true
+    name: langhuan-web-e2e_public-shaped
+
+services:
+  # JS-shell 站点桩：正文全部由客户端脚本注入（http 引擎只能拿到空挂载点）。
+  spa-site:
+    image: node:20-alpine
+    working_dir: /stubs
+    volumes:
+      - ./stubs:/stubs:ro
+    command:
+      - node
+      - spa-site.mjs
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.11
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:47801/healthz').then((r) => { if (!r.ok) throw new Error(String(r.status)) })
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  # Obscura：Rust 实现的轻量 headless browser（CDP 兼容，镜像约 57MB）。
+  # 端口发布到宿主回环：琅嬛 browser 连接的 endpoint_url 填
+  # ws://127.0.0.1:9222/devtools/browser（镜像 Cmd 已设 --host 0.0.0.0）。
+  obscura:
+    image: h4ckf0r0day/obscura:latest
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.24
+    ports:
+      - '127.0.0.1:9222:9222'
+    healthcheck:
+      test:
+        - CMD
+        - /obscura
+        - --version
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s

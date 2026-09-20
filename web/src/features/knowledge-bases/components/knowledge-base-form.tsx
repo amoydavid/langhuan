@@ -194,13 +194,20 @@ export function KnowledgeBaseForm({
                       const label = t(
                         `knowledgeBases.form.sourceOptions.${value}`
                       )
+                      // 原生 label htmlFor → item id：整卡可点（FormControl
+                      // 包卡片 label 会破坏与 radio 的关联，点文字无效）。
                       return (
-                        <FormControl key={value}>
-                          <FormLabel className='flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 font-normal has-[button[data-state=checked]]:border-primary'>
-                            <RadioGroupItem value={value} aria-label={label} />
-                            {label}
-                          </FormLabel>
-                        </FormControl>
+                        <label
+                          key={value}
+                          htmlFor={`kb-source-type-${value}`}
+                          className='flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 font-normal has-[button[data-state=checked]]:border-primary'
+                        >
+                          <RadioGroupItem
+                            value={value}
+                            id={`kb-source-type-${value}`}
+                          />
+                          {label}
+                        </label>
                       )
                     }
                   )}

@@ -543,6 +543,7 @@ func TestSourceSyncStoreReusesDocumentAndIncrementsRevision(t *testing.T) {
 		ExternalID:      "doccnUpdate1",
 		DocumentID:      document.ID,
 		RevisionID:      newRevisionID,
+		GenerationID:    seed.generationID,
 		Title:           "飞书文档一（已更新）",
 		ParentNodeID:    seed.rootID,
 		RawStorageKey:   "raw/doccnUpdate1-v2.md",
@@ -623,6 +624,7 @@ func TestSourceSyncStoreCreateRevisionRejectsMismatchedExternalID(t *testing.T) 
 		ExternalID:      "doccnConflict",
 		DocumentID:      uuid.New(), // 与 document.ID 不同
 		RevisionID:      uuid.New(),
+		GenerationID:    seed.generationID,
 		Title:           "飞书冲突文档",
 		ParentNodeID:    seed.rootID,
 		RawStorageKey:   "raw/x.md",
@@ -1157,5 +1159,17 @@ func TestUpsertSourceFolderInsertsThenUpdates(t *testing.T) {
 	}
 	if rows[0].ParentID == nil || *rows[0].ParentID != otherParent {
 		t.Fatalf("folder parent_id = %#v, want %s", rows[0].ParentID, otherParent)
+	}
+
+	// 命中既有行时必须把 DB 实际 id 回填给调用方：调用方（upsertSyncFolder）
+	// 用它注册 token→nodeID 父子映射；若仍持构造函数新生成的 id，后续新增文档
+	// 的 parent_id 会指向不存在的行——检查推迟到提交时（PG DEFERRABLE /
+	// SQLite defer_foreign_keys）才报外键失败，且错误不带 store 层包装。
+	// 2026-09-17 E2E 实测暴露（多源共享目录 + 新增页面场景）。
+	if folder2.ID != folder1.ID {
+		t.Fatalf("folder2.ID = %s, want 既有行 id %s（upsert 命中时必须回填）", folder2.ID, folder1.ID)
+	}
+	if folder2.ID != rows[0].ID {
+		t.Fatalf("folder2.ID = %s, want DB 行 id %s", folder2.ID, rows[0].ID)
 	}
 }

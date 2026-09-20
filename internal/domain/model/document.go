@@ -61,6 +61,14 @@ type Document struct {
 	FAQQuestionCount   int
 	ErrorMessage       string
 	ExternalID         string
+	// KbSourceID 是产生该文档的内容源（kb_sources.id，溯源列）；
+	// 上传/FAQ 等非源文档为 nil，源行硬删除时置 NULL（溯源断开、页面保留）。
+	KbSourceID *uuid.UUID
+	// SourceMeta 是每文档抓取运行态（documents.source_meta jsonb 的领域投影）：
+	// etag/last_modified/last_engine/last_fetch_at/last_http_status/final_url。
+	// 键名合同集中在 ports/source（SourceMeta 常量），domain 不承载存储形状；
+	// 非 web 文档保持空 map。nil 与空 map 等价。
+	SourceMeta map[string]any
 	// ContentHash 是文档正文（normalized markdown）的稳定哈希，供来源同步增量去重。
 	// 可为空：上传/解析场景不依赖该字段。
 	ContentHash string

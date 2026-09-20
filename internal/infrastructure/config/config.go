@@ -28,8 +28,65 @@ type Config struct {
 	MCP           MCPConfig           `yaml:"mcp"`
 	Search        SearchConfig        `yaml:"search"`
 	SourceSync    SourceSyncConfig    `yaml:"source_sync"`
+	WebSource     WebSourceConfig     `yaml:"web_source"`
 	Queue         QueueConfig         `yaml:"queue"`
 	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// WebSourceConfig 描述 web 内容源（kb_sources.kind='web'）的进程级参数（spec §4.2）。
+// 全部为非敏感值；抓取连接凭证保存在 workspace_source_connections（加密密文）。
+type WebSourceConfig struct {
+	// MaxSourcesPerKB 是单个知识库可挂的网站源数上限（spec §4.2；创建源时钳制）。
+	MaxSourcesPerKB int `yaml:"max_sources_per_kb"`
+	// MaxConcurrentSyncs 是全局同时在飞的 web 源同步任务上限（spec §9.1 执行隔离）。
+	// 仅统计目标为 web 源的 active source_sync Job（Meta Scheduler 入队前检查）；
+	// 飞书任务由其既有 connection 限额管辖，不占此配额。
+	MaxConcurrentSyncs int `yaml:"max_concurrent_syncs"`
+	// SyncTaskTimeoutSeconds 是单次 web 源同步任务的超时硬上限（秒）。
+	// 入队超时按源推导后钳制到该值（须高于 queue.task_timeout_seconds 默认）。
+	SyncTaskTimeoutSeconds int `yaml:"sync_task_timeout_seconds"`
+	// RequestTimeoutSeconds 是单请求超时（覆盖 http 引擎、robots.txt 与 sitemap 三类请求）。
+	RequestTimeoutSeconds int `yaml:"request_timeout_seconds"`
+	// UserAgentTemplate 是抓取 UA 模板，{{base_url}} 由装配层渲染为 server.base_url；
+	// 源级 crawl.user_agent 优先于它。
+	UserAgentTemplate string `yaml:"user_agent_template"`
+	// DefaultRequestDelayMs 是同 host 请求间隔默认值；源级 crawl.request_delay_ms 优先。
+	DefaultRequestDelayMs int `yaml:"default_request_delay_ms"`
+	// MaxContentBytes 是单页响应体/抽取后 markdown 字节上限；<=0 表示不设上限。
+	MaxContentBytes int64 `yaml:"max_content_bytes"`
+	// RenderMaxConcurrent 是 render 引擎的全局并发页面上限（spec §4.2/§6.1）：
+	// 进程级信号量，跨所有 web 源共享，防 JS 渲染挤占宿主资源。
+	RenderMaxConcurrent int `yaml:"render_max_concurrent"`
+	// RobotsCacheTTLSeconds 是 robots.txt 解析结果的缓存 TTL。
+	RobotsCacheTTLSeconds int `yaml:"robots_cache_ttl_seconds"`
+	// MaxPagesCeiling 是 crawl.max_pages 的部署者天花板（超限报 validation error）。
+	MaxPagesCeiling int `yaml:"max_pages_ceiling"`
+	// MaxDepthCeiling 是 crawl.max_depth 的部署者天花板。
+	MaxDepthCeiling int `yaml:"max_depth_ceiling"`
+}
+
+// Timeout 返回单请求超时。
+func (w WebSourceConfig) Timeout() time.Duration {
+	if w.RequestTimeoutSeconds <= 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(w.RequestTimeoutSeconds) * time.Second
+}
+
+// DefaultRequestDelay 返回同 host 请求间隔默认值。
+func (w WebSourceConfig) DefaultRequestDelay() time.Duration {
+	if w.DefaultRequestDelayMs <= 0 {
+		return 200 * time.Millisecond
+	}
+	return time.Duration(w.DefaultRequestDelayMs) * time.Millisecond
+}
+
+// RobotsCacheTTL 返回 robots.txt 缓存 TTL。
+func (w WebSourceConfig) RobotsCacheTTL() time.Duration {
+	if w.RobotsCacheTTLSeconds <= 0 {
+		return time.Hour
+	}
+	return time.Duration(w.RobotsCacheTTLSeconds) * time.Second
 }
 
 // QueueConfig 描述 asynq 异步队列的重试、退避、超时、并发与保留策略。
@@ -434,8 +491,26 @@ func defaultConfig() Config {
 		},
 		Search:        defaultSearchConfig(),
 		SourceSync:    defaultSourceSyncConfig(),
+		WebSource:     defaultWebSourceConfig(),
 		Queue:         defaultQueueConfig(),
 		Observability: defaultObservabilityConfig(),
+	}
+}
+
+// defaultWebSourceConfig 返回 web 内容源的默认运行参数（spec §4.2 示例值）。
+func defaultWebSourceConfig() WebSourceConfig {
+	return WebSourceConfig{
+		MaxSourcesPerKB:        10,
+		MaxConcurrentSyncs:     2,
+		SyncTaskTimeoutSeconds: 14400, // 4h
+		RequestTimeoutSeconds:  30,
+		UserAgentTemplate:      "LanghuanBot/1.0 (+{{base_url}})",
+		DefaultRequestDelayMs:  200,
+		MaxContentBytes:        20 * 1024 * 1024, // 20 MiB
+		RenderMaxConcurrent:    2,
+		RobotsCacheTTLSeconds:  3600,
+		MaxPagesCeiling:        10000,
+		MaxDepthCeiling:        10,
 	}
 }
 
@@ -624,6 +699,39 @@ func (c *Config) applyDefaults() {
 	if c.SourceSync.MaxContentBytes <= 0 {
 		c.SourceSync.MaxContentBytes = 50 * 1024 * 1024
 	}
+	if c.WebSource.RequestTimeoutSeconds <= 0 {
+		c.WebSource.RequestTimeoutSeconds = 30
+	}
+	if c.WebSource.MaxSourcesPerKB <= 0 {
+		c.WebSource.MaxSourcesPerKB = 10
+	}
+	if c.WebSource.MaxConcurrentSyncs <= 0 {
+		c.WebSource.MaxConcurrentSyncs = 2
+	}
+	if c.WebSource.SyncTaskTimeoutSeconds <= 0 {
+		c.WebSource.SyncTaskTimeoutSeconds = 14400
+	}
+	if c.WebSource.UserAgentTemplate == "" {
+		c.WebSource.UserAgentTemplate = "LanghuanBot/1.0 (+{{base_url}})"
+	}
+	if c.WebSource.DefaultRequestDelayMs <= 0 {
+		c.WebSource.DefaultRequestDelayMs = 200
+	}
+	if c.WebSource.MaxContentBytes <= 0 {
+		c.WebSource.MaxContentBytes = 20 * 1024 * 1024
+	}
+	if c.WebSource.RenderMaxConcurrent <= 0 {
+		c.WebSource.RenderMaxConcurrent = 2
+	}
+	if c.WebSource.RobotsCacheTTLSeconds <= 0 {
+		c.WebSource.RobotsCacheTTLSeconds = 3600
+	}
+	if c.WebSource.MaxPagesCeiling <= 0 {
+		c.WebSource.MaxPagesCeiling = 10000
+	}
+	if c.WebSource.MaxDepthCeiling <= 0 {
+		c.WebSource.MaxDepthCeiling = 10
+	}
 	if c.Queue.Concurrency <= 0 {
 		c.Queue.Concurrency = 8
 	}
@@ -720,6 +828,9 @@ func (c *Config) validate() error {
 	if err := c.validateSourceSync(); err != nil {
 		return err
 	}
+	if err := c.validateWebSource(); err != nil {
+		return err
+	}
 	if err := c.validateQueue(); err != nil {
 		return err
 	}
@@ -777,6 +888,32 @@ func (c *Config) validateSourceSync() error {
 	}
 	if c.SourceSync.MaxContentBytes <= 0 {
 		return errors.New("source_sync.max_content_bytes 必须大于 0")
+	}
+	return nil
+}
+
+// validateWebSource 校验 web 内容源参数（applyDefaults 已兜底正数，此处防显式非法值）。
+func (c *Config) validateWebSource() error {
+	if c.WebSource.MaxConcurrentSyncs <= 0 {
+		return errors.New("web_source.max_concurrent_syncs 必须大于 0")
+	}
+	if c.WebSource.SyncTaskTimeoutSeconds <= 0 {
+		return errors.New("web_source.sync_task_timeout_seconds 必须大于 0")
+	}
+	if c.WebSource.RequestTimeoutSeconds <= 0 {
+		return errors.New("web_source.request_timeout_seconds 必须大于 0")
+	}
+	if c.WebSource.MaxSourcesPerKB <= 0 {
+		return errors.New("web_source.max_sources_per_kb 必须大于 0")
+	}
+	if c.WebSource.MaxContentBytes <= 0 {
+		return errors.New("web_source.max_content_bytes 必须大于 0")
+	}
+	if c.WebSource.MaxPagesCeiling <= 0 {
+		return errors.New("web_source.max_pages_ceiling 必须大于 0")
+	}
+	if c.WebSource.MaxDepthCeiling <= 0 {
+		return errors.New("web_source.max_depth_ceiling 必须大于 0")
 	}
 	return nil
 }

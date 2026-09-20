@@ -14,6 +14,12 @@ const testEncryptionKey = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
 
 func TestV060DefaultsAndNormalization(t *testing.T) {
 	cfg := defaultConfig()
+	if cfg.WebSource.MaxConcurrentSyncs != 2 {
+		t.Fatalf("web_source.max_concurrent_syncs = %d, want 2", cfg.WebSource.MaxConcurrentSyncs)
+	}
+	if cfg.WebSource.SyncTaskTimeoutSeconds != 14400 {
+		t.Fatalf("web_source.sync_task_timeout_seconds = %d, want 14400", cfg.WebSource.SyncTaskTimeoutSeconds)
+	}
 	if cfg.APIKey.DefaultLifetimeSeconds != 7776000 {
 		t.Fatalf("api_key.default_lifetime_seconds = %d, want 7776000", cfg.APIKey.DefaultLifetimeSeconds)
 	}
@@ -320,6 +326,50 @@ func TestDefaultConfigAllowedFileTypes(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("allowed file types = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestWebSourceConcurrencyAndTimeoutDefaults 验证 web_source 新增调度键：
+// 显式配置生效；零值经 applyDefaults 回填默认（在飞上限 2、任务超时硬上限 4h）。
+func TestWebSourceConcurrencyAndTimeoutDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.WebSource.MaxConcurrentSyncs = 5
+	cfg.WebSource.SyncTaskTimeoutSeconds = 7200
+	cfg.applyDefaults()
+	if cfg.WebSource.MaxConcurrentSyncs != 5 || cfg.WebSource.SyncTaskTimeoutSeconds != 7200 {
+		t.Fatalf("显式配置被覆盖: syncs=%d timeout=%d",
+			cfg.WebSource.MaxConcurrentSyncs, cfg.WebSource.SyncTaskTimeoutSeconds)
+	}
+
+	zero := &Config{WebSource: WebSourceConfig{RequestTimeoutSeconds: 30}}
+	zero.applyDefaults()
+	if zero.WebSource.MaxConcurrentSyncs != 2 {
+		t.Fatalf("web_source.max_concurrent_syncs 回填 = %d, want 2", zero.WebSource.MaxConcurrentSyncs)
+	}
+	if zero.WebSource.SyncTaskTimeoutSeconds != 14400 {
+		t.Fatalf("web_source.sync_task_timeout_seconds 回填 = %d, want 14400", zero.WebSource.SyncTaskTimeoutSeconds)
+	}
+}
+
+// TestWebSourceMaxSourcesPerKBDefault 验证 web_source.max_sources_per_kb：
+// 显式配置生效；零值经 applyDefaults 回填默认 10（spec §4.2）。
+func TestWebSourceMaxSourcesPerKBDefault(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.WebSource.MaxSourcesPerKB != 10 {
+		t.Fatalf("web_source.max_sources_per_kb 默认 = %d, want 10", cfg.WebSource.MaxSourcesPerKB)
+	}
+
+	zero := &Config{WebSource: WebSourceConfig{RequestTimeoutSeconds: 30}}
+	zero.applyDefaults()
+	if zero.WebSource.MaxSourcesPerKB != 10 {
+		t.Fatalf("web_source.max_sources_per_kb 回填 = %d, want 10", zero.WebSource.MaxSourcesPerKB)
+	}
+
+	explicit := defaultConfig()
+	explicit.WebSource.MaxSourcesPerKB = 3
+	explicit.applyDefaults()
+	if explicit.WebSource.MaxSourcesPerKB != 3 {
+		t.Fatalf("web_source.max_sources_per_kb 显式值被覆盖 = %d, want 3", explicit.WebSource.MaxSourcesPerKB)
 	}
 }
 

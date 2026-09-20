@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -285,13 +286,19 @@ func insertAdditionalKnowledgeBase(
 	if err := tx.WithContext(ctx).Exec(
 		"INSERT INTO knowledge_base_index_generations "+
 			"(id, workspace_id, knowledge_base_id, embedding_model_id, provider_id, model_name, "+
-			"embedding_dimension, model_config_hash, chunker_version, config_hash, status) "+
-			"VALUES (?, ?, ?, ?, ?, 'text-embedding', 1024, 'model-hash', 1, 'config-hash', 'ready')",
-		generationID, seed.workspaceID, kbID, seed.modelID, seed.providerID,
+			"embedding_dimension, model_config_hash, chunker_version, config_hash, status, created_at) "+
+			"VALUES (?, ?, ?, ?, ?, 'text-embedding', 1024, 'model-hash', 1, 'config-hash', 'ready', ?)",
+		generationID, seed.workspaceID, kbID, seed.modelID, seed.providerID, seedTime(),
 	).Error; err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	return kbID, rootID, nil
+}
+
+// seedTime 返回种子行的统一 created_at 基准：宿主时钟回退一小时。
+// 与业务侧 Go time.Now 同钟，避免与 PG 容器 now() 的时钟漂移影响排序断言。
+func seedTime() time.Time {
+	return time.Now().UTC().Add(-time.Hour)
 }
 
 func insertKnowledgeSchemaSeed(t *testing.T, ctx context.Context, tx *gorm.DB) knowledgeSchemaSeed {
@@ -318,12 +325,19 @@ func insertKnowledgeSchemaSeed(t *testing.T, ctx context.Context, tx *gorm.DB) k
 		{"INSERT INTO file_tree_nodes (id, workspace_id, knowledge_base_id, node_type, name) " +
 			"VALUES (?, ?, ?, 'root', '')",
 			[]any{seed.rootID, seed.workspaceID, seed.kbID}},
+		// created_at 显式取宿主时钟并回退一小时：种子 generation 会与测试里用
+		// model.NewIndexGeneration（Go time.Now）创建的 generation 一起按
+		// created_at DESC 排序断言。若省略该列，值来自 PG 容器的 now()，而
+		// Docker Desktop VM 与宿主机时钟存在毫秒级漂移——先后插入仅隔亚毫秒，
+		// 时钟漂移即可翻转排序，导致 List 顺序断言随机失败（两次插入比较
+		// 必须落在同一时钟上，且种子必须明确更旧）。
 		{"INSERT INTO knowledge_base_index_generations " +
 			"(id, workspace_id, knowledge_base_id, embedding_model_id, provider_id, model_name, " +
-			"embedding_dimension, model_config_hash, chunker_version, chunking_config, config_hash, status) " +
+			"embedding_dimension, model_config_hash, chunker_version, chunking_config, config_hash, status, created_at) " +
 			"VALUES (?, ?, ?, ?, ?, 'text-embedding', 1024, 'model-hash', 1, " +
-			"'{\"chunk_size\":512,\"chunk_overlap\":80}'::jsonb, 'config-hash', 'ready')",
-			[]any{seed.generationID, seed.workspaceID, seed.kbID, seed.modelID, seed.providerID}},
+			"'{\"chunk_size\":512,\"chunk_overlap\":80}'::jsonb, 'config-hash', 'ready', ?)",
+			[]any{seed.generationID, seed.workspaceID, seed.kbID, seed.modelID, seed.providerID, seedTime()},
+		},
 	}
 	for _, statement := range statements {
 		if err := tx.WithContext(ctx).Exec(statement.sql, statement.args...).Error; err != nil {

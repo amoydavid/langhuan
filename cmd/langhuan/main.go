@@ -30,6 +30,7 @@ import (
 	ollamaembedding "github.com/dajee/langhuan/internal/adapters/embedding/ollama"
 	openaembedding "github.com/dajee/langhuan/internal/adapters/embedding/openai"
 	tencentcloudembedding "github.com/dajee/langhuan/internal/adapters/embedding/tencentcloud"
+	httpclient "github.com/dajee/langhuan/internal/adapters/httpclient"
 	parseradapter "github.com/dajee/langhuan/internal/adapters/parser"
 	csvparser "github.com/dajee/langhuan/internal/adapters/parser/csv"
 	docxparser "github.com/dajee/langhuan/internal/adapters/parser/docx"
@@ -45,6 +46,7 @@ import (
 	rerankcompatible "github.com/dajee/langhuan/internal/adapters/rerank/compatible"
 	siliconflowadapter "github.com/dajee/langhuan/internal/adapters/siliconflow"
 	feishu "github.com/dajee/langhuan/internal/adapters/source/feishu"
+	web "github.com/dajee/langhuan/internal/adapters/source/web"
 	localstorage "github.com/dajee/langhuan/internal/adapters/storage/local"
 	s3storage "github.com/dajee/langhuan/internal/adapters/storage/s3"
 	gsetokenizer "github.com/dajee/langhuan/internal/adapters/tokenizer/gse"
@@ -162,6 +164,7 @@ type runtimeServices struct {
 	sourceCleanup           *service.SourceCleanupService
 	sourceCleanupScheduler  *service.SourceCleanupScheduler
 	sourceConnections       *service.SourceConnectionService
+	kbSources               *service.KbSourceService
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
 	searchReplay            *service.SearchReplayService
@@ -750,32 +753,68 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	}
 	// 同一 repository 同时供 CRUD service 与同步 selector 复用。
 	sourceConnectionRepo := db.NewSourceConnectionRepository(gormDB)
-	sourceConnectionService := service.NewSourceConnectionService(service.SourceConnectionServiceDeps{
-		Repository: sourceConnectionRepo, Cipher: sourceConnectionCipher,
-	})
 	sourceConnectionSelector := service.NewSourceConnectionSelector(
 		sourceConnectionRepo, sourceConnectionCipher,
 	)
+	// 连接测试探测（v1.3.0 spec §9.4）：复用 provider 通道抓取路径与渲染建连
+	// 代码，超时对齐 web_source.request_timeout_seconds。
+	sourceConnectionService := service.NewSourceConnectionService(service.SourceConnectionServiceDeps{
+		Repository: sourceConnectionRepo, Cipher: sourceConnectionCipher,
+		Selector: sourceConnectionSelector,
+		Prober:   web.NewConnectionProber(cfg.WebSource.Timeout()),
+	})
 	feishuConnector := feishu.NewConnector(feishu.WithCredentialDecryptor(sourceConnectionCipher))
+	// web 内容源 connector（v1.3.0 spec §4.2/§6.4）：SSRF-safe 公网 client + 渲染后的
+	// 最终 UA + 进程级礼貌性参数与 crawl 天花板。
+	webHTTPClient, err := httpclient.NewPublicWebClient(httpclient.PublicClientConfig{
+		Timeout: cfg.WebSource.Timeout(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("构造 web 抓取 SSRF client 失败: %w", err)
+	}
+	webConnector, err := web.NewConnector(web.ConnectorConfig{
+		HTTPClient:          webHTTPClient,
+		UserAgent:           strings.ReplaceAll(cfg.WebSource.UserAgentTemplate, "{{base_url}}", cfg.Server.BaseURL),
+		DefaultRequestDelay: cfg.WebSource.DefaultRequestDelay(),
+		MaxContentBytes:     cfg.WebSource.MaxContentBytes,
+		RobotsCacheTTL:      cfg.WebSource.RobotsCacheTTL(),
+		RenderMaxConcurrent: cfg.WebSource.RenderMaxConcurrent,
+		Limits: value.WebSourceLimits{
+			MaxPagesCeiling: cfg.WebSource.MaxPagesCeiling,
+			MaxDepthCeiling: cfg.WebSource.MaxDepthCeiling,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("构造 web 内容源 connector 失败: %w", err)
+	}
 	sourceSyncStore := db.NewSourceSyncDBStore(gormDB)
 	sourceSync := service.NewSourceSyncService(service.SourceSyncServiceDeps{
 		KnowledgeBaseRepository: kbRepo,
 		Selector:                sourceConnectionSelector,
 		Connector:               feishuConnector,
+		WebConnector:            webConnector,
 		RawStore:                rawStore,
 		Store:                   sourceSyncStore,
 		Queue:                   jobQueue,
 		Logger:                  log,
 		RootResolver:            feishu.ParseURL,
 		MaxContentBytes:         cfg.SourceSync.MaxContentBytes,
+		// web 源任务超时推导参数（spec §9.1）。
+		WebRequestTimeout:      cfg.WebSource.Timeout(),
+		WebDefaultRequestDelay: cfg.WebSource.DefaultRequestDelay(),
+		WebSyncTaskTimeout:     time.Duration(cfg.WebSource.SyncTaskTimeoutSeconds) * time.Second,
 	})
 
-	// Meta Scheduler：周期扫描到期飞书 KB，按来源连接限流入队。
+	// Meta Scheduler：周期扫描到期飞书 KB 与到期 web 内容源，按来源连接限流 +
+	// web 源全局在飞上限入队。
 	sourceSyncScheduler := service.NewSourceSyncScheduler(service.SourceSyncSchedulerDeps{
 		KBRepo:                     kbRepo,
 		Store:                      sourceSyncStore,
 		SyncService:                sourceSync,
+		WebStore:                   sourceSyncStore,
+		SourceService:              sourceSync,
 		MaxConcurrentPerConnection: cfg.SourceSync.MaxConcurrentPerConnection,
+		MaxConcurrentWebSyncs:      cfg.WebSource.MaxConcurrentSyncs,
 		Interval:                   time.Duration(cfg.SourceSync.SchedulerIntervalSeconds) * time.Second,
 		Logger:                     log,
 	})
@@ -793,6 +832,24 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		Queue:    jobQueue,
 		Interval: time.Duration(cfg.SourceSync.SchedulerIntervalSeconds) * time.Second,
 		Logger:   log,
+	})
+
+	// web 内容源管理用例（v1.3.0 spec §9.2，REST 管理面 T13）：
+	// Enqueuer/Remover 复用 sourceSync（EnqueueSyncForSource/RemoveSourceDocuments）。
+	// MaxSourcesPerKB 必须显式传入部署配置——service 对 <=0 兜底默认 10，
+	// 漏传会把部署者调高的上限静默吞掉（T10 评审移交）。
+	kbSources := service.NewKbSourceService(service.KbSourceServiceDeps{
+		KBs:          kbRepo,
+		Store:        db.NewKbSourceRepository(gormDB),
+		Connections:  sourceConnectionRepo,
+		SyncEnqueuer: sourceSync,
+		Remover:      sourceSync,
+		Limits: value.WebSourceLimits{
+			MaxPagesCeiling: cfg.WebSource.MaxPagesCeiling,
+			MaxDepthCeiling: cfg.WebSource.MaxDepthCeiling,
+		},
+		MaxSourcesPerKB: cfg.WebSource.MaxSourcesPerKB,
+		Logger:          log,
 	})
 
 	return &runtimeServices{
@@ -855,6 +912,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		sourceCleanup:          sourceCleanup,
 		sourceCleanupScheduler: sourceCleanupScheduler,
 		sourceConnections:      sourceConnectionService,
+		kbSources:              kbSources,
 		search:                 search,
 		multiSearch:            multiSearch,
 		searchReplay:           searchReplay,
@@ -1014,6 +1072,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		DocumentList:      services.documents,
 		DocumentGet:       services.documents,
 		DocumentIngest:    langmcp.NewMCPDocumentIngestService(services.documentIngest),
+		WebSources:        services.kbSources,
 		DocumentStatus: service.NewProgrammaticDocumentStatusService(&mcpDocumentStatusReader{
 			documents: services.documents, jobs: services.jobs,
 		}),
@@ -1074,6 +1133,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		SearchReplay:              services.searchReplay,
 		Jobs:                      services.jobs,
 		SourceConnections:         services.sourceConnections,
+		WebSources:                services.kbSources,
 		MCPHandler:                mcpServer.Handler(),
 		SPA:                       webspa.SPA,
 		MaxFileSizeBytes:          services.maxFileSize,

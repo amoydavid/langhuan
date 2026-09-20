@@ -136,9 +136,11 @@ export function APIKeyEditForm({
                     return (
                       <Label
                         key={kb.id}
+                        htmlFor={`kb-edit-scope-${kb.id}`}
                         className='flex cursor-pointer items-center gap-3 rounded-md border p-3 has-[[data-state=checked]]:border-primary'
                       >
                         <Checkbox
+                          id={`kb-edit-scope-${kb.id}`}
                           checked={checked}
                           onCheckedChange={() =>
                             field.onChange(toggleArrayValue(field.value, kb.id))
@@ -170,9 +172,11 @@ export function APIKeyEditForm({
                   return (
                     <Label
                       key={scope}
+                      htmlFor={`kb-edit-api-scope-${scope}`}
                       className='flex cursor-pointer items-center gap-3 rounded-md border p-3 has-[[data-state=checked]]:border-primary'
                     >
                       <Checkbox
+                        id={`kb-edit-api-scope-${scope}`}
                         checked={checked}
                         onCheckedChange={() =>
                           field.onChange(toggleArrayValue(field.value, scope))

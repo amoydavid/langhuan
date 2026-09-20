@@ -80,6 +80,8 @@ func (b *specBuilder) allOps() []op {
 	ops = append(ops, b.jobOps()...)
 	ops = append(ops, b.modelProviderOps()...)
 	ops = append(ops, b.modelOps()...)
+	ops = append(ops, b.sourceConnectionOps()...)
+	ops = append(ops, b.webSourceOps()...)
 	ops = append(ops, b.apiKeyOps()...)
 	ops = append(ops, b.apiKeySelfOps()...)
 	ops = append(ops, b.membershipOps()...)
@@ -544,6 +546,41 @@ func (b *specBuilder) modelOps() []op {
 			respBody: nil, status: http.StatusNoContent, sec: secSessionAdmin},
 		{method: http.MethodPost, path: "/api/v1/admin/models/:model_id/test", tag: "模型", summary: "测试平台模型连通性",
 			respBody: dto.ConnectionTestResult{}, status: http.StatusOK, sec: secSessionAdmin},
+	}
+}
+
+// sourceConnectionOps 声明来源连接管理路由的文档元数据（Session-only，不进对外
+// Bearer 文档）。当前仅连接测试一条：T12 实现 service、T13 接入 REST。
+func (b *specBuilder) sourceConnectionOps() []op {
+	return []op{
+		{method: http.MethodPost, path: wsBase + "/source-connections/:connection_id/test", tag: "来源连接", summary: "测试来源连接连通性",
+			respBody: dto.SourceConnectionTestResult{}, status: http.StatusOK, sec: secSessionAdminRole,
+			description: "契约取舍（与模型连接测试 POST /models/:model_id/test 不同，勿统一）：探测成功与探测失败都返回 200 + {ok, provider, duration_ms, message}——ok=false 表示探测失败，原因在 message（不含凭证）；「无法测试」才返回 error（连接不存在 404、连接已停用 400、feishu 不支持 400）。前端按 ok 字段分支，不按状态码判探测失败。"},
+	}
+}
+
+// webSourceOps 声明 web 内容源管理路由（v1.3.0 spec §9.2，挂 KB 下）。
+// 读 = member / knowledge-bases:read；写 = admin / knowledge-bases:write。
+func (b *specBuilder) webSourceOps() []op {
+	return []op{
+		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/web-sources", tag: "Web 内容源", summary: "创建 web 内容源（成功即入队首次同步）",
+			reqBody: createWebSourceRequest{}, respBody: webSourceMutationResponse{}, status: http.StatusCreated, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite},
+			description: "config 经 typed 全量校验（含部署天花板）与 fetch.connection_id 校验（provider 匹配 + 同 workspace active）；job_id 可省略（入队 best-effort，失败由调度器恢复）。"},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/web-sources", tag: "Web 内容源", summary: "列出 web 内容源",
+			respBody: []webSourceViewResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/web-sources/:source_id", tag: "Web 内容源", summary: "查询 web 内容源详情",
+			respBody: webSourceViewResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesRead}},
+		{method: http.MethodPatch, path: wsBase + "/knowledge-bases/:id/web-sources/:source_id", tag: "Web 内容源", summary: "更新 web 内容源（成功即入队同步）",
+			reqBody: updateWebSourceRequest{}, respBody: webSourceMutationResponse{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite},
+			description: "config 顶层键白名单：urls（整体替换）/crawl/sitemap/fetch/extract/sync/on_delete；拒绝不可变键 mode、crawl.seed_url、sitemap.url、fetch.engine、fetch.connection_id（变更即换源身份，应新建源）；status 允许 active/disabled。PATCH 成功即入队一次同步。"},
+		{method: http.MethodPost, path: wsBase + "/knowledge-bases/:id/web-sources/:source_id/sync", tag: "Web 内容源", summary: "手动触发 web 内容源同步",
+			reqBody: webSourceSyncRequest{}, respBody: webSourceSyncResponse{}, status: http.StatusAccepted, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite},
+			description: "body 可选：{\"force\":true} 表示全量重爬（忽略内容 hash 去重）；空 body 为普通同步。同源单 active 任务（reuse-or-create）。"},
+		{method: http.MethodDelete, path: wsBase + "/knowledge-bases/:id/web-sources/:source_id", tag: "Web 内容源", summary: "删除 web 内容源",
+			respBody: nil, status: http.StatusNoContent, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeKnowledgeBasesWrite},
+			params:      []openapiParam{{name: "pages", in: "query", typeName: "string", enum: []string{"keep", "remove"}, defaultValue: "keep", description: "页面处置策略：keep=断链保页（默认）；remove=逐页删除"}},
+			description: "存在进行中的源级同步任务时返回 409（稍后重试）。",
+		},
 	}
 }
 

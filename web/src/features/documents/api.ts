@@ -16,9 +16,20 @@ function knowledgeBaseDocumentsPath(workspaceSlug: string, kbId: string) {
   return `${workspacePath(workspaceSlug)}/knowledge-bases/${encodeURIComponent(kbId)}/documents`
 }
 
-export async function listDocuments(workspaceSlug: string, kbId: string) {
+export type ListDocumentsFilters = {
+  kind?: 'file' | 'faq' | 'web'
+  /** 按产生文档的 web 内容源过滤（v1.3.0 源详情页）。 */
+  kb_source_id?: string
+}
+
+export async function listDocuments(
+  workspaceSlug: string,
+  kbId: string,
+  filters: ListDocumentsFilters = {}
+) {
   const response = await apiClient.get<Document[]>(
-    knowledgeBaseDocumentsPath(workspaceSlug, kbId)
+    knowledgeBaseDocumentsPath(workspaceSlug, kbId),
+    { params: filters }
   )
   return documentListResponseSchema.parse(response.data)
 }

@@ -1,4 +1,4 @@
-.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build eval eval-prepare eval-smoke eval-vcsum eval-vcsum-prepare
+.PHONY: dev standalone web test-image test-integration test-sqlite linux _web-build e2e-web eval eval-prepare eval-smoke eval-vcsum eval-vcsum-prepare
 
 # 测试专用 PostgreSQL 镜像（pgvector + zhparser，见 docker/postgres-test/Dockerfile）
 TEST_PG_IMAGE ?= langhuan-test-postgres:pg17
@@ -78,6 +78,19 @@ eval-smoke:
 
 _web-build:
 	pnpm --dir web build
+
+# Web 源全栈冒烟（web/e2e）：前端构建 → 内嵌 SPA 的后端二进制 → Playwright。
+# 依赖本机 docker：站点桩挂在 e2e 专用网桥的公网形地址（绕开产品 SSRF 防护，
+# 网桥直连路由使流量不离开宿主 VM），embedding 桩由 compose 发布到宿主回环。
+e2e-web:
+	docker compose -f web/e2e/docker-compose.e2e.yaml down --remove-orphans --timeout 5 >/dev/null 2>&1 || true
+	lsof -ti :18080 :47702 | xargs kill -9 >/dev/null 2>&1 || true
+	pnpm --dir web build
+	CGO_ENABLED=0 go build -tags web_embed -o web/e2e/.tmp/langhuan ./cmd/langhuan
+	pnpm --dir web exec playwright test -c e2e/playwright.config.ts; \
+	status=$$?; \
+	if [ $$status -eq 0 ]; then rm -rf web/e2e/.tmp; else echo "e2e 失败：保留 web/e2e/.tmp（日志/trace/artifacts）以便排查"; fi; \
+	exit $$status
 
 linux: _web-build
 	mkdir -p bin

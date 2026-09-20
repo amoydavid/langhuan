@@ -76,6 +76,9 @@ OpenAPI 文档（`GET /api/v1/openapi.json`）只收录上述支持 API Key 的�
 | `POST /workspaces/:slug/knowledge-bases/:id/documents/text` | `documents:write` | 导入 Markdown 文本 |
 | `GET /workspaces/:slug/knowledge-bases/:id/documents?kind=file\|faq\|web` | `documents:read` | 按 kind 列出文档 |
 | `GET/POST/PATCH/DELETE /workspaces/:slug/knowledge-bases/:id/file-tree/...` | `documents:read/write` | 文件树读写 |
+| `GET/POST /workspaces/:slug/knowledge-bases/:id/web-sources` | `knowledge_bases:read/write` | web 内容源列表/创建（创建成功即入队首次同步；契约详见 8.2.1 节） |
+| `GET/PATCH/DELETE /workspaces/:slug/knowledge-bases/:id/web-sources/:source_id` | `knowledge_bases:read/write` | web 源详情/更新（更新成功即入队同步）/删除（`?pages=keep\|remove`） |
+| `POST /workspaces/:slug/knowledge-bases/:id/web-sources/:source_id/sync` | `knowledge_bases:write` | 手动触发源同步，可选 `{"force":true}` 全量重爬 |
 | `POST /workspaces/:slug/knowledge-bases/:id/documents/faq` | `documents:write` | 创建 FAQ |
 | `GET/PUT /workspaces/:slug/knowledge-bases/:id/documents/:document_id/faq` | `documents:read/write` | FAQ 读写；URL 必须携带 KB ID |
 | `GET /workspaces/:slug/knowledge-bases/:id/documents/:document_id/chunks` | `documents:read` | 文档分块 |
@@ -207,7 +210,7 @@ POST /api/v1/workspaces/:workspace_slug/search-runs/:search_id/replay
 | Tool | Scope | 行为 |
 |---|---|---|
 | `knowledge_base_create` | `knowledge_bases:write` | 创建知识库并原子加入 key 范围 |
-| `document_ingest` | `documents:write` | Base64 内联导入（上限 8 MiB，超限请用 REST multipart） |
+| `document_ingest` | `documents:write` | 两种互斥模式：file 模式（默认）Base64 内联导入（上限 8 MiB，超限请用 REST multipart）；url 模式（提供 `url` 字段）把该网页并入目标 KB 恰有的一个 urls 模式 active 网站源并触发同步——没有该源则报错提示先创建，多个则报错列出候选；输出 `kb_source_id`/`kb_source_name`/`url`/`sync_queued`/`job_id` |
 | `document_status` | `documents:read` | 文档与可选 Job 状态 |
 | `knowledge_search` | `search:read` | 多库检索，结果带知识库来源；输出补充 `search_id`、`requested_scope`、`effective_scope`、`retrieval_status`、`generation_ids`，每条结果携带 `DocumentRevisionID`/`IndexGenerationID`/`CitationRef` |
 | `document_delete` | `documents:write` | 软删除文档 |
@@ -265,6 +268,20 @@ SiliconFlow 使用一个 `provider=siliconflow` 连接，同时承载 Embedding 
 | `GET /api/v1/workspaces/:slug/source-connections/:connection_id` | Session admin/owner | 单条详情；不返回 app_secret |
 | `PATCH /api/v1/workspaces/:slug/source-connections/:connection_id` | Session admin/owner | 更新 config 或轮换 app_secret、启停 |
 | `DELETE /api/v1/workspaces/:slug/source-connections/:connection_id` | Session admin/owner | 软删连接 |
+| `POST /api/v1/workspaces/:slug/source-connections/:connection_id/test` | Session admin/owner | 对连接做一次非持久化连通性探测（仅 `browser`/`firecrawl`/`jina` 支持：firecrawl/jina 抓取固定测试页验证抓取链路，`browser` 与渲染端点完成 CDP 握手（`Browser.getVersion`）、不打开任何页面；`feishu` 不支持，「无法测试」返回 400）。**契约与模型连接测试不同**：探测成功与探测失败都返回 `200 {ok, provider, duration_ms, message}`——`ok=false` 表示探测失败，原因在 `message`（不含凭证）；「无法测试」才返回 error body（连接不存在 404、连接已停用 400、feishu 不支持 400）。前端按 `ok` 字段分支，不按状态码判探测失败 |
+
+### 8.2.1 Web 内容源管理（v1.3.0 spec §9.2）
+
+web 内容源（kb_sources.kind='web'）挂在知识库下管理：读操作 member 可用（Bearer 需 `knowledge-bases:read` scope + KB 绑定），写操作仅 Session admin/owner（Bearer 需 `knowledge-bases:write` scope + KB 绑定）。源 config 不含凭证（连接凭证存于来源连接），响应整体返回 config 与同步运行态（`sync_cursor`/`next_sync_at`/`sync_last_result`）。同步模型（三模式/引擎/增量/SSRF 分层）见 `docs/ARCHITECTURE.md` 8.2 节。
+
+| REST | 鉴权 | 说明 |
+|---|---|---|
+| `POST /api/v1/workspaces/:slug/knowledge-bases/:id/web-sources` | Session admin/owner；Bearer kb:write | 创建源，成功返回 `201 {source, job_id?}`（config typed 全量校验 + `fetch.connection_id` provider 匹配校验 + `web_source.max_sources_per_kb` 钳制）；成功即入队首次同步，`job_id` 可省略（入队 best-effort，失败由调度器恢复） |
+| `GET /api/v1/workspaces/:slug/knowledge-bases/:id/web-sources` | member+；Bearer kb:read | 源列表 `[{source, page_count, failed_page_count}]` |
+| `GET /api/v1/workspaces/:slug/knowledge-bases/:id/web-sources/:source_id` | member+；Bearer kb:read | 单源详情，同上形状 |
+| `PATCH /api/v1/workspaces/:slug/knowledge-bases/:id/web-sources/:source_id` | Session admin/owner；Bearer kb:write | 允许键 `name`、`status`（active/disabled）、`config` 顶层键白名单（`urls` 整体替换/`crawl`/`sitemap`/`fetch`/`extract`/`sync`/`on_delete`）；拒绝不可变键 `mode`、`crawl.seed_url`、`sitemap.url`、`fetch.engine`、`fetch.connection_id`（变更即换源身份，应新建源）。成功返回 `200 {source, job_id?}`，即入队一次同步 |
+| `POST /api/v1/workspaces/:slug/knowledge-bases/:id/web-sources/:source_id/sync` | Session admin/owner；Bearer kb:write | 手动重跑；可选 `{"force":true}` 全量重爬（空 body 等价 `force=false`）。返回 `202 {"job_id": ...}`，同源单 active 任务（复用已有 pending/running 的 job_id） |
+| `DELETE /api/v1/workspaces/:slug/knowledge-bases/:id/web-sources/:source_id?pages=keep\|remove` | Session admin/owner；Bearer kb:write | 删除源；`pages` 缺省 `keep`（断链保页，`documents.kb_source_id` 置 NULL）、`remove`（逐页走文档删除路径）。存在进行中的源级同步任务时返回 `409`（稍后重试）。成功 `204` |
 
 手动触发同步：
 

@@ -116,13 +116,13 @@ export const routes = {
     integrations: {
       breadcrumb: '集成',
       new: {
-        breadcrumb: '添加飞书应用',
+        breadcrumb: '新建连接',
         eyebrow: '工作区 / 集成',
-        title: '添加飞书应用',
-        description: '填入飞书开放平台的应用凭证，保存后即可在工作区中调用。',
-        cardTitle: '应用凭证',
-        cardDescription:
-          'App Secret 仅用于后端调用飞书 API，不会在页面上回显。',
+        title: '新建连接',
+        description:
+          '选择连接类型（飞书 / Firecrawl / Jina / 渲染浏览器）并填入对应凭证。',
+        cardTitle: '连接凭证',
+        cardDescription: '密钥仅用于后端调用外部服务，不会在页面上回显。',
       },
     },
 
@@ -247,13 +247,17 @@ export const routes = {
         },
         web: {
           breadcrumb: 'Web',
-          searchAriaLabel: '搜索 Web 内容',
-          searchPlaceholder: '搜索 Web 标题…',
-          statusAriaLabel: 'Web 状态',
+          searchAriaLabel: '搜索页面',
+          searchPlaceholder: '搜索页面标题…',
+          statusAriaLabel: '页面状态',
           statusAll: '全部状态',
           statusReady: '可检索',
           statusProcessing: '处理中',
           statusFailed: '失败',
+          sources: {
+            breadcrumb: '源详情',
+            unnamedTitle: '未命名内容源',
+          },
           detail: {
             breadcrumb: 'Web 详情',
             unnamedTitle: '未命名 Web 文档',

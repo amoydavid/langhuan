@@ -124,7 +124,8 @@ func TestFileTreeNodeV2RowRoundTripPreservesShapes(t *testing.T) {
 	tests := []*model.FileTreeNode{
 		{ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), NodeType: value.FileTreeNodeRoot},
 		{ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), ParentID: &parentID, NodeType: value.FileTreeNodeFolder, Name: "Folder"},
-		{ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), ParentID: &parentID, NodeType: value.FileTreeNodeFile, Name: "guide.pdf", DocumentID: &documentID},
+		{ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), ParentID: &parentID, NodeType: value.FileTreeNodeFile, Name: "guide.pdf", DocumentID: &documentID, DocumentKind: value.DocumentKindFile},
+		{ID: uuid.New(), WorkspaceID: uuid.New(), KnowledgeBaseID: uuid.New(), ParentID: &parentID, NodeType: value.FileTreeNodeFile, Name: "guide", DocumentID: &documentID, DocumentKind: value.DocumentKindWeb},
 	}
 
 	for _, node := range tests {

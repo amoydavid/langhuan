@@ -621,3 +621,87 @@ func TestDiffPopulatesSkippedNodes(t *testing.T) {
 		t.Fatalf("expect new-me in ToAdd, got %#v", plan.ToAdd)
 	}
 }
+
+// ---- web 节点形态与跨源 scope（v1.3.0 spec §12.1）----
+
+// TestDiffWebNodeShapes 验证 web 快照节点形态下 diff 行为：
+//   - page 节点（ObjType=page, HasDocument=true）进入文档 diff，ObjType 不限于 docx；
+//   - folder 节点（HasDocument=false）不进入文档 diff；
+//   - sitemap lastmod 走既有 cursor 语义（<= cursor 且无重试需求 → Skipped）。
+func TestDiffWebNodeShapes(t *testing.T) {
+	editNew := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+	editOld := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	snapshot := sourceport.TreeSnapshot{
+		Nodes: []model.ExternalNode{
+			{Token: "https://docs.example.com/api/", ObjType: "folder", HasDocument: false, Title: "api"},
+			{Token: "https://docs.example.com/api/x", ObjType: "page", HasDocument: true, Title: "x", EditTime: editOld},
+			{Token: "https://docs.example.com/new", ObjType: "page", HasDocument: true, Title: "new", EditTime: editNew},
+		},
+		Complete: true,
+	}
+	// api/x 的 lastmod(9/1) <= cursor(9/5) → Skipped；new 本地不存在 → ToAdd；
+	// 本地有 api/x；folder 不参与。
+	cursor := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	local := []LocalDocView{diffLocalView("https://docs.example.com/api/x")}
+	plan := diff(snapshot, local, cursor, false)
+
+	if len(plan.ToAdd) != 1 || len(plan.ToUpdate) != 0 || plan.Skipped != 1 {
+		t.Fatalf("plan = ToAdd:%d ToUpdate:%d Skipped:%d, want 1/0/1",
+			len(plan.ToAdd), len(plan.ToUpdate), plan.Skipped)
+	}
+	if plan.ToAdd[0].Token != "https://docs.example.com/new" {
+		t.Fatalf("ToAdd token = %q", plan.ToAdd[0].Token)
+	}
+	if len(plan.ToRemove) != 0 {
+		t.Fatalf("远端仍存在的文档不应进 ToRemove: %#v", plan.ToRemove)
+	}
+}
+
+// TestDiffCrossSourceScopeIsolated 验证跨源 diff 隔离：diff 只消费调用方传入的
+// 「源本地全集」。其它源的文档不在 local 中 → 绝不进入 ToRemove/ToUpdate
+// （spec §3.2：某源 diff 发现目标 URL 已属另一源 → 跳过 + warning，不更新不删除；
+// 归属裁决在编排层 occupiedByOther，diff 层的义务是「别的源不可见」）。
+func TestDiffCrossSourceScopeIsolated(t *testing.T) {
+	snapshot := sourceport.TreeSnapshot{
+		Nodes: []model.ExternalNode{
+			{Token: "https://docs.example.com/own", ObjType: "page", HasDocument: true, Title: "own"},
+		},
+		Complete: true,
+	}
+	// 只有本源文档进入 diff 输入（其它源文档已被 filterLocalDocsBySource 过滤）。
+	local := []LocalDocView{diffLocalView("https://docs.example.com/own")}
+	plan := diff(snapshot, local, time.Time{}, false)
+	if len(plan.ToUpdate) != 1 || len(plan.ToRemove) != 0 {
+		t.Fatalf("plan = ToUpdate:%d ToRemove:%d, want 1/0", len(plan.ToUpdate), len(plan.ToRemove))
+	}
+}
+
+// TestFilterLocalDocsBySource 验证按归属源过滤本地投影（编排主语源化的范围圈定）。
+func TestFilterLocalDocsBySource(t *testing.T) {
+	sourceA := diffViewUUID("source-a")
+	sourceB := diffViewUUID("source-b")
+	kbLevel := diffLocalView("feishu-token") // KB 级（飞书）文档：KbSourceID 为 nil
+	webA := diffLocalView("https://docs.example.com/a")
+	webA.KbSourceID = &sourceA
+	webA2 := diffLocalView("https://docs.example.com/a2")
+	webA2.KbSourceID = &sourceA
+	webB := diffLocalView("https://docs.example.com/b")
+	webB.KbSourceID = &sourceB
+	all := []LocalDocView{kbLevel, webA, webA2, webB}
+
+	// sourceID=nil（飞书编排范围）：仅 KB 级文档。
+	kbOwned := filterLocalDocsBySource(all, nil)
+	if len(kbOwned) != 1 || kbOwned[0].ExternalID != "feishu-token" {
+		t.Fatalf("nil scope = %#v, want 仅 feishu-token", kbOwned)
+	}
+	// sourceA：仅源 A 的两份文档。
+	ownedA := filterLocalDocsBySource(all, &sourceA)
+	if len(ownedA) != 2 {
+		t.Fatalf("sourceA scope = %d 项, want 2", len(ownedA))
+	}
+	// sourceB：仅源 B 的文档。
+	ownedB := filterLocalDocsBySource(all, &sourceB)
+	if len(ownedB) != 1 || ownedB[0].ExternalID != "https://docs.example.com/b" {
+		t.Fatalf("sourceB scope = %#v", ownedB)
+	}
+}

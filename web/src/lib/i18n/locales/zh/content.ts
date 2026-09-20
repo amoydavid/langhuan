@@ -163,5 +163,7 @@ export const content = {
     tabFiles: '文件',
     tabFaq: 'FAQ',
     tabWeb: 'Web',
+    // Web 子 tab 的计数以「源」为单位（v1.3.0 抓取请求列表）。
+    webTabCount: '{{count}} 个源',
   },
 } as const

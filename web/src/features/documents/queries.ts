@@ -10,6 +10,23 @@ export function documentsQueryOptions(workspaceSlug: string, kbId: string) {
   })
 }
 
+/** 按内容源过滤的 web 页面列表（源详情页，v1.3.0 spec §9.4）。 */
+export function webSourceDocumentsQueryOptions(
+  workspaceSlug: string,
+  kbId: string,
+  sourceId: string
+) {
+  return queryOptions({
+    queryKey: ['documents', workspaceSlug, kbId, { kb_source_id: sourceId }],
+    queryFn: () =>
+      listDocuments(workspaceSlug, kbId, {
+        kind: 'web',
+        kb_source_id: sourceId,
+      }),
+    staleTime: 5_000,
+  })
+}
+
 export function documentQueryOptions(
   workspaceSlug: string,
   documentId: string

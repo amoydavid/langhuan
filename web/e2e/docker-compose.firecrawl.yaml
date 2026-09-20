@@ -1,0 +1,120 @@
+# E2E opt-in 附加编排：自托管 Firecrawl（真实 provider 集成验证，2026-09-17 已实测跑通全链路）。
+#
+# 用法（在基础编排 make e2e-web 的 site/embeddings 起着的前提下）：
+#   docker compose -f web/e2e/docker-compose.firecrawl.yaml up -d
+#   # 宿主侧验证契约：
+#   curl --noproxy '*' -X POST http://127.0.0.1:47703/v2/scrape \
+#     -H 'Authorization: Bearer fc-e2e-local' -H 'Content-Type: application/json' \
+#     -d '{"url":"http://93.184.216.10:47701/","formats":["markdown","links"],"onlyMainContent":true}'
+#
+# 实测要点（2026-09-17，firecrawl latest=2.11.209）：
+#   1. /v2/scrape 契约与琅嬛解析器假设完全一致：success bool、data.markdown str、
+#      data.links 为 **string 数组**、data.metadata.statusCode/url——产品代码零改动。
+#   2. 新版自托管依赖 NUQ 队列（postgres 带 nuq schema + rabbitmq），官方
+#      ghcr.io/firecrawl/nuq-postgres 镜像自带 init 脚本，但须对齐
+#      cron.database_name=nuq（pg_cron 限制）。
+#   3. 容器入口 harness 在无 docker 的容器内无法自举这些依赖（显式供给
+#      NUQ_DATABASE_URL/NUQ_RABBITMQ_URL 后 harness 仍会因 api 探测超时而退
+#      出），因此这里绕过 harness：entrypoint 直接并发跑 api + nuq-worker +
+#      prefetch-worker 的最小进程组（等价 harness 的监督职责）。
+#   4. HOST 必须 '::'（默认 localhost 只绑 [::1]，IPv4 与宿主端口映射全不可达）。
+#   5.琅嬛侧的 firecrawl connection endpoint 建议填宿主回环映射
+#      http://127.0.0.1:47703（endpoint 校验允许回环 http）：容器网桥地址
+#      93.184.216.20:3002 在宿主 route 指向 bridge 时仍可能不可达（实测
+#      OrbStack TIMEOUT），回环映射稳定。
+#   6. 生产部署提醒：琅嬛后端进程若继承了 HTTP_PROXY 等代理环境变量，对
+#      provider endpoint 的调用会被代理劫持（实测被 7897 代理改写为 502），
+#      启动琅嬛时须剥离代理变量或正确设置 no_proxy。
+#
+# 自托管认证：USE_DB_AUTHENTICATION=false + TEST_API_KEY（琅嬛连接的 api_key
+# 填 fc-e2e-local）。
+# 清理：docker compose -f web/e2e/docker-compose.firecrawl.yaml down -v
+
+name: langhuan-web-e2e-firecrawl
+
+networks:
+  public-shaped:
+    external: true
+    name: langhuan-web-e2e_public-shaped
+
+services:
+  redis:
+    image: redis:7-alpine
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.21
+
+  # NUQ 队列存储：官方镜像自带 init 脚本建 nuq schema；
+  # pg_cron 只允许在 cron.database_name 指向的库中创建，这里对齐为 nuq。
+  nuq-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    command: ['postgres', '-c', 'cron.database_name=nuq']
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: nuq
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.22
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d nuq']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # NUQ 队列第二依赖：RabbitMQ。
+  nuq-rabbitmq:
+    image: rabbitmq:3-alpine
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.23
+
+  firecrawl:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    networks:
+      public-shaped:
+        ipv4_address: 93.184.216.20
+    environment:
+      USE_DB_AUTHENTICATION: "false"
+      TEST_API_KEY: fc-e2e-local
+      REDIS_URL: redis://redis:6379
+      REDIS_RATE_LIMIT_URL: redis://redis:6379
+      NUQ_DATABASE_URL: postgres://postgres:postgres@nuq-postgres:5432/nuq
+      NUQ_RABBITMQ_URL: amqp://guest:guest@nuq-rabbitmq:5672
+      # 默认 localhost 只绑 [::1]（IPv4/宿主端口映射不可达）；'::' 双栈。
+      HOST: "::"
+      PORT: "3002"
+      NUM_WORKERS_PER_QUEUE: "1"
+      # 单机 e2e 场景压低各 node 进程堆上限，避免多进程内存压力。
+      NODE_OPTIONS: --max-old-space-size=384
+    ports:
+      # 发布到宿主回环：琅嬛 connection 的 endpoint_url 填 http://127.0.0.1:47703。
+      - '127.0.0.1:47703:3002'
+    depends_on:
+      redis:
+        condition: service_started
+      nuq-postgres:
+        condition: service_healthy
+      nuq-rabbitmq:
+        condition: service_started
+    # 绕过镜像入口的 harness（其 api 探测在容器内会超时自杀）：直接并发拉起
+    # 最小进程组 = api（express，即 /v2/scrape 服务）+ nuq-worker（抓取执行）
+    # + nuq-prefetch-worker（队列预取）。
+    entrypoint:
+      - sh
+      - -c
+      - |
+        node dist/src/index.js &
+        node dist/src/services/worker/nuq-worker.js &
+        node dist/src/services/worker/nuq-prefetch-worker.js &
+        wait
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3002/test-health').then((r) => { if (!r.ok) throw new Error(String(r.status)) })
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s

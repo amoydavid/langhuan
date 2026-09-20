@@ -38,6 +38,8 @@ export default defineConfig(({ mode }) => {
       silent: 'passed-only',
       unstubEnvs: true,
       setupFiles: ['./src/test-utils/i18n-setup.ts'],
+      // e2e/ 是 @playwright/test 全栈冒烟（web/e2e），不归 vitest 浏览器测试收集。
+      exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
       browser: {
         enabled: true,
         provider: playwright(),

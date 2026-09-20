@@ -70,6 +70,89 @@ func TestKeyRoutesPresent(t *testing.T) {
 	}
 }
 
+// TestWebSourceRoutesExposeScopes 断言 web 内容源路由（v1.3.0 spec §9.2）已按
+// 读/写 scope 拆分进入对外文档：读=knowledge-bases:read、写=knowledge-bases:write。
+func TestWebSourceRoutesExposeScopes(t *testing.T) {
+	spec := buildSpec()
+	base := "/api/v1/workspaces/{workspace_slug}/knowledge-bases/{id}/web-sources"
+	readCases := []struct{ method, path string }{
+		{http.MethodGet, base},
+		{http.MethodGet, base + "/{source_id}"},
+	}
+	for _, tc := range readCases {
+		pi := spec.Paths.Find(tc.path)
+		if pi == nil {
+			t.Fatalf("web 源路由未注册: %s", tc.path)
+		}
+		op := pickOp(pi, tc.method)
+		if op == nil {
+			t.Fatalf("方法未注册: %s %s", tc.method, tc.path)
+		}
+		scopes, ok := op.Extensions["x-langhuan-required-scopes"].([]value.APIScope)
+		if !ok || len(scopes) != 1 || scopes[0] != value.ScopeKnowledgeBasesRead {
+			t.Fatalf("%s %s scopes = %#v, want knowledge-bases:read", tc.method, tc.path, op.Extensions["x-langhuan-required-scopes"])
+		}
+	}
+	writeCases := []struct {
+		method, path string
+		wantStatus   int
+	}{
+		{http.MethodPost, base, http.StatusCreated},
+		{http.MethodPatch, base + "/{source_id}", http.StatusOK},
+		{http.MethodPost, base + "/{source_id}/sync", http.StatusAccepted},
+		{http.MethodDelete, base + "/{source_id}", 0},
+	}
+	for _, tc := range writeCases {
+		pi := spec.Paths.Find(tc.path)
+		if pi == nil {
+			t.Fatalf("web 源路由未注册: %s", tc.path)
+		}
+		op := pickOp(pi, tc.method)
+		if op == nil {
+			t.Fatalf("方法未注册: %s %s", tc.method, tc.path)
+		}
+		scopes, ok := op.Extensions["x-langhuan-required-scopes"].([]value.APIScope)
+		if !ok || len(scopes) != 1 || scopes[0] != value.ScopeKnowledgeBasesWrite {
+			t.Fatalf("%s %s scopes = %#v, want knowledge-bases:write", tc.method, tc.path, op.Extensions["x-langhuan-required-scopes"])
+		}
+		if tc.wantStatus != 0 && op.Responses.Status(tc.wantStatus) == nil {
+			t.Fatalf("%s %s 缺少 %d 成功响应", tc.method, tc.path, tc.wantStatus)
+		}
+	}
+	// DELETE 声明 pages 查询参数（keep|remove）。
+	del := spec.Paths.Find(base + "/{source_id}").Delete
+	hasPages := false
+	for _, p := range del.Parameters {
+		if p.Value.Name == "pages" && p.Value.In == "query" {
+			hasPages = true
+		}
+	}
+	if !hasPages {
+		t.Fatal("DELETE web-sources 缺少 pages 查询参数声明")
+	}
+}
+
+// TestSourceConnectionTestRouteNotInExternalDoc 断言连接测试端点是 Session-only
+// 管理位（与连接管理路由一致），不进入对外 Bearer 文档（含契约取舍说明，
+// 见 sourceConnectionOps/source_connection_handler.go 注释）。
+func TestSourceConnectionTestRouteNotInExternalDoc(t *testing.T) {
+	spec := buildSpec()
+	path := "/api/v1/workspaces/{workspace_slug}/source-connections/{connection_id}/test"
+	if pi := spec.Paths.Find(path); pi != nil && pi.Post != nil {
+		t.Fatal("连接测试为 Session-only 路由，不应出现在对外 OpenAPI 文档")
+	}
+	// 但必须保留在 allOps 运行时合同里，供审查对照。
+	found := false
+	for _, o := range newSpecBuilder().allOps() {
+		if o.path == wsBase+"/source-connections/:connection_id/test" && o.method == http.MethodPost {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("连接测试路由未登记进 allOps 运行时合同")
+	}
+}
+
 func TestSessionOnlyRoutesExcluded(t *testing.T) {
 	spec := buildSpec()
 	cases := []struct {

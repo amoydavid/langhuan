@@ -19,11 +19,15 @@ type NewJobInput struct {
 	DocumentRevisionID uuid.UUID
 	IndexGenerationID  uuid.UUID
 	SourceConnectionID uuid.UUID
-	Type               string
-	Status             value.JobStatus
-	ExternalJobID      string
-	Payload            map[string]any
-	ErrorMessage       string
+	// KbSourceID 是源级任务目标（kb_sources.id，迁移 000025 的 jobs 第五分支）：
+	// 仅 source_sync/source_cleanup 可携带，且不得与 document/revision/generation 同现。
+	// 零值表示 KB 级目标（飞书路径语义不变）。
+	KbSourceID    uuid.UUID
+	Type          string
+	Status        value.JobStatus
+	ExternalJobID string
+	Payload       map[string]any
+	ErrorMessage  string
 }
 
 type Job struct {
@@ -34,15 +38,17 @@ type Job struct {
 	DocumentRevisionID uuid.UUID
 	IndexGenerationID  uuid.UUID
 	SourceConnectionID uuid.UUID
-	Type               string
-	Status             value.JobStatus
-	Attempts           int
-	ExternalJobID      string
-	Payload            map[string]any
-	ErrorMessage       string
-	ErrorClass         string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// KbSourceID 是源级任务目标；零值表示 KB 级目标（飞书任务）。
+	KbSourceID    uuid.UUID
+	Type          string
+	Status        value.JobStatus
+	Attempts      int
+	ExternalJobID string
+	Payload       map[string]any
+	ErrorMessage  string
+	ErrorClass    string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // SourceSyncJobType 是知识库级同步任务（仅关联 KB，不带 document/generation）的类型。
@@ -63,6 +69,16 @@ func NewJob(input NewJobInput) (*Job, error) {
 	if !kbOnlyJobType(jobType) && input.DocumentID == uuid.Nil && input.IndexGenerationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: document_id/index_generation_id 必须提供一个", domainerrors.ErrValidation)
 	}
+	// 源级目标（迁移 000025 第五分支）：仅 source_sync/source_cleanup 可携带，
+	// 且与 document/revision/generation 目标互斥。
+	if input.KbSourceID != uuid.Nil {
+		if !kbOnlyJobType(jobType) {
+			return nil, fmt.Errorf("%w: 仅 source_sync/source_cleanup 任务可携带源级目标", domainerrors.ErrValidation)
+		}
+		if input.DocumentID != uuid.Nil || input.DocumentRevisionID != uuid.Nil || input.IndexGenerationID != uuid.Nil {
+			return nil, fmt.Errorf("%w: 源级目标不能与 document/revision/generation 目标同现", domainerrors.ErrValidation)
+		}
+	}
 	if input.Status == "" {
 		return nil, fmt.Errorf("%w: 任务状态不能为空", domainerrors.ErrValidation)
 	}
@@ -80,6 +96,7 @@ func NewJob(input NewJobInput) (*Job, error) {
 		DocumentRevisionID: input.DocumentRevisionID,
 		IndexGenerationID:  input.IndexGenerationID,
 		SourceConnectionID: input.SourceConnectionID,
+		KbSourceID:         input.KbSourceID,
 		Type:               jobType,
 		Status:             input.Status,
 		Attempts:           0,

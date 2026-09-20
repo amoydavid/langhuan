@@ -44,6 +44,12 @@ type LocalDocView struct {
 	RetryRequired bool
 	// DeletedAt 非空表示文档已软删；远端重新出现时进入 ToUpdate 而非 ToAdd。
 	DeletedAt *time.Time
+	// KbSourceID 是产生该文档的内容源（kb_sources.id）；飞书等 KB 级文档为 nil。
+	// 供 web 编排按源圈定 diff 范围与跨源归属裁决（url_owned_by_other_source）。
+	KbSourceID *uuid.UUID
+	// SourceMeta 是 documents.source_meta jsonb 的原样投影（键名合同见 ports/source）；
+	// web 编排据此回传条件请求头（IfNoneMatch/IfModifiedSince）。可为 nil。
+	SourceMeta map[string]any
 }
 
 // updateCandidate 是一个 有/有 匹配对：远端节点 + 对应的本地投影。
@@ -147,6 +153,27 @@ func diff(snapshot sourceport.TreeSnapshot, local []LocalDocView, cursor time.Ti
 	}
 
 	return plan
+}
+
+// filterLocalDocsBySource 按归属源过滤本地投影（纯函数，spec §3.2 编排主语源化）：
+//   - sourceID=nil：返回 KB 级文档（kb_source_id 为空，飞书路径的 diff 范围）；
+//   - sourceID 非 nil：返回该源的文档（web 源的 diff 范围——「源期望全集」对「源本地全集」）。
+//
+// 一个 KB 可挂多个源，跨源文档互不进入对方的 diff/删除检测（先到先得，后者不覆盖不删除）。
+func filterLocalDocsBySource(local []LocalDocView, sourceID *uuid.UUID) []LocalDocView {
+	filtered := make([]LocalDocView, 0, len(local))
+	for _, doc := range local {
+		if sourceID == nil {
+			if doc.KbSourceID == nil {
+				filtered = append(filtered, doc)
+			}
+			continue
+		}
+		if doc.KbSourceID != nil && *doc.KbSourceID == *sourceID {
+			filtered = append(filtered, doc)
+		}
+	}
+	return filtered
 }
 
 // dedupLocal 对本地投影按 external_id 去重，返回首项索引以及"因重复而必须从删除集合排除"的 external_id 集合。

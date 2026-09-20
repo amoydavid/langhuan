@@ -8,6 +8,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -57,6 +58,13 @@ type MCPIngestResult struct {
 	JobID      uuid.UUID `json:"job_id"`
 	Status     string    `json:"status"`
 	Deduped    bool      `json:"deduped"`
+}
+
+// MCPWebSourceService 是 document_ingest url 入口（v1.3.0 spec §9.3）所需的
+// web 源并入端口：把 URL 并入目标 KB 恰有的一个 urls 模式 active 网站源并触发
+// 同步。生产实现是 *service.KbSourceService（AddURLToWebSource）。
+type MCPWebSourceService interface {
+	AddURLToWebSource(ctx context.Context, workspaceID, kbID uuid.UUID, rawURL string) (*model.KbSource, *model.Job, error)
 }
 
 // MCPDocumentDeleteService 是 MCP document_delete 工具所需的删除端口。

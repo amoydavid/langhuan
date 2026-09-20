@@ -133,14 +133,14 @@ export const routes = {
     integrations: {
       breadcrumb: 'Integrations',
       new: {
-        breadcrumb: 'Add Feishu App',
+        breadcrumb: 'New Connection',
         eyebrow: 'Workspace / Integrations',
-        title: 'Add Feishu App',
+        title: 'New Connection',
         description:
-          'Enter the app credentials from the Feishu developer console to use it in this workspace.',
-        cardTitle: 'App Credentials',
+          'Pick a connection type (Feishu / Firecrawl / Jina / rendering browser) and enter its credentials.',
+        cardTitle: 'Connection Credentials',
         cardDescription:
-          'The App Secret is only used to call Feishu APIs on the backend and is never echoed on the page.',
+          'Secrets are only used to call external services on the backend and are never echoed on the page.',
       },
     },
 
@@ -276,13 +276,17 @@ export const routes = {
         },
         web: {
           breadcrumb: 'Web',
-          searchAriaLabel: 'Search web content',
-          searchPlaceholder: 'Search web titles…',
-          statusAriaLabel: 'Web status',
+          searchAriaLabel: 'Search pages',
+          searchPlaceholder: 'Search page titles…',
+          statusAriaLabel: 'Page status',
           statusAll: 'All statuses',
           statusReady: 'Searchable',
           statusProcessing: 'Processing',
           statusFailed: 'Failed',
+          sources: {
+            breadcrumb: 'Source Details',
+            unnamedTitle: 'Unnamed Source',
+          },
           detail: {
             breadcrumb: 'Web Details',
             unnamedTitle: 'Untitled Web Document',

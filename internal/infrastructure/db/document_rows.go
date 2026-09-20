@@ -17,7 +17,12 @@ type DocumentRow struct {
 	SourceURI       *string
 	ExternalID      *string
 	// ContentHash 是文档正文（normalized markdown）的稳定哈希，可空。
-	ContentHash      *string
+	ContentHash *string
+	// KbSourceID 是产生该文档的内容源（kb_sources.id，迁移 000025）；上传文档为 NULL。
+	KbSourceID *uuid.UUID `gorm:"type:uuid"`
+	// SourceMeta 是 web 页面文档的抓取运行态（documents.source_meta jsonb，
+	// 键名合同见 ports/source）；非 web 文档保持空对象。
+	SourceMeta       JSONMap `gorm:"type:jsonb"`
 	Status           string
 	ActiveRevisionID *uuid.UUID `gorm:"type:uuid"`
 	Metadata         JSONMap    `gorm:"type:jsonb"`

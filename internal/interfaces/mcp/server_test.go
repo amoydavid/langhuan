@@ -246,7 +246,10 @@ func TestToolInputSchemasMatchStructDeclarations(t *testing.T) {
 
 	t.Run("document_ingest", func(t *testing.T) {
 		schema := inputSchemaOf(t, byName["document_ingest"])
-		require.ElementsMatch(t, []string{"knowledge_base_id", "file_name", "content_base64"}, schema["required"])
+		// 支持 url 模式后 file 字段不再是 schema required（url 与 file 字段互斥，
+		// 逐模式在 handler 校验），required 收敛为 knowledge_base_id。
+		require.ElementsMatch(t, []string{"knowledge_base_id"}, schema["required"])
+		assertPropertyType(t, schema, "url", "string")
 		assertPropertyType(t, schema, "dedupe", "boolean")
 		require.Equal(t, "目标知识库 ID", property(schema, "knowledge_base_id")["description"])
 	})

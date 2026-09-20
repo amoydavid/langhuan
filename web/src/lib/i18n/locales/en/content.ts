@@ -170,5 +170,6 @@ export const content = {
     tabFiles: 'Files',
     tabFaq: 'FAQ',
     tabWeb: 'Web',
+    webTabCount: '{{count}} sources',
   },
 } satisfies Widen<typeof zhContent>

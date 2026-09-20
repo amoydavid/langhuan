@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 )
 
@@ -42,18 +43,22 @@ const TaskSourceSync = "source_sync"
 
 // SourceSyncTaskPayload 是 source_sync 任务的队列载荷。
 // 携带完整 lineage（workspace/kb/job），不含正文与凭证。
+// SourceID 非 nil 表示源级目标（web 内容源，编排按源执行）；零值为 KB 级（飞书）。
 type SourceSyncTaskPayload struct {
 	WorkspaceID     uuid.UUID `json:"workspace_id"`
 	KnowledgeBaseID uuid.UUID `json:"knowledge_base_id"`
 	JobID           uuid.UUID `json:"job_id"`
 	ConnectionID    uuid.UUID `json:"connection_id,omitempty"`
+	SourceID        uuid.UUID `json:"source_id,omitempty"`
 }
 
 // SourceSyncRunner 是 worker 适配的应用层用例（由 *SourceSyncService 实现）。
-// RunSourceSyncJob 在一次调用内完成 spec 8.2 的 latch 流程：
+// RunSourceSyncJob 在一次调用内完成 spec 8.2 的 latch 流程（KB 级，飞书）：
 // ConsumeForceLatch → syncKnowledgeBase(force) → FinalizeSourceSyncJob（含后续 Job 派发）。
+// RunSourceSyncJobForSource 是源级（web 内容源）的同构流程，按 target 类型分派。
 type SourceSyncRunner interface {
 	RunSourceSyncJob(ctx context.Context, workspaceID, kbID, jobID uuid.UUID) error
+	RunSourceSyncJobForSource(ctx context.Context, workspaceID, kbID, sourceID, jobID uuid.UUID) error
 }
 
 // SourceSyncDispatcher 在 source_sync 任务完成后触发同 connection 的续跑（避免空等）。
@@ -127,20 +132,27 @@ func (h SourceSyncHandler) Handle(ctx context.Context, task *asynq.Task) error {
 	// 记录 source_sync 阶段 span event（与 document 链路 recordStage 对齐）。
 	start := time.Now()
 	recordSourceSyncStage(ctx, "source_sync", start, false, payload)
-	if err := h.Runner.RunSourceSyncJob(ctx, payload.WorkspaceID, payload.KnowledgeBaseID, payload.JobID); err != nil {
+	// 按 target 类型分派：SourceID 非零 → 源级（web 内容源）编排；零值 → KB 级（飞书）。
+	var syncErr error
+	if payload.SourceID != uuid.Nil {
+		syncErr = h.Runner.RunSourceSyncJobForSource(ctx, payload.WorkspaceID, payload.KnowledgeBaseID, payload.SourceID, payload.JobID)
+	} else {
+		syncErr = h.Runner.RunSourceSyncJob(ctx, payload.WorkspaceID, payload.KnowledgeBaseID, payload.JobID)
+	}
+	if syncErr != nil {
 		recordSourceSyncStage(ctx, "source_sync", start, true, payload)
 		h.logger().LogAttrs(ctx, slog.LevelError, "source_sync 同步失败",
 			slog.String("workspace_id", payload.WorkspaceID.String()),
 			slog.String("knowledge_base_id", payload.KnowledgeBaseID.String()),
 			slog.String("job_id", payload.JobID.String()),
-			slog.String("error", err.Error()),
+			slog.String("error", syncErr.Error()),
 		)
-		if isPermanentSourceSyncTaskError(err) {
+		if isPermanentSourceSyncTaskError(syncErr) {
 			// 永久错误：任务终止，释放并发槽位，触发同 connection 续跑。
 			h.dispatchNext(ctx, payload)
-			return errors.Join(asynq.SkipRetry, err)
+			return errors.Join(asynq.SkipRetry, syncErr)
 		}
-		return err
+		return syncErr
 	}
 
 	h.logger().LogAttrs(ctx, slog.LevelInfo, "source_sync 同步完成",
@@ -171,7 +183,10 @@ func (h SourceSyncHandler) dispatchNext(ctx context.Context, payload SourceSyncT
 
 // isPermanentSourceSyncTaskError 判断是否为永久性错误（validation/notfound 类），
 // 这类错误不应重试，直接 SkipRetry。
+// 停用来源连接（service.ErrSourceConnectionDisabled）同属用户可自助解决的配置
+// 状态：同步编排经 selector 取凭证失败透传该哨兵，重试无意义。
 func isPermanentSourceSyncTaskError(err error) bool {
 	return errors.Is(err, domainerrors.ErrValidation) ||
-		errors.Is(err, domainerrors.ErrNotFound)
+		errors.Is(err, domainerrors.ErrNotFound) ||
+		errors.Is(err, service.ErrSourceConnectionDisabled)
 }

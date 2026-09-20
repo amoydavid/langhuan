@@ -39,6 +39,8 @@ func documentV2ToRow(document *model.Document) *DocumentRow {
 		Kind: string(document.Kind), Title: document.Title, SourceType: document.SourceType,
 		SourceURI: nullableString(document.SourceURI), ExternalID: nullableString(document.ExternalID),
 		ContentHash:      nullableString(document.ContentHash),
+		KbSourceID:       nullableUUIDPtr(document.KbSourceID),
+		SourceMeta:       normalizedJSONMap(document.SourceMeta),
 		Status:           string(document.Status),
 		ActiveRevisionID: document.ActiveRevisionID, Metadata: normalizedJSONMap(document.Metadata),
 		CreatedAt: document.CreatedAt, UpdatedAt: document.UpdatedAt, DeletedAt: document.DeletedAt,
@@ -51,6 +53,8 @@ func documentV2FromRow(row *DocumentRow) *model.Document {
 		Kind: value.DocumentKind(row.Kind), Title: row.Title, SourceType: row.SourceType,
 		SourceURI: dereferenceString(row.SourceURI), ExternalID: dereferenceString(row.ExternalID),
 		ContentHash:      dereferenceString(row.ContentHash),
+		KbSourceID:       row.KbSourceID,
+		SourceMeta:       normalizedDomainMap(row.SourceMeta),
 		Status:           value.DocumentStatus(row.Status),
 		ActiveRevisionID: row.ActiveRevisionID, Metadata: normalizedDomainMap(row.Metadata),
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
@@ -149,7 +153,11 @@ func faqRevisionFromRows(revision *model.DocumentRevision, content *FAQRevisionC
 func fileTreeNodeToRow(node *model.FileTreeNode) *FileTreeNodeRow {
 	var documentKind *string
 	if node.NodeType == value.FileTreeNodeFile {
-		kind := string(value.DocumentKindFile)
+		// document_kind 是 documents.kind FK 复合键的一部分：file（上传/飞书）或 web（页面）。
+		kind := string(node.DocumentKind)
+		if kind == "" {
+			kind = string(value.DocumentKindFile)
+		}
 		documentKind = &kind
 	}
 	return &FileTreeNodeRow{
@@ -161,11 +169,18 @@ func fileTreeNodeToRow(node *model.FileTreeNode) *FileTreeNodeRow {
 }
 
 func fileTreeNodeFromRow(row *FileTreeNodeRow) *model.FileTreeNode {
+	// document_kind 为 NULL（root/folder）时保持零值，保证往返保真；
+	// file 节点由 toRow 恒定写入 file/web。
+	var documentKind value.DocumentKind
+	if row.DocumentKind != nil && *row.DocumentKind != "" {
+		documentKind = value.DocumentKind(*row.DocumentKind)
+	}
 	return &model.FileTreeNode{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		ParentID: row.ParentID, NodeType: value.FileTreeNodeType(row.NodeType), Name: row.Name,
-		DocumentID: row.DocumentID, ExternalID: dereferenceString(row.ExternalID),
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		DocumentID: row.DocumentID, DocumentKind: documentKind,
+		ExternalID: dereferenceString(row.ExternalID),
+		CreatedAt:  row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 
@@ -365,7 +380,8 @@ func jobV2ToRow(job *model.Job) *JobRow {
 		ID: job.ID, WorkspaceID: job.WorkspaceID, KnowledgeBaseID: job.KnowledgeBaseID,
 		DocumentID: nullableUUID(job.DocumentID), DocumentRevisionID: nullableUUID(job.DocumentRevisionID),
 		IndexGenerationID: nullableUUID(job.IndexGenerationID), SourceConnectionID: nullableUUID(job.SourceConnectionID),
-		Type: job.Type, Status: string(job.Status),
+		KbSourceID: nullableUUID(job.KbSourceID),
+		Type:       job.Type, Status: string(job.Status),
 		Attempts: job.Attempts, ExternalJobID: job.ExternalJobID, Payload: normalizedJSONMap(job.Payload),
 		ErrorClass: job.ErrorClass, ErrorMessage: job.ErrorMessage,
 		CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
@@ -377,8 +393,9 @@ func jobV2FromRow(row *JobRow) *model.Job {
 		ID: row.ID, WorkspaceID: row.WorkspaceID, KnowledgeBaseID: row.KnowledgeBaseID,
 		DocumentID: dereferenceUUID(row.DocumentID), DocumentRevisionID: dereferenceUUID(row.DocumentRevisionID),
 		IndexGenerationID: dereferenceUUID(row.IndexGenerationID), SourceConnectionID: dereferenceUUID(row.SourceConnectionID),
-		Type:   row.Type,
-		Status: value.JobStatus(row.Status), Attempts: row.Attempts, ExternalJobID: row.ExternalJobID,
+		KbSourceID: dereferenceUUID(row.KbSourceID),
+		Type:       row.Type,
+		Status:     value.JobStatus(row.Status), Attempts: row.Attempts, ExternalJobID: row.ExternalJobID,
 		Payload: normalizedDomainMap(row.Payload), ErrorClass: row.ErrorClass, ErrorMessage: row.ErrorMessage,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
@@ -434,6 +451,15 @@ func nullableUUID(input uuid.UUID) *uuid.UUID {
 		return nil
 	}
 	value := input
+	return &value
+}
+
+// nullableUUIDPtr 把领域层的可空 UUID 原样映射为 Row 的可空 UUID（nil 透传，Nil 归一为 nil）。
+func nullableUUIDPtr(input *uuid.UUID) *uuid.UUID {
+	if input == nil || *input == uuid.Nil {
+		return nil
+	}
+	value := *input
 	return &value
 }
 

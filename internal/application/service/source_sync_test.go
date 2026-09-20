@@ -30,9 +30,12 @@ type fakeSourceConnector struct {
 	provider      string
 	listErr       error
 	fetchedTokens []string // 记录所有 Fetch 调用的 externalID（顺序）
-	complete      bool     // 控制 snapshot.Complete；默认 true。
-	warnings      []string // 附加到 snapshot.Warnings。
-	maxEditTime   time.Time
+	// lastOptions 记录最近一次 Fetch 收到的选项（供断言条件请求头回传行为，
+	// 如「非 force 回传 etag/IfModifiedSince、force 不回传」）。
+	lastOptions sourceport.FetchOptions
+	complete    bool     // 控制 snapshot.Complete；默认 true。
+	warnings    []string // 附加到 snapshot.Warnings。
+	maxEditTime time.Time
 	// listTreeHook 在 ListTree 返回前调用，用于模拟"同步运行期间触发的并发 force 请求"
 	// 等副作用（例如重新置位 force latch，供 FinalizeSourceSyncJob 观察到）。
 	listTreeHook func()
@@ -42,7 +45,7 @@ type fakeSourceConnector struct {
 	fetchErrByToken map[string]error
 }
 
-func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnection, _ model.SyncRoot) (sourceport.TreeSnapshot, error) {
+func (c *fakeSourceConnector) ListTree(_ context.Context, _ model.SourceConnection, _ model.SyncRoot, _ sourceport.ListOptions) (sourceport.TreeSnapshot, error) {
 	if c.listErr != nil {
 		return sourceport.TreeSnapshot{}, c.listErr
 	}
@@ -71,8 +74,9 @@ func (c *fakeSourceConnector) failFetchOnce(externalID string) {
 	c.failOnceTokens[externalID]++
 }
 
-func (c *fakeSourceConnector) Fetch(_ context.Context, _ model.SourceConnection, externalID string, _ sourceport.FetchOptions) (model.FetchedDocument, error) {
+func (c *fakeSourceConnector) Fetch(_ context.Context, _ model.SourceConnection, externalID string, options sourceport.FetchOptions) (model.FetchedDocument, error) {
 	c.fetchedTokens = append(c.fetchedTokens, externalID)
+	c.lastOptions = options
 	c.failOnceMu.Lock()
 	if c.failOnceTokens != nil && c.failOnceTokens[externalID] > 0 {
 		c.failOnceTokens[externalID]--
@@ -158,6 +162,16 @@ type fakeSourceSyncStore struct {
 	updateSyncResultErr error
 	// kbIDToWorkspace 反查 ListSourceDocuments 用到的 workspace（默认取 kb.WorkspaceID）。
 	kbIDToWorkspace map[uuid.UUID]uuid.UUID
+	// web 源编排（v1.3.0）相关状态：kb_sources 行、源级 Job/latch、cursor/result 写回。
+	kbSources            map[uuid.UUID]*model.KbSource
+	sourceForceLatch     map[uuid.UUID]bool
+	sourceActiveSyncJob  map[uuid.UUID]*model.Job
+	lastSourceSyncCursor map[uuid.UUID]time.Time
+	sourceSyncResults    map[uuid.UUID]SyncResult
+	lastSourceMetaWrites map[uuid.UUID]map[string]any // documentID -> source_meta
+	// web 源调度（T9）相关状态：到期源列表与 next_sync_at 写回记录。
+	dueWebSources       []DueWebSource
+	webSourceNextSyncAt map[uuid.UUID]time.Time
 }
 
 // deleteCall 记录一次 DeleteSourceDocument 调用的参数，供断言。
@@ -168,15 +182,35 @@ type deleteCall struct {
 
 func newFakeSourceSyncStore(kb *model.KnowledgeBase) *fakeSourceSyncStore {
 	return &fakeSourceSyncStore{
-		kb:               kb,
-		nodes:            map[uuid.UUID]*model.FileTreeNode{},
-		documents:        map[uuid.UUID]*model.Document{},
-		revisions:        map[uuid.UUID]*model.DocumentRevision{},
-		jobs:             map[uuid.UUID]*model.Job{},
-		docJobByExternal: map[string]uuid.UUID{},
-		folderByExternal: map[string]uuid.UUID{},
-		kbIDToWorkspace:  map[uuid.UUID]uuid.UUID{},
+		kb:                   kb,
+		nodes:                map[uuid.UUID]*model.FileTreeNode{},
+		documents:            map[uuid.UUID]*model.Document{},
+		revisions:            map[uuid.UUID]*model.DocumentRevision{},
+		jobs:                 map[uuid.UUID]*model.Job{},
+		docJobByExternal:     map[string]uuid.UUID{},
+		folderByExternal:     map[string]uuid.UUID{},
+		kbIDToWorkspace:      map[uuid.UUID]uuid.UUID{},
+		kbSources:            map[uuid.UUID]*model.KbSource{},
+		sourceForceLatch:     map[uuid.UUID]bool{},
+		sourceActiveSyncJob:  map[uuid.UUID]*model.Job{},
+		lastSourceSyncCursor: map[uuid.UUID]time.Time{},
+		sourceSyncResults:    map[uuid.UUID]SyncResult{},
+		lastSourceMetaWrites: map[uuid.UUID]map[string]any{},
+		webSourceNextSyncAt:  map[uuid.UUID]time.Time{},
 	}
+}
+
+// sourceActiveSyncJobCount 统计指定源当前进行中（pending/running）的源级 Job 数。
+// 调用方须已持有 s.mu。
+func (s *fakeSourceSyncStore) sourceActiveSyncJobCount(sourceID uuid.UUID) int {
+	job, ok := s.sourceActiveSyncJob[sourceID]
+	if !ok {
+		return 0
+	}
+	if job.Status == value.JobStatusPending || job.Status == value.JobStatusRunning {
+		return 1
+	}
+	return 0
 }
 
 func (s *fakeSourceSyncStore) WithinWorkspace(
@@ -383,6 +417,8 @@ func (s *fakeSourceSyncStore) viewForDocument(doc *model.Document) LocalDocView 
 		ContentHash: doc.ContentHash,
 		Status:      doc.Status,
 		DeletedAt:   doc.DeletedAt,
+		KbSourceID:  doc.KbSourceID,
+		SourceMeta:  doc.SourceMeta,
 	}
 	// 找该文档最新的 crawl revision（按 revision_no 倒序）。
 	var latest *model.DocumentRevision
@@ -451,6 +487,12 @@ func (s *fakeSourceSyncStore) CreateSyncedDocumentRevisionJob(_ context.Context,
 	if !ok {
 		return nil, domainerrors.ErrNotFound
 	}
+	// 源级归属校验（与 DB 层同语义）：请求携带 KbSourceID 时要求文档归属该源。
+	if request.KbSourceID != nil {
+		if doc.KbSourceID == nil || *doc.KbSourceID != *request.KbSourceID {
+			return nil, fmt.Errorf("%w: 更新同步文档归属其它内容源", domainerrors.ErrConflict)
+		}
+	}
 	// revision_no = max + 1。
 	var maxNo int64
 	for _, rev := range s.revisions {
@@ -459,11 +501,17 @@ func (s *fakeSourceSyncStore) CreateSyncedDocumentRevisionJob(_ context.Context,
 		}
 	}
 	revisionNo := maxNo + 1
+	// Web Revision 禁止 OriginalFilename/FileType；file Revision 必填。
+	originalFilename := request.Title
+	fileType := request.FileType
+	if doc.Kind == value.DocumentKindWeb {
+		originalFilename, fileType = "", ""
+	}
 	revision, err := model.NewDocumentRevisionWithID(request.RevisionID, model.NewDocumentRevisionInput{
 		WorkspaceID: request.WorkspaceID, KnowledgeBaseID: request.KnowledgeBaseID,
-		DocumentID: request.DocumentID, Kind: value.DocumentKindFile, DocumentKind: value.DocumentKindFile,
+		DocumentID: request.DocumentID, Kind: doc.Kind, DocumentKind: doc.Kind,
 		RevisionNo: revisionNo, Reason: request.Reason,
-		OriginalFilename: request.Title, FileType: request.FileType, ContentType: request.ContentType,
+		OriginalFilename: originalFilename, FileType: fileType, ContentType: request.ContentType,
 		RawStorageKey: request.RawStorageKey, SHA256: request.SHA256, SizeBytes: request.SizeBytes,
 		ProcessingVersion: model.CurrentProcessingVersion, Status: value.DocumentRevisionPending,
 	})
@@ -487,6 +535,9 @@ func (s *fakeSourceSyncStore) CreateSyncedDocumentRevisionJob(_ context.Context,
 	doc.Status = value.DocumentStatusPending
 	doc.UpdatedAt = now
 	doc.DeletedAt = nil
+	if request.SourceMeta != nil {
+		doc.SourceMeta = request.SourceMeta
+	}
 	// 更新 FileTreeNode（按 document_id 定位 file 节点）。
 	for _, node := range s.nodes {
 		if node.DocumentID != nil && *node.DocumentID == request.DocumentID {
@@ -645,6 +696,158 @@ func (s *fakeSourceSyncStore) UpdateSyncResult(_ context.Context, _, _ uuid.UUID
 	defer s.mu.Unlock()
 	s.lastSyncResult = &result
 	return s.updateSyncResultErr
+}
+
+// ---- web 源编排（v1.3.0）的 fake 实现 ----
+
+// PutKbSource 预置一个内容源（测试种子辅助，非接口方法）。
+func (s *fakeSourceSyncStore) PutKbSource(source *model.KbSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kbSources[source.ID] = source
+}
+
+func (s *fakeSourceSyncStore) GetSyncKbSource(_ context.Context, workspaceID, kbID, sourceID uuid.UUID) (*model.KbSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	source, ok := s.kbSources[sourceID]
+	if !ok || source.WorkspaceID != workspaceID || source.KnowledgeBaseID != kbID || source.DeletedAt != nil {
+		return nil, domainerrors.ErrNotFound
+	}
+	return source, nil
+}
+
+func (s *fakeSourceSyncStore) ConsumeSourceForceLatch(_ context.Context, _, _, sourceID, _ uuid.UUID) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.sourceForceLatch[sourceID]
+	s.sourceForceLatch[sourceID] = false
+	return v, nil
+}
+
+func (s *fakeSourceSyncStore) FinalizeSourceSyncJobForSource(_ context.Context, workspaceID, kbID, sourceID, jobID uuid.UUID, status value.JobStatus, _ string) (*model.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.finalizeErr != nil {
+		return nil, s.finalizeErr
+	}
+	if job, ok := s.jobs[jobID]; ok {
+		job.Status = status
+	}
+	delete(s.sourceActiveSyncJob, sourceID)
+	if s.sourceForceLatch[sourceID] {
+		next, err := model.NewJob(model.NewJobInput{
+			WorkspaceID: workspaceID, KnowledgeBaseID: kbID, KbSourceID: sourceID,
+			Type: model.SourceSyncJobType, Status: value.JobStatusPending,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.sourceForceLatch[sourceID] = false
+		s.jobs[next.ID] = next
+		s.sourceActiveSyncJob[sourceID] = next
+		return next, nil
+	}
+	return nil, nil
+}
+
+func (s *fakeSourceSyncStore) UpdateSourceSyncCursor(_ context.Context, _, _, sourceID uuid.UUID, cursor time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastSourceSyncCursor[sourceID] = cursor
+	return nil
+}
+
+func (s *fakeSourceSyncStore) UpdateSourceSyncResult(_ context.Context, _, _, sourceID uuid.UUID, result SyncResult) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	source, ok := s.kbSources[sourceID]
+	if !ok {
+		return domainerrors.ErrNotFound
+	}
+	source.SyncLastResult = map[string]any{"status": result.Status}
+	s.sourceSyncResults[sourceID] = result
+	return nil
+}
+
+func (s *fakeSourceSyncStore) UpdateDocumentSourceMeta(_ context.Context, _, documentID uuid.UUID, sourceMeta map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastSourceMetaWrites[documentID] = sourceMeta
+	if doc, ok := s.documents[documentID]; ok {
+		doc.SourceMeta = sourceMeta
+	}
+	return nil
+}
+
+// ---- web 源调度（T9）：fake 提供 调度测试 所需的最小行为 ----
+
+func (s *fakeSourceSyncStore) ListDueWebSources(_ context.Context, _ time.Time) ([]DueWebSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	due := make([]DueWebSource, 0, len(s.dueWebSources))
+	due = append(due, s.dueWebSources...)
+	return due, nil
+}
+
+func (s *fakeSourceSyncStore) CountActiveBySource(_ context.Context, _, _, sourceID uuid.UUID) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sourceActiveSyncJobCount(sourceID), nil
+}
+
+func (s *fakeSourceSyncStore) CountActiveWebSourceJobs(_ context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, job := range s.jobs {
+		if job.Type == model.SourceSyncJobType && job.KbSourceID != uuid.Nil &&
+			(job.Status == value.JobStatusPending || job.Status == value.JobStatusRunning) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *fakeSourceSyncStore) RequestSourceSyncForSource(_ context.Context, workspaceID, kbID, sourceID uuid.UUID, requestedForce bool) (*model.Job, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sourceForceLatch[sourceID] = s.sourceForceLatch[sourceID] || requestedForce
+	if job, ok := s.sourceActiveSyncJob[sourceID]; ok {
+		return job, false, nil
+	}
+	job, err := model.NewJob(model.NewJobInput{
+		WorkspaceID: workspaceID, KnowledgeBaseID: kbID, KbSourceID: sourceID,
+		Type: model.SourceSyncJobType, Status: value.JobStatusPending,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	s.jobs[job.ID] = job
+	s.sourceActiveSyncJob[sourceID] = job
+	return job, true, nil
+}
+
+func (s *fakeSourceSyncStore) FailSourceSyncEnqueueForSource(_ context.Context, _, _, sourceID, jobID uuid.UUID, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[jobID]
+	if !ok {
+		return domainerrors.ErrNotFound
+	}
+	if job.Status != value.JobStatusPending {
+		return domainerrors.ErrConflict
+	}
+	job.Status = value.JobStatusFailed
+	delete(s.sourceActiveSyncJob, sourceID)
+	return nil
+}
+
+func (s *fakeSourceSyncStore) UpdateWebSourceNextSyncAt(_ context.Context, _, _, sourceID uuid.UUID, nextSyncAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.webSourceNextSyncAt[sourceID] = nextSyncAt
+	return nil
 }
 
 // fakeSyncRawStore 返回基于 document id 的固定 key，记录 put/delete。

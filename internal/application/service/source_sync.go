@@ -41,30 +41,47 @@ type SourceSyncServiceDeps struct {
 	ConnectionRepository    SourceConnectionRepository
 	Selector                *SourceConnectionSelector
 	Connector               sourceport.SourceConnector
-	RawStore                storage.RawDocumentStore
-	Store                   SourceSyncStore
-	Queue                   queue.JobQueue
-	Logger                  Logger
+	// WebConnector 是 web 内容源（kb_sources.kind='web'）的 SourceConnector 实现。
+	// 仅源级编排（source_sync_web.go）消费；飞书路径不感知。
+	WebConnector sourceport.SourceConnector
+	RawStore     storage.RawDocumentStore
+	Store        SourceSyncStore
+	Queue        queue.JobQueue
+	Logger       Logger
 	// RootResolver 解析 KB.SourceConfig["url"] 为同步根；为 nil 时仅用 root_kind+root_token。
 	RootResolver RootResolver
 	// MaxContentBytes 限制单次同步文档拉取与落库的字节数；<=0 表示不设上限。
 	// Task 7 默认沿用旧的无上限行为，Task 9 从 config 注入真实上限。
 	MaxContentBytes int64
+	// —— web 源任务超时推导参数（config.web_source 小节，spec §9.1）——
+	// 零值时用默认（30s / 200ms / 4h），保证测试与旧装配路径可用。
+	// WebRequestTimeout 是单请求超时（request_timeout_seconds）。
+	WebRequestTimeout time.Duration
+	// WebDefaultRequestDelay 是同 host 请求间隔默认值（default_request_delay_ms）。
+	WebDefaultRequestDelay time.Duration
+	// WebSyncTaskTimeout 是单次源同步任务超时硬上限（sync_task_timeout_seconds）。
+	WebSyncTaskTimeout time.Duration
 }
 
 // SourceSyncService 编排一次飞书知识库的全量同步：
 // 列举外部目录树 → 拉取 docx → 写入 File Document + Revision + Job → 入队解析任务。
+// v1.3.0 起同时编排 web 内容源（按源，见 source_sync_web.go 与 source_sync_web_dispatch.go）。
 type SourceSyncService struct {
 	kbRepo          KnowledgeBaseSyncRepository
 	connRepo        SourceConnectionRepository
 	selector        *SourceConnectionSelector
 	connector       sourceport.SourceConnector
+	webConnector    sourceport.SourceConnector
 	rawStore        storage.RawDocumentStore
 	store           SourceSyncStore
 	queue           queue.JobQueue
 	logger          Logger
 	resolveRoot     RootResolver
 	maxContentBytes int64
+	// —— web 源任务超时推导参数（spec §9.1）——
+	webRequestTimeout      time.Duration
+	webDefaultRequestDelay time.Duration
+	webSyncTaskTimeout     time.Duration
 }
 
 // NewSourceSyncService 构造一个 SourceSyncService。
@@ -73,17 +90,33 @@ func NewSourceSyncService(deps SourceSyncServiceDeps) *SourceSyncService {
 	if logger == nil {
 		logger = noopLogger{}
 	}
+	webRequestTimeout := deps.WebRequestTimeout
+	if webRequestTimeout <= 0 {
+		webRequestTimeout = 30 * time.Second
+	}
+	webRequestDelay := deps.WebDefaultRequestDelay
+	if webRequestDelay <= 0 {
+		webRequestDelay = 200 * time.Millisecond
+	}
+	webSyncTaskTimeout := deps.WebSyncTaskTimeout
+	if webSyncTaskTimeout <= 0 {
+		webSyncTaskTimeout = 4 * time.Hour
+	}
 	return &SourceSyncService{
-		kbRepo:          deps.KnowledgeBaseRepository,
-		connRepo:        deps.ConnectionRepository,
-		selector:        deps.Selector,
-		connector:       deps.Connector,
-		rawStore:        deps.RawStore,
-		store:           deps.Store,
-		queue:           deps.Queue,
-		logger:          logger,
-		resolveRoot:     deps.RootResolver,
-		maxContentBytes: deps.MaxContentBytes,
+		kbRepo:                 deps.KnowledgeBaseRepository,
+		connRepo:               deps.ConnectionRepository,
+		selector:               deps.Selector,
+		connector:              deps.Connector,
+		webConnector:           deps.WebConnector,
+		rawStore:               deps.RawStore,
+		store:                  deps.Store,
+		queue:                  deps.Queue,
+		logger:                 logger,
+		resolveRoot:            deps.RootResolver,
+		maxContentBytes:        deps.MaxContentBytes,
+		webRequestTimeout:      webRequestTimeout,
+		webDefaultRequestDelay: webRequestDelay,
+		webSyncTaskTimeout:     webSyncTaskTimeout,
 	}
 }
 
@@ -180,11 +213,13 @@ func (s *SourceSyncService) enqueueSourceSyncTask(ctx context.Context, workspace
 }
 
 // sourceSyncTaskPayload 是 source_sync 任务的队列载荷（worker 与 HTTP handler 共用）。
+// SourceID 非 nil 表示源级目标（web 内容源，编排按源执行）；零值为 KB 级（飞书）。
 type sourceSyncTaskPayload struct {
 	WorkspaceID     uuid.UUID `json:"workspace_id"`
 	KnowledgeBaseID uuid.UUID `json:"knowledge_base_id"`
 	JobID           uuid.UUID `json:"job_id"`
 	ConnectionID    uuid.UUID `json:"connection_id,omitempty"`
+	SourceID        uuid.UUID `json:"source_id,omitempty"`
 }
 
 // feishuObjTypeDocx 是飞书侧可同步文档的类型标识。
@@ -251,7 +286,8 @@ func (s *SourceSyncService) syncKnowledgeBase(ctx context.Context, workspaceID, 
 	}
 
 	// ListTree：致命错误先写 failed 结果再返回 error。
-	snapshot, err := s.connector.ListTree(ctx, conn, root)
+	// 飞书连接器忽略 options（web 源专属参数）。
+	snapshot, err := s.connector.ListTree(ctx, conn, root, sourceport.ListOptions{})
 	if err != nil {
 		s.writeSyncResultBestEffort(ctx, workspaceID, kbID, SyncResult{
 			Status: "failed", Complete: false, FinishedAt: time.Now().UTC(),
@@ -260,10 +296,13 @@ func (s *SourceSyncService) syncKnowledgeBase(ctx context.Context, workspaceID, 
 	}
 
 	// 读本地投影 + diff（纯函数，删除闸门由 snapshot.Complete 控制）。
+	// 飞书编排范围 = KB 级文档（kb_source_id 为空）：源级 web 文档归属各自源，
+	// 由 source_sync_web.go 按源 diff，绝不进入飞书删除检测。
 	localDocs, err := s.store.ListSourceDocuments(ctx, kbID)
 	if err != nil {
 		return fmt.Errorf("读取本地来源文档投影失败: %w", err)
 	}
+	localDocs = filterLocalDocsBySource(localDocs, nil)
 	plan := diff(snapshot, localDocs, cursor, force)
 
 	// tokenToNodeID 用于 folder/文档节点的父子定位。
@@ -503,41 +542,54 @@ func (s *SourceSyncService) applyFolders(ctx context.Context, syncCtx *syncRunCt
 		if node.HasDocument {
 			continue
 		}
-		if strings.TrimSpace(node.Token) == "" {
-			continue
-		}
-		parentNodeID, ok := resolveParentNodeID(syncCtx.kb, node, syncCtx.tokenToNodeID)
-		if !ok {
-			continue
-		}
-		folder, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
-			WorkspaceID: syncCtx.kb.WorkspaceID, KnowledgeBaseID: syncCtx.kb.ID,
-			ParentID: &parentNodeID, NodeType: value.FileTreeNodeFolder, Name: node.Title,
-			ExternalID: node.Token,
-		})
-		if err != nil {
-			s.logger.Error("构造同步 folder 失败",
-				"workspace_id", syncCtx.kb.WorkspaceID.String(),
-				"external_token", node.Token,
-				"error", err.Error(),
-			)
-			continue
-		}
-		if err := s.store.UpsertSourceFolder(ctx, folder); err != nil {
-			s.logger.Error("写入同步 folder 失败",
-				"workspace_id", syncCtx.kb.WorkspaceID.String(),
-				"external_token", node.Token,
-				"error", err.Error(),
-			)
-		}
-		syncCtx.tokenToNodeID[node.Token] = folder.ID
+		s.upsertSyncFolder(ctx, syncCtx, node)
 	}
 
 	if !snapshot.Complete {
 		return nil
 	}
+	return s.deleteMissingFolders(ctx, syncCtx, snapshot)
+}
 
-	// 完整 snapshot：删除远端不存在的空 folder（深度优先，叶子优先）。
+// upsertSyncFolder upsert 单个 folder 节点并注册进父子定位映射。
+// 返回 false 表示节点不满足 upsert 条件（非 folder/空 token/父定位失败）或写入失败；
+// 失败只记日志，由调用方决定是否继续（飞书/web 两个编排路径共用）。
+func (s *SourceSyncService) upsertSyncFolder(ctx context.Context, syncCtx *syncRunCtx, node model.ExternalNode) bool {
+	if node.HasDocument || strings.TrimSpace(node.Token) == "" {
+		return false
+	}
+	parentNodeID, ok := resolveParentNodeID(syncCtx.kb, node, syncCtx.tokenToNodeID)
+	if !ok {
+		return false
+	}
+	folder, err := model.NewFileTreeNode(model.NewFileTreeNodeInput{
+		WorkspaceID: syncCtx.kb.WorkspaceID, KnowledgeBaseID: syncCtx.kb.ID,
+		ParentID: &parentNodeID, NodeType: value.FileTreeNodeFolder, Name: node.Title,
+		ExternalID: node.Token,
+	})
+	if err != nil {
+		s.logger.Error("构造同步 folder 失败",
+			"workspace_id", syncCtx.kb.WorkspaceID.String(),
+			"external_token", node.Token,
+			"error", err.Error(),
+		)
+		return false
+	}
+	if err := s.store.UpsertSourceFolder(ctx, folder); err != nil {
+		s.logger.Error("写入同步 folder 失败",
+			"workspace_id", syncCtx.kb.WorkspaceID.String(),
+			"external_token", node.Token,
+			"error", err.Error(),
+		)
+		return false
+	}
+	syncCtx.tokenToNodeID[node.Token] = folder.ID
+	return true
+}
+
+// deleteMissingFolders 删除远端快照中已不存在的空 folder（深度优先，叶子优先；
+// 仅在完整 snapshot 下调用）。partial snapshot 不删 folder（spec 5.2/5.5）。
+func (s *SourceSyncService) deleteMissingFolders(ctx context.Context, syncCtx *syncRunCtx, snapshot sourceport.TreeSnapshot) error {
 	remoteFolderTokens := make(map[string]bool, len(snapshot.Nodes))
 	for _, node := range snapshot.Nodes {
 		if !node.HasDocument && node.Token != "" {
@@ -775,6 +827,9 @@ func (s *SourceSyncService) addSourceDocument(
 		counts.failed++
 		return nodeOutcome{Token: external.Token, EditTime: external.EditTime, Result: nodeResultFailure}
 	}
+	// worker 的 lineage 校验要求 parse Job 的 DB payload 携带目标 generation
+	// （与 document_ingest.go 的文件上传路径同构），否则任务加载即失败。
+	job.Payload["index_generation_id"] = syncCtx.generationID.String()
 
 	var fileNode *model.FileTreeNode
 	err = s.store.WithinWorkspace(ctx, syncCtx.kb.WorkspaceID, func(txCtx context.Context, tx SourceSyncTx) error {
@@ -900,7 +955,8 @@ func (s *SourceSyncService) createUpdateRevision(
 	result, err := s.store.CreateSyncedDocumentRevisionJob(ctx, UpdateDocumentRequest{
 		WorkspaceID: syncCtx.kb.WorkspaceID, KnowledgeBaseID: syncCtx.kb.ID,
 		ExternalID: external.Token, DocumentID: local.DocumentID, RevisionID: revisionID,
-		Title: title, ParentNodeID: parentNodeID,
+		GenerationID: syncCtx.generationID,
+		Title:        title, ParentNodeID: parentNodeID,
 		RawStorageKey: rawObject.Key, SHA256: contentHash,
 		SizeBytes: rawObject.SizeBytes, ContentType: "text/markdown", FileType: "markdown",
 		Reason: value.DocumentRevisionReasonCrawl,
@@ -949,7 +1005,8 @@ func (s *SourceSyncService) retryRevision(
 	result, err := s.store.RetrySourceRevision(ctx, RetryDocumentRequest{
 		WorkspaceID: syncCtx.kb.WorkspaceID, KnowledgeBaseID: syncCtx.kb.ID,
 		DocumentID: local.DocumentID, RevisionID: *retryRevisionID,
-		SHA256: contentHash, Title: title, ParentNodeID: parentNodeID,
+		GenerationID: syncCtx.generationID,
+		SHA256:       contentHash, Title: title, ParentNodeID: parentNodeID,
 	})
 	if err != nil {
 		counts.failed++
@@ -973,9 +1030,7 @@ func (s *SourceSyncService) retryRevision(
 // enqueueParseJob 入队 document_parse_start；失败时把刚创建的 revision/job 标记失败。
 
 // applyMissingDocuments 执行删除策略（spec 5.5）。返回删除文档数与待清理对象数。
-// 仅在 snapshot.Complete=true 时调用（删除闸门）。remove 策略下，DeleteSourceDocument
-// 已在事务内创建 KB 级 source_cleanup Job（pending），此处负责在事务提交后把它们入队
-// asynq；入队失败由 SourceCleanupScheduler 在下一次 Tick 周期恢复派发。
+// 仅在 snapshot.Complete=true 时调用（删除闸门）。飞书路径：policy 取自 KB.SourceConfig。
 func (s *SourceSyncService) applyMissingDocuments(
 	ctx context.Context,
 	workspaceID, kbID uuid.UUID,
@@ -986,6 +1041,19 @@ func (s *SourceSyncService) applyMissingDocuments(
 		return 0, 0
 	}
 	policy := value.SourceDeletePolicyFromConfig(kb.SourceConfig["on_delete"])
+	return s.applyMissingDocumentsWithPolicy(ctx, workspaceID, kbID, policy, toRemove)
+}
+
+// applyMissingDocumentsWithPolicy 是删除策略的源无关实现：web 源编排以源 config 的
+// on_delete 调用（spec §3.2 编排键按源）。remove 策略下，DeleteSourceDocument 已在
+// 事务内创建 KB 级 source_cleanup Job（pending），此处负责在事务提交后把它们入队
+// asynq；入队失败由 SourceCleanupScheduler 在下一次 Tick 周期恢复派发。
+func (s *SourceSyncService) applyMissingDocumentsWithPolicy(
+	ctx context.Context,
+	workspaceID, kbID uuid.UUID,
+	policy value.SourceDeletePolicy,
+	toRemove []LocalDocView,
+) (int, int) {
 	deleted := 0
 	cleanupPending := 0
 	for _, view := range toRemove {
@@ -1001,7 +1069,7 @@ func (s *SourceSyncService) applyMissingDocuments(
 		}
 		deleted++
 		cleanupPending += len(objects)
-		s.logger.Info("删除飞书侧已不存在的文档",
+		s.logger.Info("删除远端已不存在的文档",
 			"workspace_id", workspaceID.String(),
 			"document_id", view.DocumentID.String(),
 			"external_id", view.ExternalID,
@@ -1013,7 +1081,6 @@ func (s *SourceSyncService) applyMissingDocuments(
 				// 入队失败：Job 已 pending 落库，scheduler 会在下一次 Tick 恢复派发；只记日志。
 				s.logger.Warn("入队 source_cleanup 任务失败，等待 scheduler 恢复",
 					"workspace_id", workspaceID.String(),
-					"knowledge_base_id", kbID.String(),
 					"job_id", job.ID.String(),
 					"error", err.Error(),
 				)
@@ -1021,6 +1088,20 @@ func (s *SourceSyncService) applyMissingDocuments(
 		}
 	}
 	return deleted, cleanupPending
+}
+
+// RemoveSourceDocuments 以 remove 策略删除一批既有文档并提交后入队清理任务
+// （spec §9.2 DELETE ?pages=remove 的删除分支）。复用与来源同步完全相同的删除路径
+// （applyMissingDocumentsWithPolicy）：事务内删文档 + 建清理 Job，提交后入队，
+// 入队失败由 SourceCleanupScheduler 恢复。单个文档删除失败记日志并继续，
+// 由调用方（KbSourceService.DeleteWebSource）依据返回的删除数决定重试。
+func (s *SourceSyncService) RemoveSourceDocuments(ctx context.Context, workspaceID, kbID uuid.UUID, documentIDs []uuid.UUID) (int, error) {
+	views := make([]LocalDocView, 0, len(documentIDs))
+	for _, documentID := range documentIDs {
+		views = append(views, LocalDocView{DocumentID: documentID})
+	}
+	deleted, _ := s.applyMissingDocumentsWithPolicy(ctx, workspaceID, kbID, value.SourceDeleteRemove, views)
+	return deleted, nil
 }
 
 // enqueueCleanupJob 把一个 KB 级 source_cleanup Job 入队 asynq。
@@ -1074,9 +1155,9 @@ func (s *SourceSyncService) enqueueParseJob(
 		Type: documentParseStartJobType, Payload: queuePayload,
 		TaskID: queue.DocumentTaskID(documentParseStartJobType, syncCtx.kb.WorkspaceID, revisionID, generationID),
 	}); err != nil {
-		cause := fmt.Errorf("入队飞书文档解析任务失败: %w", err)
+		cause := fmt.Errorf("入队文档解析任务失败: %w", err)
 		if persistErr := s.store.FailCreatedSync(ctx, syncCtx.kb.WorkspaceID, documentID, revisionID, jobID, "enqueue_error", cause.Error()); persistErr != nil {
-			return errors.Join(cause, fmt.Errorf("持久化飞书文档入队失败状态失败: %w", persistErr))
+			return errors.Join(cause, fmt.Errorf("持久化文档入队失败状态失败: %w", persistErr))
 		}
 		return cause
 	}
@@ -1163,7 +1244,7 @@ func (s *SourceSyncService) deleteRawBestEffort(ctx context.Context, key string)
 		return
 	}
 	if err := s.rawStore.Delete(ctx, key); err != nil {
-		s.logger.Error("删除飞书原始文件失败（best-effort）", "key", key, "error", err.Error())
+		s.logger.Error("删除原始文档失败（best-effort）", "key", key, "error", err.Error())
 	}
 }
 

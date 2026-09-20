@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Loader2, Pencil, Plug, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Pencil, Plug, PlugZap, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -39,11 +39,18 @@ import type { Role } from '@/features/auth/types'
 import { parseApiError } from '@/lib/api/error'
 import { cn } from '@/lib/utils'
 import {
+  secretFieldLabelKey,
+  secretFieldPlaceholderKey,
+  sourceProviderBadgeKey,
+  testableProviders,
+} from '../provider'
+import {
   deleteSourceConnectionMutationOptions,
   sourceConnectionsQueryOptions,
+  testSourceConnectionMutationOptions,
   updateSourceConnectionMutationOptions,
 } from '../queries'
-import type { SourceConnection } from '../types'
+import type { SourceConnection, SourceProvider } from '../types'
 
 type SourceConnectionListProps = {
   workspaceSlug: string
@@ -138,6 +145,13 @@ function SourceConnectionCard({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const isActive = connection.status === 'active'
+  // 后端契约：探测成功与失败都 HTTP 200，ok=false 时 message 用户可读；
+  // 「无法测试」（停用/feishu）走 error。结果非持久化，仅卡片临时展示。
+  const [testResult, setTestResult] = useState<{
+    ok: boolean
+    message: string
+  } | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
 
@@ -147,6 +161,10 @@ function SourceConnectionCard({
   const deleteMutation = useMutation(
     deleteSourceConnectionMutationOptions(workspaceSlug)
   )
+  const testMutation = useMutation(
+    testSourceConnectionMutationOptions(workspaceSlug, connection.id)
+  )
+  const canTest = canManage && testableProviders.has(connection.provider)
 
   function invalidateConnections() {
     void queryClient.invalidateQueries({
@@ -172,6 +190,17 @@ function SourceConnectionCard({
     }
   }
 
+  async function handleTest() {
+    setTestResult(null)
+    setTestError(null)
+    try {
+      const result = await testMutation.mutateAsync()
+      setTestResult({ ok: result.ok, message: result.message })
+    } catch (error) {
+      setTestError(parseApiError(error).message)
+    }
+  }
+
   return (
     <>
       <Card className='group resource-card'>
@@ -180,7 +209,12 @@ function SourceConnectionCard({
             <Plug className='size-5' />
           </div>
           <CardTitle className='truncate'>{connection.name}</CardTitle>
-          <CardAction>
+          <CardAction className='flex items-center gap-2'>
+            {connection.provider !== 'feishu' && (
+              <Badge variant='outline'>
+                {t(sourceProviderBadgeKey(connection.provider))}
+              </Badge>
+            )}
             <Badge variant={isActive ? 'default' : 'secondary'}>
               {t(
                 isActive
@@ -191,14 +225,7 @@ function SourceConnectionCard({
           </CardAction>
         </CardHeader>
         <CardContent className='space-y-2 text-sm'>
-          <div className='flex items-center justify-between gap-2'>
-            <span className='text-muted-foreground'>
-              {t('integrations.card.appIdLabel')}
-            </span>
-            <span className='truncate font-mono text-xs'>
-              {connection.app_id}
-            </span>
-          </div>
+          <SourceConnectionDetailRows connection={connection} />
           <div className='flex items-center justify-between gap-2'>
             <span className='text-muted-foreground'>
               {t('integrations.card.boundKbLabel')}
@@ -207,6 +234,36 @@ function SourceConnectionCard({
               {t('integrations.card.boundKbPlaceholder')}
             </span>
           </div>
+          {canTest && (
+            <div className='flex flex-wrap items-center gap-2 pt-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={handleTest}
+                disabled={testMutation.isPending}
+              >
+                {testMutation.isPending ? (
+                  <Loader2 className='animate-spin' />
+                ) : (
+                  <PlugZap />
+                )}
+                {t('integrations.card.testButton')}
+              </Button>
+            </div>
+          )}
+          {(testResult || testError) && (
+            <p
+              role='status'
+              className={cn(
+                'text-xs',
+                testResult?.ok
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-destructive'
+              )}
+            >
+              {testResult ? testResult.message : testError}
+            </p>
+          )}
           {canManage && (
             <div className='flex flex-wrap items-center gap-2 pt-2'>
               <Button
@@ -301,6 +358,57 @@ function SourceConnectionCard({
   )
 }
 
+/** 按 provider 展示非敏感明细：feishu=App ID，firecrawl/jina=掩码 key（+/endpoint），browser=endpoint。 */
+function SourceConnectionDetailRows({
+  connection,
+}: {
+  connection: SourceConnection
+}) {
+  const { t } = useTranslation()
+  const provider = connection.provider
+
+  const endpointRow =
+    provider === 'firecrawl' || provider === 'browser' ? (
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground'>
+          {t('integrations.card.endpointLabel')}
+        </span>
+        <span className='truncate font-mono text-xs'>
+          {connection.endpoint_url === ''
+            ? t('integrations.card.endpointDefault')
+            : connection.endpoint_url}
+        </span>
+      </div>
+    ) : null
+
+  if (provider === 'feishu') {
+    return (
+      <div className='flex items-center justify-between gap-2'>
+        <span className='text-muted-foreground'>
+          {t('integrations.card.appIdLabel')}
+        </span>
+        <span className='truncate font-mono text-xs'>{connection.app_id}</span>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {(provider === 'firecrawl' || provider === 'jina') && (
+        <div className='flex items-center justify-between gap-2'>
+          <span className='text-muted-foreground'>
+            {t('integrations.card.apiKeyLabel')}
+          </span>
+          <span className='font-mono text-xs'>
+            {t('integrations.card.keyMasked')}
+          </span>
+        </div>
+      )}
+      {endpointRow}
+    </>
+  )
+}
+
 type SourceConnectionEditDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -322,6 +430,7 @@ function SourceConnectionEditDialog({
   const mutation = useMutation(
     updateSourceConnectionMutationOptions(workspaceSlug, connection.id)
   )
+  const provider: SourceProvider = connection.provider
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -358,25 +467,27 @@ function SourceConnectionEditDialog({
               autoFocus
             />
           </div>
-          <div className='space-y-2'>
-            <Label htmlFor='source-connection-edit-app-id'>
-              {t('integrations.form.appIdLabel')}
-            </Label>
-            <Input
-              id='source-connection-edit-app-id'
-              value={connection.app_id}
-              readOnly
-            />
-          </div>
+          {provider === 'feishu' && (
+            <div className='space-y-2'>
+              <Label htmlFor='source-connection-edit-app-id'>
+                {t('integrations.form.appIdLabel')}
+              </Label>
+              <Input
+                id='source-connection-edit-app-id'
+                value={connection.app_id}
+                readOnly
+              />
+            </div>
+          )}
           <div className='space-y-2'>
             <Label htmlFor='source-connection-edit-app-secret'>
-              {t('integrations.form.appSecretLabel')}
+              {t(secretFieldLabelKey(provider))}
             </Label>
             <Input
               id='source-connection-edit-app-secret'
               type='password'
               autoComplete='new-password'
-              placeholder={t('integrations.form.appSecretPlaceholder')}
+              placeholder={t(secretFieldPlaceholderKey(provider))}
               value={appSecret}
               onChange={(event) => setAppSecret(event.target.value)}
             />

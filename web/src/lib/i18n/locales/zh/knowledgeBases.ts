@@ -42,7 +42,7 @@ export const knowledgeBases = {
     },
     sourceConnectionLabel: '飞书应用',
     sourceConnectionPlaceholder: '选择已添加的飞书应用',
-    sourceConnectionEmpty: '尚未添加飞书应用。',
+    sourceConnectionEmpty: '尚未添加可用的内容源连接。',
     sourceConnectionGo: '去添加应用',
     sourceTokenLabel: '知识库 Token / 链接',
     sourceTokenPlaceholder: '粘贴文件夹 / Wiki 节点 token 或链接',

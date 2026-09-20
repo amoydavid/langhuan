@@ -10,6 +10,25 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
+// TestDocumentKbSourceIDDefaultsToNil 固定溯源列的缺省语义：上传/FAQ 等非源文档
+// 不指向内容源，只有源同步路径（web/KB 级编排）显式设置 kb_source_id。
+func TestDocumentKbSourceIDDefaultsToNil(t *testing.T) {
+	doc, err := NewDocumentIdentity(
+		uuid.New(), uuid.New(), value.DocumentKindFile, "a.pdf", "upload", "", nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.KbSourceID != nil {
+		t.Fatalf("KbSourceID = %v, want nil", doc.KbSourceID)
+	}
+	sourceID := uuid.New()
+	doc.KbSourceID = &sourceID
+	if doc.KbSourceID == nil || *doc.KbSourceID != sourceID {
+		t.Fatal("KbSourceID 应可被源同步路径赋值")
+	}
+}
+
 func TestNewDocumentRequiresWorkspaceScopedKnowledgeBase(t *testing.T) {
 	doc, err := NewDocument(NewDocumentInput{
 		KnowledgeBaseID: uuid.New(),

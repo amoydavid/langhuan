@@ -23,12 +23,14 @@ type Dependencies struct {
 	DocumentList      MCPDocumentListService
 	DocumentGet       MCPDocumentGetService
 	DocumentIngest    MCPDocumentIngestService
-	DocumentStatus    *service.ProgrammaticDocumentStatusService
-	DocumentDelete    MCPDocumentDeleteService
-	DocumentRetry     MCPDocumentRetryService
-	ChunkGet          MCPChunkGetService
-	MultiSearch       *service.MultiKnowledgeSearchService
-	InlineLimit       int64
+	// WebSources 支撑 document_ingest 的 url 入口（URL 并入 urls 模式网站源）。
+	WebSources     MCPWebSourceService
+	DocumentStatus *service.ProgrammaticDocumentStatusService
+	DocumentDelete MCPDocumentDeleteService
+	DocumentRetry  MCPDocumentRetryService
+	ChunkGet       MCPChunkGetService
+	MultiSearch    *service.MultiKnowledgeSearchService
+	InlineLimit    int64
 	// EnableLocalhostProtection enables mcp-go's DNS rebinding protection.
 	EnableLocalhostProtection bool
 }

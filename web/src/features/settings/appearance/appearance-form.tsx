@@ -90,10 +90,12 @@ export function AppearanceForm() {
                   {themeOptions.map((option) => (
                     <Label
                       key={option.value}
+                      htmlFor={`appearance-theme-${option.value}`}
                       className='group cursor-pointer font-normal'
                     >
                       <RadioGroupItem
                         value={option.value}
+                        id={`appearance-theme-${option.value}`}
                         aria-label={option.label}
                         className='sr-only'
                       />

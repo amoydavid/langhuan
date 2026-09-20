@@ -2,6 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { KeyRound, Loader2 } from 'lucide-react'
+import type { Control } from 'react-hook-form'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -15,14 +16,26 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { parseApiError } from '@/lib/api/error'
+import {
+  secretFieldLabelKey,
+  secretFieldPlaceholderKey,
+  testableProviders,
+} from '../provider'
 import { createSourceConnectionMutationOptions } from '../queries'
-import { createSourceConnectionSchema } from '../schemas'
-import type { CreateSourceConnectionInput, SourceConnection } from '../types'
+import {
+  createSourceConnectionFormSchema,
+  toCreateSourceConnectionInput,
+} from '../schemas'
+import type { SourceConnection, SourceConnectionFormValues } from '../types'
 
-// 表单值直接复用 create schema 的输出，包含 provider 字段，
-// 使 zodResolver 类型与 RHF useForm 完全对齐。
-type SourceConnectionFormValues = CreateSourceConnectionInput
+const providerFormLabelKeys = {
+  feishu: 'integrations.form.providerFeishu',
+  firecrawl: 'integrations.form.providerFirecrawl',
+  jina: 'integrations.form.providerJina',
+  browser: 'integrations.form.providerBrowser',
+} as const
 
 type SourceConnectionFormProps = {
   workspaceSlug: string
@@ -40,27 +53,33 @@ export function SourceConnectionForm({
   const { t } = useTranslation()
 
   const form = useForm<SourceConnectionFormValues>({
-    resolver: zodResolver(createSourceConnectionSchema),
+    resolver: zodResolver(createSourceConnectionFormSchema),
     defaultValues: {
       provider: 'feishu',
       name: '',
       app_id: '',
       app_secret: '',
+      endpoint_url: '',
     },
   })
+  const provider = form.watch('provider')
 
   const mutation = useMutation(
     createSourceConnectionMutationOptions(workspaceSlug)
   )
 
   async function onSubmit(values: SourceConnectionFormValues) {
-    // TODO: 在保存前调用飞书 token 接口做一次连通性测试，验证 App ID/Secret。
     try {
-      await mutation.mutateAsync(values)
+      await mutation.mutateAsync(toCreateSourceConnectionInput(values))
       await queryClient.invalidateQueries({
         queryKey: ['source-connections', workspaceSlug],
       })
-      toast.success(t('integrations.form.createdToast'))
+      // 连接测试需要已保存的连接 ID，新建时不存在——保存后引导去列表卡片测试。
+      toast.success(t('integrations.form.createdToast'), {
+        description: testableProviders.has(values.provider)
+          ? t('integrations.form.createdToastTestHint')
+          : undefined,
+      })
       await navigate({
         to: `/workspaces/${encodeURIComponent(workspaceSlug)}/integrations`,
         replace: true,
@@ -70,60 +89,28 @@ export function SourceConnectionForm({
     }
   }
 
+  const control = form.control
+
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className='grid gap-5'>
-        <FormField
-          control={form.control}
-          name='name'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('integrations.form.nameLabel')}</FormLabel>
-              <FormControl>
-                <Input
-                  autoFocus
-                  placeholder={t('integrations.form.namePlaceholder')}
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name='app_id'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('integrations.form.appIdLabel')}</FormLabel>
-              <FormControl>
-                <Input
-                  placeholder={t('integrations.form.appIdPlaceholder')}
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
-          name='app_secret'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('integrations.form.appSecretLabel')}</FormLabel>
-              <FormControl>
-                <Input
-                  type='password'
-                  autoComplete='new-password'
-                  placeholder={t('integrations.form.appSecretPlaceholder')}
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <ProviderRadioField control={control} />
+        <NameField control={control} />
+        {provider !== 'browser' ? (
+          <>
+            {provider === 'feishu' && <AppIdField control={control} />}
+            <SecretField control={control} provider={provider} />
+            {provider === 'firecrawl' && (
+              <EndpointField control={control} provider={provider} />
+            )}
+          </>
+        ) : (
+          <>
+            <EndpointField control={control} provider={provider} />
+            {/* browser 的凭证（Token）可选，置于 endpoint 之后展示。 */}
+            <SecretField control={control} provider={provider} />
+          </>
+        )}
         {mutation.isError && (
           <p className='text-destructive text-sm' role='alert'>
             {parseApiError(mutation.error).message}
@@ -139,5 +126,168 @@ export function SourceConnectionForm({
         </Button>
       </form>
     </Form>
+  )
+}
+
+function ProviderRadioField({
+  control,
+}: {
+  control: Control<SourceConnectionFormValues>
+}) {
+  const { t } = useTranslation()
+  return (
+    <FormField
+      control={control}
+      name='provider'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t('integrations.form.providerLabel')}</FormLabel>
+          <FormControl>
+            <RadioGroup
+              value={field.value}
+              onValueChange={field.onChange}
+              className='grid gap-2 sm:grid-cols-4'
+            >
+              {(
+                Object.keys(
+                  providerFormLabelKeys
+                ) as (keyof typeof providerFormLabelKeys)[]
+              ).map((value) => (
+                // 原生 label htmlFor → item id：整卡可点（理由同 web 源导入模式）。
+                <label
+                  key={value}
+                  htmlFor={`source-connection-provider-${value}`}
+                  className='flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 font-normal has-[button[data-state=checked]]:border-primary'
+                >
+                  <RadioGroupItem
+                    value={value}
+                    id={`source-connection-provider-${value}`}
+                  />
+                  {t(providerFormLabelKeys[value])}
+                </label>
+              ))}
+            </RadioGroup>
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+function NameField({
+  control,
+}: {
+  control: Control<SourceConnectionFormValues>
+}) {
+  const { t } = useTranslation()
+  return (
+    <FormField
+      control={control}
+      name='name'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t('integrations.form.nameLabel')}</FormLabel>
+          <FormControl>
+            <Input
+              autoFocus
+              placeholder={t('integrations.form.namePlaceholder')}
+              {...field}
+            />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+function AppIdField({
+  control,
+}: {
+  control: Control<SourceConnectionFormValues>
+}) {
+  const { t } = useTranslation()
+  return (
+    <FormField
+      control={control}
+      name='app_id'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t('integrations.form.appIdLabel')}</FormLabel>
+          <FormControl>
+            <Input
+              placeholder={t('integrations.form.appIdPlaceholder')}
+              {...field}
+            />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+/** 凭证字段：feishu=App Secret、firecrawl/jina=API Key（必填）、browser=Token（可选）。 */
+function SecretField({
+  control,
+  provider,
+}: {
+  control: Control<SourceConnectionFormValues>
+  provider: SourceConnectionFormValues['provider']
+}) {
+  const { t } = useTranslation()
+  return (
+    <FormField
+      control={control}
+      name='app_secret'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t(secretFieldLabelKey(provider))}</FormLabel>
+          <FormControl>
+            <Input
+              type='password'
+              autoComplete='new-password'
+              placeholder={t(secretFieldPlaceholderKey(provider))}
+              {...field}
+            />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+/** endpoint 字段：firecrawl 可选 http/https、browser 必填 ws/wss。 */
+function EndpointField({
+  control,
+  provider,
+}: {
+  control: Control<SourceConnectionFormValues>
+  provider: SourceConnectionFormValues['provider']
+}) {
+  const { t } = useTranslation()
+  return (
+    <FormField
+      control={control}
+      name='endpoint_url'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t('integrations.form.endpointLabel')}</FormLabel>
+          <FormControl>
+            <Input
+              placeholder={t(
+                provider === 'firecrawl'
+                  ? 'integrations.form.endpointFirecrawlPlaceholder'
+                  : 'integrations.form.endpointBrowserPlaceholder'
+              )}
+              {...field}
+            />
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
   )
 }

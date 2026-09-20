@@ -203,12 +203,19 @@ func registerKnowledgeBaseCreate(srv *mcpserver.MCPServer, deps Dependencies) {
 
 // ===== document_ingest =====
 
+// documentIngestInput 是 document_ingest 的输入，支持两种互斥模式：
+//   - file 模式（url 缺省）：file_name + content_base64 导入文件；
+//   - url 模式（url 非空）：把 URL 并入目标 KB 唯一的 urls 模式 active 网站源并触发同步。
+//
+// file_name/content_base64 在 schema 层非 required（url 模式不携带），逐模式在
+// handler 显式校验；空字符串与缺省等价。
 type documentIngestInput struct {
 	KnowledgeBaseID string `json:"knowledge_base_id" jsonschema:"目标知识库 ID"`
-	FileName        string `json:"file_name" jsonschema:"文件名，用于推断文件类型"`
-	ContentBase64   string `json:"content_base64" jsonschema:"RFC 4648 standard/raw standard Base64 编码的文件内容"`
+	FileName        string `json:"file_name,omitempty" jsonschema:"文件名，用于推断文件类型（file 模式必填）"`
+	ContentBase64   string `json:"content_base64,omitempty" jsonschema:"RFC 4648 standard/raw standard Base64 编码的文件内容（file 模式必填）"`
 	ContentType     string `json:"content_type,omitempty" jsonschema:"MIME 类型（如 text/plain, application/pdf），未提供时根据文件名推断"`
 	Title           string `json:"title,omitempty" jsonschema:"文档标题，未提供时使用文件名"`
+	URL             string `json:"url,omitempty" jsonschema:"目标网页 URL：提供时把该 URL 并入目标知识库唯一的 urls 模式 active 网站源并触发同步（要求该 KB 恰有一个这样的源，否则报错）；与 file_name/content_base64 互斥"`
 	Dedupe          bool   `json:"dedupe,omitempty" jsonschema:"是否根据 SHA256 去重，已存在同内容文档时跳过并返回已有文档 ID"`
 	ParentNodeID    string `json:"parent_node_id,omitempty" jsonschema:"父节点 ID，用于构建文档树"`
 	NodeName        string `json:"node_name,omitempty" jsonschema:"节点名称，用于构建文档树"`
@@ -221,11 +228,40 @@ type documentIngestOutput struct {
 	Deduped    bool   `json:"deduped"`
 }
 
+// documentIngestURLOutput 是 document_ingest url 模式的输出。
+type documentIngestURLOutput struct {
+	KBSourceID   string `json:"kb_source_id"`
+	KBSourceName string `json:"kb_source_name"`
+	URL          string `json:"url"`
+	// JobID 为空表示同步未入队（best-effort，调度器稍后恢复）；sync_queued 便于调用方显式判断。
+	JobID      string `json:"job_id,omitempty"`
+	SyncQueued bool   `json:"sync_queued"`
+}
+
+// documentIngestOutputSchema 是 document_ingest 工具的输出 schema：同一工具的
+// file 模式（document_id/job_id/status/deduped）与 url 模式（kb_source_*/url/
+// sync_queued/job_id）两种结果形状，宽松定义，均允许更多字段。
+var documentIngestOutputSchema = json.RawMessage(`{
+  "type": "object",
+  "description": "document_ingest 结果：url 缺省（file 模式）返回 document_id/job_id/status/deduped；url 模式返回 kb_source_id/kb_source_name/url/sync_queued/job_id",
+  "properties": {
+    "document_id": {"type": "string", "description": "文档 ID（file 模式）"},
+    "job_id": {"type": "string", "description": "异步任务 ID"},
+    "status": {"type": "string", "description": "文档状态: pending / parsing / chunking / indexing / ready / error（file 模式）"},
+    "deduped": {"type": "boolean", "description": "是否命中内容去重（file 模式）"},
+    "kb_source_id": {"type": "string", "description": "并入的网站源 ID（url 模式）"},
+    "kb_source_name": {"type": "string", "description": "并入的网站源名称（url 模式）"},
+    "url": {"type": "string", "description": "已并入的网页 URL（url 模式）"},
+    "sync_queued": {"type": "boolean", "description": "同步任务是否已入队（url 模式）"}
+  },
+  "additionalProperties": true
+}`)
+
 func registerDocumentIngest(srv *mcpserver.MCPServer, deps Dependencies) {
 	tool := mcp.NewTool("document_ingest",
-		mcp.WithDescription("将文件导入到知识库以供后续检索。支持 PDF、Word(docx)、Markdown、纯文本、CSV、Excel(xlsx) 等格式，文件内容以 Base64 编码传入。导入是异步的：调用后立即返回文档 ID 和任务 ID，解析与索引在后台进行——需用 document_status 轮询直到状态变为 ready 才能被检索到。"),
+		mcp.WithDescription("向知识库添加内容，两种互斥模式：1) file 模式（默认）——将文件导入以供后续检索，支持 PDF、Word(docx)、Markdown、纯文本、CSV、Excel(xlsx) 等，文件内容以 Base64 编码传入；2) url 模式——提供 url 字段时把该网页加入目标知识库的 urls 模式网站源并触发同步（要求该库恰有一个 urls 模式的 active 网站源：没有则报错提示先创建，多个则报错列出候选）。两种模式均为异步：立即返回任务 ID，解析/抓取与索引在后台进行——需用 document_status 轮询直到状态变为 ready 才能被检索到。"),
 		withRawInputSchema[documentIngestInput](),
-		withRawOutputSchema[documentIngestOutput](),
+		withRawOutputSchemaFrom(documentIngestOutputSchema),
 	)
 	srv.AddTool(tool, mcp.NewTypedToolHandler(func(ctx context.Context, _ mcp.CallToolRequest, in documentIngestInput) (*mcp.CallToolResult, error) {
 		auth, err := authFromRequest(ctx)
@@ -242,37 +278,75 @@ func registerDocumentIngest(srv *mcpserver.MCPServer, deps Dependencies) {
 		if !auth.ResourceAccess().AllowsKnowledgeBase(kbID) {
 			return toErrorResult(domainerrors.ErrNotFound), nil
 		}
-		decoded, err := decodeBase64Content(in.ContentBase64)
-		if err != nil {
-			return toErrorResult(fmt.Errorf("content_base64 解码失败")), nil
+		if in.URL != "" {
+			return ingestByURL(ctx, deps, auth, kbID, in)
 		}
-		if int64(len(decoded)) > deps.InlineLimit {
-			return toErrorResult(fmt.Errorf("内联导入超过 %d 字节上限，请改用 REST multipart", deps.InlineLimit)), nil
-		}
-		result, err := deps.DocumentIngest.Ingest(ctx, MCPIngestInput{
-			WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
-			KnowledgeBaseID: kbID, FileName: in.FileName, ContentType: in.ContentType,
-			Title: in.Title, Reader: strings.NewReader(string(decoded)), SizeBytes: int64(len(decoded)),
-			Dedupe: in.Dedupe, NodeName: in.NodeName,
-		})
-		if err != nil {
-			return toErrorResult(err), nil
-		}
-		return jsonResult(documentIngestOutput{
-			DocumentID: result.DocumentID.String(), JobID: result.JobID.String(),
-			Status: result.Status, Deduped: result.Deduped,
-		}), nil
+		return ingestByFile(ctx, deps, auth, kbID, in)
 	}))
 }
 
+// ingestByURL 处理 url 模式：业务规则（恰一 urls 模式 active 源、URL 规范化、
+// 合并入现有列表、同步入队）在 service 层（KbSourceService.AddURLToWebSource），
+// 本函数只做协议转换。
+func ingestByURL(ctx context.Context, deps Dependencies, auth value.AuthContext, kbID uuid.UUID, in documentIngestInput) (*mcp.CallToolResult, error) {
+	if in.FileName != "" || strings.TrimSpace(in.ContentBase64) != "" {
+		return toErrorResult(fmt.Errorf("%w: url 与 file_name/content_base64 不能同时提供", domainerrors.ErrValidation)), nil
+	}
+	if deps.WebSources == nil {
+		return toErrorResult(fmt.Errorf("%w: 网站源入口未配置", domainerrors.ErrValidation)), nil
+	}
+	source, job, err := deps.WebSources.AddURLToWebSource(ctx, auth.WorkspaceID, kbID, in.URL)
+	if err != nil {
+		return toErrorResult(err), nil
+	}
+	out := documentIngestURLOutput{
+		KBSourceID: source.ID.String(), KBSourceName: source.Name,
+		URL: strings.TrimSpace(in.URL),
+	}
+	if job != nil {
+		out.JobID = job.ID.String()
+		out.SyncQueued = true
+	}
+	return jsonResult(out), nil
+}
+
+// ingestByFile 处理既有 file 模式：schema 不再 required file 字段（url 模式共用
+// 输入类型），缺字段在此显式拒绝；其余行为与 v1.2.0 完全一致。
+func ingestByFile(ctx context.Context, deps Dependencies, auth value.AuthContext, kbID uuid.UUID, in documentIngestInput) (*mcp.CallToolResult, error) {
+	if strings.TrimSpace(in.FileName) == "" {
+		return toErrorResult(fmt.Errorf("%w: file 模式必须提供 file_name（导入网页请改用 url 字段）", domainerrors.ErrValidation)), nil
+	}
+	decoded, err := decodeBase64Content(in.ContentBase64)
+	if err != nil {
+		return toErrorResult(err), nil
+	}
+	if int64(len(decoded)) > deps.InlineLimit {
+		return toErrorResult(fmt.Errorf("内联导入超过 %d 字节上限，请改用 REST multipart", deps.InlineLimit)), nil
+	}
+	result, err := deps.DocumentIngest.Ingest(ctx, MCPIngestInput{
+		WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
+		KnowledgeBaseID: kbID, FileName: in.FileName, ContentType: in.ContentType,
+		Title: in.Title, Reader: strings.NewReader(string(decoded)), SizeBytes: int64(len(decoded)),
+		Dedupe: in.Dedupe, NodeName: in.NodeName,
+	})
+	if err != nil {
+		return toErrorResult(err), nil
+	}
+	return jsonResult(documentIngestOutput{
+		DocumentID: result.DocumentID.String(), JobID: result.JobID.String(),
+		Status: result.Status, Deduped: result.Deduped,
+	}), nil
+}
+
 // decodeBase64Content 解码 standard 或 raw standard Base64，拒绝 URL/data URI。
+// 错误均为 ErrValidation（客户端输入错误，映射 validation_error 而非 internal_error）。
 func decodeBase64Content(raw string) ([]byte, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return nil, fmt.Errorf("content_base64 为空")
+		return nil, fmt.Errorf("%w: content_base64 为空", domainerrors.ErrValidation)
 	}
 	if strings.HasPrefix(trimmed, "http") || strings.HasPrefix(trimmed, "data:") {
-		return nil, fmt.Errorf("不接受 URL 或 data URI")
+		return nil, fmt.Errorf("%w: 不接受 URL 或 data URI", domainerrors.ErrValidation)
 	}
 	if decoded, err := base64.StdEncoding.DecodeString(trimmed); err == nil {
 		return decoded, nil
@@ -280,7 +354,7 @@ func decodeBase64Content(raw string) ([]byte, error) {
 	if decoded, err := base64.RawStdEncoding.DecodeString(trimmed); err == nil {
 		return decoded, nil
 	}
-	return nil, fmt.Errorf("content_base64 不是合法 Base64")
+	return nil, fmt.Errorf("%w: content_base64 不是合法 Base64", domainerrors.ErrValidation)
 }
 
 // ===== document_status =====

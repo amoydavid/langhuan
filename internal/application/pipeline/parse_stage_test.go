@@ -110,6 +110,36 @@ func TestParseStageRejectsFAQBeforeSideEffects(t *testing.T) {
 	}
 }
 
+// TestParseStageMapsWebRevisionToMarkdownParser 回归：Web Revision 按领域合同
+// file_type 为空（schema CHECK 禁止非空），页面抓取产物恒为 markdown——
+// ParseStage 必须把空 file_type 的 web revision 映射到 markdown parser，
+// 否则 parser registry 以 unsupported 拒绝，web 页面永远无法进入检索索引。
+func TestParseStageMapsWebRevisionToMarkdownParser(t *testing.T) {
+	workspaceID := uuid.New()
+	documentID := uuid.New()
+	revision := testDocumentRevision(workspaceID, documentID, value.DocumentKindWeb, value.DocumentRevisionPending)
+	revision.FileType = "" // web revision 领域合同：无 file_type
+	revisions := &fakeRevisionRepository{revision: revision}
+	documents := &fakeRevisionDocumentGetter{document: &model.Document{
+		ID: documentID, WorkspaceID: workspaceID, KnowledgeBaseID: revision.KnowledgeBaseID,
+		Kind: value.DocumentKindWeb, Title: "页面",
+	}}
+	raw := &countingRawStore{content: []byte("# 页面\n\n正文")}
+	parser := &countingDocumentParser{markdown: "规范化内容"}
+	stage := NewParseStage(revisions, documents, raw, parser, 1024)
+
+	got, err := stage.Run(context.Background(), workspaceID, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != value.DocumentRevisionReady {
+		t.Fatalf("status = %q, want ready", got.Status)
+	}
+	if parser.calls != 1 || parser.input.FileType != "markdown" {
+		t.Fatalf("web revision 未映射 markdown parser: calls=%d filetype=%q", parser.calls, parser.input.FileType)
+	}
+}
+
 func testDocumentRevision(workspaceID, documentID uuid.UUID, kind value.DocumentKind, status value.DocumentRevisionStatus) *model.DocumentRevision {
 	return &model.DocumentRevision{
 		ID: uuid.New(), WorkspaceID: workspaceID, KnowledgeBaseID: uuid.New(), DocumentID: documentID,

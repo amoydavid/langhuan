@@ -65,6 +65,7 @@ import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFilesUploadRo
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFilesDocumentIdRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/files/$documentId'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqNewRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/new'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/index'
+import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit'
 
 const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
@@ -413,6 +414,15 @@ const AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute =
         AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute,
     } as any,
   )
+const AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute =
+  AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRouteImport.update(
+    {
+      id: '/web/sources/$sourceId',
+      path: '/web/sources/$sourceId',
+      getParentRoute: () =>
+        AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute,
+    } as any,
+  )
 const AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute =
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRouteImport.update(
     {
@@ -479,6 +489,7 @@ export interface FileRoutesByFullPath {
   '/workspaces/$workspaceSlug/kb/$kbId/content/files/': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFilesIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content/web/': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute
+  '/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -531,6 +542,7 @@ export interface FileRoutesByTo {
   '/workspaces/$workspaceSlug/kb/$kbId/content/files': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFilesIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content/web': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute
+  '/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute
 }
 export interface FileRoutesById {
@@ -591,6 +603,7 @@ export interface FileRoutesById {
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/files/': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFilesIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute
+  '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -651,6 +664,7 @@ export interface FileRouteTypes {
     | '/workspaces/$workspaceSlug/kb/$kbId/content/files/'
     | '/workspaces/$workspaceSlug/kb/$kbId/content/web/'
     | '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit'
+    | '/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId'
     | '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -703,6 +717,7 @@ export interface FileRouteTypes {
     | '/workspaces/$workspaceSlug/kb/$kbId/content/files'
     | '/workspaces/$workspaceSlug/kb/$kbId/content/web'
     | '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit'
+    | '/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId'
     | '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId'
   id:
     | '__root__'
@@ -762,6 +777,7 @@ export interface FileRouteTypes {
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/files/'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit'
+    | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/'
   fileRoutesById: FileRoutesById
 }
@@ -1173,6 +1189,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRouteImport
       parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute
     }
+    '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId': {
+      id: '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId'
+      path: '/web/sources/$sourceId'
+      fullPath: '/workspaces/$workspaceSlug/kb/$kbId/content/web/sources/$sourceId'
+      preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRouteImport
+      parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute
+    }
     '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit': {
       id: '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit'
       path: '/faq/$documentId/edit'
@@ -1271,6 +1294,7 @@ interface AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteChildren {
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqIndexRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebIndexRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute
+  AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute
 }
 
@@ -1292,6 +1316,8 @@ const AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteChildren: Authe
       AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebIndexRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute:
       AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdEditRoute,
+    AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute:
+      AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentWebSourcesSourceIdRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute:
       AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentFaqDocumentIdIndexRoute,
   }

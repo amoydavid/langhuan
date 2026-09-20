@@ -13,6 +13,11 @@ import (
 	parserport "github.com/dajee/langhuan/internal/ports/parser"
 )
 
+// webRevisionParserFileType 是 web Revision 空 file_type 映射到的 parser registry
+// 归一化键：页面抓取产物恒为 markdown，registry（adapters/parser）把 "md"/"markdown"
+// 归一为该键；web Revision 按领域合同禁止 file_type，只能经此常量补齐。
+const webRevisionParserFileType = "markdown"
+
 // ParseStage parses one immutable File/Web DocumentRevision.
 type ParseStage struct {
 	revisions        DocumentRevisionRepository
@@ -76,8 +81,15 @@ func (s ParseStage) Run(ctx context.Context, workspaceID, revisionID uuid.UUID) 
 	if int64(len(content)) > s.maxFileSizeBytes {
 		return nil, fmt.Errorf("%w: document exceeds %d bytes", parserport.ErrParseLimitExceeded, s.maxFileSizeBytes)
 	}
+	// Web Revision 按领域合同禁止 file_type（schema CHECK 同口径），而页面抓取产物
+	// 恒为 markdown——按 kind 映射到 markdown parser，否则空 file_type 会被
+	// parser registry 以 unsupported 拒绝，web 页面永远无法进入检索索引。
+	fileType := revision.FileType
+	if fileType == "" && revision.Kind == value.DocumentKindWeb {
+		fileType = webRevisionParserFileType
+	}
 	parsed, err := s.parser.Parse(ctx, parserport.ParseInput{
-		FileType: revision.FileType,
+		FileType: fileType,
 		Title:    document.Title,
 		Content:  content,
 		Metadata: map[string]any{

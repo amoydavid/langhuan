@@ -34,6 +34,8 @@
   *Hybrid retrieval with native Chinese tokenization: pgvector + PostgreSQL FTS (zhparser) + deterministic RRF fusion.*
 - **🔌 MCP over HTTP 原生支持** — `knowledge_search`、`document_ingest` 等工具直接暴露给 MCP 客户端（Claude 等），知识库即插即用。
   *First-class MCP over HTTP — expose your knowledge base as MCP tools out of the box.*
+- **🕷️ 网站内容源** — 把整站 crawl / sitemap / URL 列表作为知识库的持续同步源：四种抓取引擎（HTTP / 无头渲染 / Firecrawl / Jina）+ auto 渐进升级，robots 遵守、SSRF 分层防护与三级增量检测。
+  *Web content sources: keep a knowledge base in sync with a site crawl / sitemap / URL list — four fetch engines (HTTP / headless render / Firecrawl / Jina) with auto escalation, robots compliance, layered SSRF protection and three-tier incremental detection.*
 - **📦 单二进制全栈** — REST + MCP + worker + Web Console 内嵌于一个二进制（`go:embed`），无 Node 运行时、无微服务。
   *Single binary: REST + MCP + async worker + embedded Web Console. Zero runtime dependencies.*
 - **🧭 全程可追溯** — 每个 chunk 都能回到源文档、版本与页码/行列/偏移锚点；导入、分块、索引全链路幂等。每次检索生成稳定 `search_id` 与可校验 citation，管理员可在保留期内按原 query 回放。

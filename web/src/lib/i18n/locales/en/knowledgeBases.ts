@@ -48,7 +48,7 @@ export const knowledgeBases = {
     },
     sourceConnectionLabel: 'Feishu app',
     sourceConnectionPlaceholder: 'Select an added Feishu app',
-    sourceConnectionEmpty: 'No Feishu app has been added yet.',
+    sourceConnectionEmpty: 'No content source connection is available yet.',
     sourceConnectionGo: 'Add an app',
     sourceTokenLabel: 'Wiki token / link',
     sourceTokenPlaceholder: 'Paste a folder / wiki node token or link',

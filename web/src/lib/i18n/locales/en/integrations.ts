@@ -9,22 +9,30 @@ export const integrations = {
     eyebrow: 'Workspace / Integrations',
     title: 'Integrations',
     subtitle:
-      'Manage third-party apps connected to this workspace, such as Feishu custom apps.',
-    createButton: 'Add Feishu App',
-    emptyTitle: 'No Feishu app added yet',
+      'Manage external content source connections for this workspace (Feishu / Firecrawl / Jina / rendering browser).',
+    createButton: 'New Connection',
+    emptyTitle: 'No connections yet',
     emptyDescription:
-      'Add a Feishu custom app to use its capabilities in this workspace.',
-    createFirstButton: 'Add Feishu App',
+      'Add a Feishu, Firecrawl, Jina, or rendering browser (CDP) connection for web content sources to fetch pages.',
+    createFirstButton: 'New Connection',
     loading: 'Loading integrations…',
     providerFeishu: 'Feishu',
+    providerFirecrawl: 'Firecrawl',
+    providerJina: 'Jina',
+    providerBrowser: 'Rendering browser',
   },
 
   card: {
     appIdLabel: 'App ID',
+    endpointLabel: 'Endpoint',
+    endpointDefault: 'Official default endpoint',
+    apiKeyLabel: 'API Key',
+    keyMasked: '••••••••',
     boundKbLabel: 'Knowledge bases',
     boundKbPlaceholder: '—',
     statusActive: 'Enabled',
     statusDisabled: 'Disabled',
+    testButton: 'Test connection',
     editButton: 'Edit',
     enableButton: 'Enable',
     disableButton: 'Disable',
@@ -32,37 +40,52 @@ export const integrations = {
   },
 
   form: {
+    providerLabel: 'Connection type',
+    providerFeishu: 'Feishu',
+    providerFirecrawl: 'Firecrawl',
+    providerJina: 'Jina',
+    providerBrowser: 'Rendering browser (CDP)',
     nameLabel: 'App name',
     namePlaceholder: 'e.g. Search assistant',
     appIdLabel: 'App ID',
     appIdPlaceholder: 'cli_xxxxxxxxxxxx',
     appSecretLabel: 'App Secret',
     appSecretPlaceholder: 'The app secret from the Feishu developer console',
-    appSecretEditHint: 'Leave blank to keep the current App Secret.',
-    submitButton: 'Test & Save',
-    createdToast: 'Feishu app added',
+    apiKeyLabel: 'API Key',
+    apiKeyPlaceholder: 'The API key from your provider console',
+    endpointLabel: 'Endpoint URL',
+    endpointFirecrawlPlaceholder:
+      'https://api.firecrawl.dev (official default, optional)',
+    endpointBrowserPlaceholder: 'ws://127.0.0.1:9222',
+    tokenLabel: 'Token',
+    tokenPlaceholder: 'CDP debug port token (optional)',
+    appSecretEditHint: 'Leave blank to keep the current credential.',
+    submitButton: 'Save',
+    createdToast: 'Connection added',
+    createdToastTestHint:
+      'Use "Test connection" on the connection card to verify connectivity.',
   },
 
   editDialog: {
-    title: 'Edit Feishu app',
+    title: 'Edit connection',
     description:
-      'Update the name, or rotate the App Secret (leave blank to keep it).',
+      'Update the name, or rotate the access credential (leave blank to keep it).',
     saveButton: 'Save',
-    savedToast: 'Feishu app updated',
+    savedToast: 'Connection updated',
   },
 
   deleteDialog: {
-    title: 'Delete Feishu app',
+    title: 'Delete connection',
     description:
-      'Once deleted, this app can no longer be called. This action cannot be undone.',
+      'Once deleted, this connection can no longer be called. This action cannot be undone.',
     confirm: 'Confirm delete',
     cancel: 'Cancel',
-    deletedToast: 'Feishu app deleted',
+    deletedToast: 'Connection deleted',
   },
 
   toggle: {
-    enabledToast: 'Feishu app enabled',
-    disabledToast: 'Feishu app disabled',
+    enabledToast: 'Connection enabled',
+    disabledToast: 'Connection disabled',
   },
 
   status: {

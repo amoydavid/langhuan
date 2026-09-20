@@ -4,6 +4,7 @@ import {
   deleteSourceConnection,
   getSourceConnection,
   listSourceConnections,
+  testSourceConnection,
   updateSourceConnection,
 } from './api'
 import type {
@@ -57,5 +58,16 @@ export function deleteSourceConnectionMutationOptions(workspaceSlug: string) {
     mutationFn: (connectionId: string) =>
       deleteSourceConnection(workspaceSlug, connectionId),
     meta: { invalidate: [['source-connections', workspaceSlug]] },
+  })
+}
+
+// 连接测试结果非持久化（后端不落库，前端也是组件内临时 state），无需 invalidate。
+export function testSourceConnectionMutationOptions(
+  workspaceSlug: string,
+  connectionId: string
+) {
+  return mutationOptions({
+    mutationKey: ['source-connection-test', workspaceSlug, connectionId],
+    mutationFn: () => testSourceConnection(workspaceSlug, connectionId),
   })
 }

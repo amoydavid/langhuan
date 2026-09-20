@@ -66,7 +66,9 @@ describe('ContentLayout', () => {
     await expect.element(screen.getByText('内容叶子路由')).toBeVisible()
   })
 
-  it('hides the Web view when no Web document exists', async () => {
+  it('keeps the Web tab visible even with no source and no web document (entry for the first source)', async () => {
+    // Web tab 承载网站内容源的管理入口：按条件隐藏会让全新知识库没有任何
+    // UI 入口创建第一个网站源（鸡生蛋死锁）。空态自身带角色门控。
     const screen = await render(
       <ContentLayout
         workspaceSlug='acme'
@@ -78,8 +80,39 @@ describe('ContentLayout', () => {
       />
     )
     await expect
-      .element(screen.getByRole('link', { name: /Web/ }))
-      .not.toBeInTheDocument()
+      .element(screen.getByRole('link', { name: 'Web 0' }))
+      .toBeVisible()
+  })
+
+  it('keeps the Web tab visible when a source exists with zero web documents', async () => {
+    const screen = await render(
+      <ContentLayout
+        workspaceSlug='acme'
+        kbId='kb-readable'
+        summary={{
+          ...summary,
+          document_counts: { ...summary.document_counts, web: 0 },
+        }}
+        webSourceCount={2}
+      />
+    )
+    // 计数文案以「源」为单位（spec §9.5.1）。
+    await expect
+      .element(screen.getByRole('link', { name: 'Web 2 个源' }))
+      .toBeVisible()
+  })
+
+  it('falls back to the document count when the source list has not loaded', async () => {
+    const screen = await render(
+      <ContentLayout
+        workspaceSlug='acme'
+        kbId='kb-readable'
+        summary={summary}
+      />
+    )
+    await expect
+      .element(screen.getByRole('link', { name: 'Web 1' }))
+      .toBeVisible()
   })
 
   it('derives the active type from the nested route instead of local tab state', async () => {

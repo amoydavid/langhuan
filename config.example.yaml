@@ -176,6 +176,24 @@ source_sync:
   # 拖垮同步或解析流水线。必须 >0。
   max_content_bytes: 52428800
 
+# Web 内容源（kb_sources.kind='web'）运行参数。
+#
+# 背景：web 源复用 source_sync 任务类型与 Meta Scheduler 调度（与飞书同步双轨
+# 并行），本节是进程级天花板，全部为非敏感值；抓取连接凭证（firecrawl/jina/
+# browser）存 workspace_source_connections（加密密文），不在此配置。
+web_source:
+  max_sources_per_kb: 10            # 单个知识库可挂的网站源数上限（创建源时钳制，超限拒绝）
+  max_concurrent_syncs: 2           # 全局同时在飞的 web 源同步任务上限（仅统计 target 为 web 源的 active source_sync Job，飞书任务不占此配额）。动机：asynq 队列权重只是优先级，不封顶会让多个长爬取挤占 parse/index 等短任务的 worker 槽
+  sync_task_timeout_seconds: 14400  # 单次 web 源同步任务超时硬上限（默认 4h）。入队超时按源推导（页数基准 × 单页预算 × 2）后钳制到该值；必须高于 queue.task_timeout_seconds 默认（1800s），否则触及大天花板的爬取会陷入"超时→重试→再超时"循环
+  request_timeout_seconds: 30       # 单请求超时，覆盖 http 引擎、robots.txt 与 sitemap 三类请求
+  user_agent_template: "LanghuanBot/1.0 (+{{base_url}})" # 抓取 UA 模板，{{base_url}} 由装配层渲染为 server.base_url；源级 crawl.user_agent 优先于它
+  default_request_delay_ms: 200     # 同 host 请求间隔默认值（礼貌性爬取）；源级 crawl.request_delay_ms 优先
+  max_content_bytes: 20971520       # 单页响应体/抽取后 markdown 字节上限（默认 20 MiB），超限按 oversize 跳过保留旧版本
+  render_max_concurrent: 2          # render 引擎全局并发页面上限（进程级信号量，跨所有 web 源共享，防 JS 渲染挤占宿主资源）
+  robots_cache_ttl_seconds: 3600    # robots.txt 解析结果的缓存 TTL
+  max_pages_ceiling: 10000          # 源级 crawl.max_pages 的部署者天花板，显式超限返回 validation error（不静默截断）
+  max_depth_ceiling: 10             # 源级 crawl.max_depth 的部署者天花板
+
 # asynq 异步队列治理参数。
 #
 # 背景：文档解析、向量化、索引、飞书同步等耗时任务都走 asynq + Redis。

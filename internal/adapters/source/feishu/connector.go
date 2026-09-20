@@ -101,7 +101,10 @@ func (c *Connector) Provider() string { return ProviderName }
 //
 // MaxEditTime 为快照内所有非零 EditTime 的最大值；adapter 只负责报告，是否推进
 // application cursor 由调用方依据 Complete 决定。
-func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot) (sourceport.TreeSnapshot, error) {
+//
+// options 是 web 源专属的列举参数（源级 config），飞书连接器忽略它——
+// 飞书源的同步根与配置来自 KB 级 source_config，不随端口参数传递。
+func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, root model.SyncRoot, _ sourceport.ListOptions) (sourceport.TreeSnapshot, error) {
 	if root.Token == "" {
 		return sourceport.TreeSnapshot{}, fmt.Errorf("%w: sync root token 为空", sourceport.ErrSourceNotFound)
 	}
@@ -138,6 +141,9 @@ func (c *Connector) ListTree(ctx context.Context, conn model.SourceConnection, r
 // 实现说明：飞书 SDK 的 DocxRawContent 一次性返回完整内容字符串，无法在传输层流式截断。
 // 因此本实现采用「先拉取后校验长度」的策略——这是在 SDK 不提供流式接口前提下的现实边界。
 // application 层（spec 7.2）仍会对最终 markdown 做第二次校验，防止 adapter 实现错误。
+//
+// options 中的 SourceConfig / IfNoneMatch / IfModifiedSince 是 web 源专属参数，
+// 飞书忽略；返回的 FetchedDocument.Meta 留空、NotModified 恒为 false。
 func (c *Connector) Fetch(ctx context.Context, conn model.SourceConnection, externalID string, options sourceport.FetchOptions) (model.FetchedDocument, error) {
 	if externalID == "" {
 		return model.FetchedDocument{}, fmt.Errorf("%w: external_id 为空", sourceport.ErrSourceNotFound)
