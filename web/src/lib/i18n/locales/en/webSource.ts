@@ -9,6 +9,14 @@ export const webSource = {
     emptyDescription:
       'Once added, crawled pages are searched together with files uploaded to this knowledge base.',
     emptyAddButton: 'Add website source',
+    columnName: 'Name',
+    columnSummary: 'Summary',
+    columnStatus: 'Status',
+    columnPages: 'Pages',
+    columnLastSync: 'Last sync',
+    columnActions: 'Actions',
+    enableButton: 'Enable',
+    enterAriaLabel: 'Open {{name}}',
   },
 
   card: {

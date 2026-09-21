@@ -8,6 +8,14 @@ export const webSource = {
     emptyTitle: '还没有网站内容源',
     emptyDescription: '添加后，抓取的网页会与本库上传的文件一起被检索。',
     emptyAddButton: '添加网站源',
+    columnName: '名称',
+    columnSummary: '摘要',
+    columnStatus: '状态',
+    columnPages: '页面',
+    columnLastSync: '上次同步',
+    columnActions: '操作',
+    enableButton: '启用',
+    enterAriaLabel: '进入 {{name}}',
   },
 
   card: {

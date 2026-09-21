@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { webSourcesQueryOptions } from '../queries'
 import { WebSourceCard } from './web-source-card'
 import { WebSourceFormDialog } from './web-source-form-dialog'
+import { WebSourceTable } from './web-source-table'
 
 type WebSourceListProps = {
   workspaceSlug: string
@@ -83,7 +84,16 @@ export function WebSourceList({
           </Button>
         </div>
       )}
-      <div className='grid gap-4'>
+      {/* PC 表格式（与其它内容 tab 一致）/ 移动端卡片流 */}
+      <div className='hidden md:block'>
+        <WebSourceTable
+          views={views}
+          workspaceSlug={workspaceSlug}
+          kbId={kbId}
+          canManage={canManage}
+        />
+      </div>
+      <div className='grid gap-4 md:hidden'>
         {views.map((view) => (
           <WebSourceCard
             key={view.source.id}

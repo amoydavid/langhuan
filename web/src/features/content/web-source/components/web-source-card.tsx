@@ -37,7 +37,7 @@ const summaryPartKeys = [
 ] as const
 
 /** 上次同步结果摘要（同步/删除/失败仅显示非零项）；无摘要返回 null。 */
-function lastSyncSummary(
+export function lastSyncSummary(
   result: WebSourceView['source']['sync_last_result']
 ): string | null {
   const counts = [

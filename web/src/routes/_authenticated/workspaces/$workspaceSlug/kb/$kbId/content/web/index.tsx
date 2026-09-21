@@ -11,7 +11,7 @@ function WebSourcesPage() {
   const role = me?.workspaces.find((item) => item.slug === workspaceSlug)?.role
   const canManage = canManageSources(role)
   return (
-    <div className='mx-auto w-full max-w-4xl'>
+    <div className='min-w-0'>
       <WebSourceList
         workspaceSlug={workspaceSlug}
         kbId={kbId}

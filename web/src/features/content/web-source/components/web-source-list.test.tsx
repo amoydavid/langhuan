@@ -81,17 +81,21 @@ describe('WebSourceList', () => {
     vi.clearAllMocks()
   })
 
-  it('renders source cards with name, mode badge and page counts', async () => {
+  it('renders the source table with name, mode badge and page counts', async () => {
+    // PC 端为表格式展示（与其它内容 tab 一致）；双布局下表格与移动卡片
+    // 同时在 DOM，断言收敛到表格行内。
     const { screen } = await renderList()
-    await expect.element(screen.getByText('产品文档站')).toBeVisible()
-    await expect.element(screen.getByText('爬取')).toBeVisible()
-    await expect.element(screen.getByText(/页面 486/)).toBeVisible()
-    await expect.element(screen.getByText(/失败 3/)).toBeVisible()
+    const row = screen.getByTestId('web-source-row')
+    await expect.element(row.getByText('产品文档站')).toBeVisible()
+    await expect.element(row.getByText('爬取')).toBeVisible()
+    await expect.element(row.getByText(/页面 486/)).toBeVisible()
+    await expect.element(row.getByText(/失败 3/)).toBeVisible()
   })
 
   it('renders the last sync summary with non-zero counters only', async () => {
     const { screen } = await renderList()
-    await expect.element(screen.getByText(/同步 12 · 删除 1/)).toBeVisible()
+    const row = screen.getByTestId('web-source-row')
+    await expect.element(row.getByText(/同步 12 · 删除 1/)).toBeVisible()
   })
 
   it('derives the health badge from status and last sync result', async () => {
@@ -115,17 +119,23 @@ describe('WebSourceList', () => {
         }),
       ],
     })
-    await expect.element(screen.getByText('正常')).toBeVisible()
-    await expect.element(screen.getByText('已停用')).toBeVisible()
+    const rows = screen.getByTestId('web-source-row')
+    await expect.element(rows.nth(0).getByText('正常')).toBeVisible()
+    await expect.element(rows.nth(1).getByText('已停用')).toBeVisible()
     await expect
-      .element(screen.getByText('失败', { exact: true }))
+      .element(rows.nth(2).getByText('失败', { exact: true }))
       .toBeVisible()
   })
 
   it('shows the sync action for managers and hides it for members', async () => {
+    // 断言收敛到桌面表格行（双布局下按钮在表格与卡片各出现一次）。
     const managed = await renderList({ canManage: true })
     await expect
-      .element(managed.screen.getByRole('button', { name: '立即同步' }))
+      .element(
+        managed.screen
+          .getByTestId('web-source-row')
+          .getByRole('button', { name: '立即同步' })
+      )
       .toBeVisible()
     await expect
       .element(managed.screen.getByRole('button', { name: '添加网站源' }))
@@ -134,7 +144,11 @@ describe('WebSourceList', () => {
 
     const readonly = await renderList({ canManage: false })
     await expect
-      .element(readonly.screen.getByRole('button', { name: '立即同步' }))
+      .element(
+        readonly.screen
+          .getByTestId('web-source-row')
+          .getByRole('button', { name: '立即同步' })
+      )
       .not.toBeInTheDocument()
     await expect
       .element(readonly.screen.getByRole('button', { name: '添加网站源' }))
