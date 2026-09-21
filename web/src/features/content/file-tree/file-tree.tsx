@@ -91,8 +91,7 @@ export function FileTree({
   }
 
   function toggle(node: FileTreeNode, force?: boolean) {
-    // web 源的目录索引页（file 节点）也可能带子页面，需可展开/收起。
-    if (node.children.length === 0) return
+    if (node.node_type !== 'folder' && node.node_type !== 'root') return
     setExpanded((current) => {
       const next = new Set(current)
       const shouldExpand = force ?? !next.has(node.id)
@@ -124,7 +123,10 @@ export function FileTree({
     }
     if (event.key === 'ArrowRight') {
       event.preventDefault()
-      if (node.children.length > 0 && !expanded.has(node.id)) {
+      if (
+        (node.node_type === 'folder' || node.node_type === 'root') &&
+        !expanded.has(node.id)
+      ) {
         toggle(node, true)
         return
       }
@@ -134,7 +136,10 @@ export function FileTree({
     }
     if (event.key === 'ArrowLeft') {
       event.preventDefault()
-      if (node.children.length > 0 && expanded.has(node.id)) {
+      if (
+        (node.node_type === 'folder' || node.node_type === 'root') &&
+        expanded.has(node.id)
+      ) {
         toggle(node, false)
         return
       }
@@ -222,8 +227,7 @@ export function FileTree({
           {nodes.map(({ node, level }, index) => {
             const isFolder = node.node_type === 'folder'
             const isRoot = node.node_type === 'root'
-            // web 源目录索引页（file）也可带子页面，按「有无子节点」判定可展开。
-            const isExpandable = isFolder || isRoot || node.children.length > 0
+            const isExpandable = isFolder || isRoot
             const isExpanded = isExpandable && expanded.has(node.id)
             const isSelectedFolder = node.id === activeFolder.id
             return (

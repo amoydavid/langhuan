@@ -24,7 +24,7 @@ import {
   MoveDialog,
   RenameDialog,
 } from './file-tree-actions'
-import { descendantIds, findNode } from './file-tree-model'
+import { descendantIds, findNode, withoutWebDocuments } from './file-tree-model'
 import { fileTreeQueryOptions } from './queries'
 import type { FileTreeNode } from './schemas'
 import { UploadFileDialog } from './upload-file-dialog'
@@ -127,13 +127,23 @@ export function FileTreeWorkspace() {
   })
 
   if (!tree) return null
+  // 「文件」tab 只承载上传文件：web 页面节点（document_kind='web'）在此剪掉，
+  // 由「Web」tab 管理（目录索引页的子页面全部为 web 文档，随索引页一起剪）。
+  const webDocumentIds = new Set(
+    documents.filter((item) => item.kind === 'web').map((item) => item.id)
+  )
+  const visibleTree = {
+    ...tree,
+    root: withoutWebDocuments(tree.root, webDocumentIds),
+  }
   const selectedFolder =
-    findNode(tree.root, search.folder ?? tree.root.id) ?? tree.root
+    findNode(visibleTree.root, search.folder ?? visibleTree.root.id) ??
+    visibleTree.root
   return (
     <div className='grid min-h-0 flex-1 overflow-hidden rounded-xl border bg-card md:grid-cols-[14rem_minmax(0,1fr)]'>
       <aside className='flex min-w-0 flex-col overflow-y-auto overflow-x-hidden border-b bg-muted/15 p-3 md:border-r md:border-b-0'>
         <FileTree
-          tree={tree}
+          tree={visibleTree}
           canManage={canManage}
           selectedFolderId={selectedFolder.id}
           onSelectFolder={(folder) => {
