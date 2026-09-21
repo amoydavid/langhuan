@@ -31,12 +31,14 @@ export function visibleNodes(
 ): VisibleNode[] {
   const result: VisibleNode[] = []
   function visit(node: FileTreeNode, level: number) {
-    if (node.node_type === 'file') return
     result.push({ node, level })
-    if (
-      (node.node_type === 'root' || node.node_type === 'folder') &&
-      expanded.has(node.id)
-    ) {
+    // file 节点通常不可展开；web 源的「目录索引页」例外——其子页面挂在
+    // 索引页节点下（v1.3.0），展开状态时随树显示。
+    const expandable =
+      node.node_type === 'root' ||
+      node.node_type === 'folder' ||
+      node.children.length > 0
+    if (expandable && expanded.has(node.id)) {
       for (const child of node.children) visit(child, level + 1)
     }
   }

@@ -11,7 +11,7 @@ function WebSourceDetailPage() {
   const { data: me } = useQuery(meQueryOptions())
   const role = me?.workspaces.find((item) => item.slug === workspaceSlug)?.role
   return (
-    <div className='mx-auto w-full max-w-5xl'>
+    <div className='min-w-0'>
       <WebSourceDetail
         workspaceSlug={workspaceSlug}
         kbId={kbId}

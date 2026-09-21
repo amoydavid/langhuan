@@ -1,13 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
-import {
-  ArrowLeft,
-  Loader2,
-  Pencil,
-  RefreshCw,
-  Trash2,
-  Wrench,
-} from 'lucide-react'
+import { useNavigate } from '@tanstack/react-router'
+import { Loader2, Pencil, RefreshCw, Trash2, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -91,19 +84,11 @@ export function WebSourceDetail({
 
   return (
     <div className='space-y-4'>
-      <Button type='button' variant='ghost' size='sm' asChild>
-        <Link
-          to='/workspaces/$workspaceSlug/kb/$kbId/content/web'
-          params={{ workspaceSlug, kbId }}
-        >
-          <ArrowLeft />
-          {t('webSource.detail.backToList')}
-        </Link>
-      </Button>
-
+      {/* 源摘要条：紧凑单卡，与其它内容 tab 的列表头部风格一致；
+          页间导航由面包屑与「Web」tab 承担，不再放返回按钮。 */}
       <section
         data-testid='web-source-detail-card'
-        className='rounded-xl border bg-card'
+        className='rounded-lg border bg-card'
       >
         <div className='flex flex-col gap-3 p-4'>
           <div className='flex flex-wrap items-center gap-2'>

@@ -53,7 +53,6 @@ export const webSource = {
   },
 
   detail: {
-    backToList: 'Back to Web list',
     pagesTitle: 'Pages captured by this source {{count}}',
     respectRobotsOn: 'Respects robots',
     respectRobotsOff: 'Ignores robots',

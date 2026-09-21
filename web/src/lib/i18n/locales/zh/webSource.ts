@@ -52,7 +52,6 @@ export const webSource = {
   },
 
   detail: {
-    backToList: '返回 Web 列表',
     pagesTitle: '该请求抓到的页面 {{count}}',
     respectRobotsOn: '遵守 robots',
     respectRobotsOff: '忽略 robots',

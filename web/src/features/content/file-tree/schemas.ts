@@ -37,13 +37,8 @@ export const fileTreeNodeSchema: z.ZodType<FileTreeNode> = z.lazy(() =>
           path: ['document_id'],
         })
       }
-      if (node.node_type === 'file' && node.children.length > 0) {
-        context.addIssue({
-          code: 'custom',
-          message: i18n.t('content.fileTree.schema.fileCannotHaveChildren'),
-          path: ['children'],
-        })
-      }
+      // file 节点允许带 children：web 源的「目录索引页」即目录的代表文档，
+      // 其子页面（URL path 前缀匹配）挂在索引页节点下（v1.3.0 web 源语义）。
     })
 )
 

@@ -84,9 +84,10 @@ describe('WebSourceDetail', () => {
   it('shows the source summary and pages list heading for readers', async () => {
     const { screen } = await renderDetail({ canManage: false })
     await expect.element(screen.getByText('产品文档站')).toBeVisible()
+    // 页间导航由面包屑与「Web」tab 承担：不再有返回按钮（与其它内容 tab 一致）。
     await expect
       .element(screen.getByRole('link', { name: '返回 Web 列表' }))
-      .toBeVisible()
+      .not.toBeInTheDocument()
     await expect.element(screen.getByText('该请求抓到的页面 486')).toBeVisible()
   })
 

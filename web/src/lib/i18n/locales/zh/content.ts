@@ -66,7 +66,6 @@ export const content = {
     schema: {
       fileRequiresDocument: 'File 节点必须关联 Document',
       folderCannotHaveDocument: '目录节点不能关联 Document',
-      fileCannotHaveChildren: 'File 节点不能包含子节点',
     },
   },
 

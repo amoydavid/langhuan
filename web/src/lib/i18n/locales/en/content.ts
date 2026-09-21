@@ -71,7 +71,6 @@ export const content = {
     schema: {
       fileRequiresDocument: 'File nodes must have a document',
       folderCannotHaveDocument: 'Folder nodes cannot have a document',
-      fileCannotHaveChildren: 'File nodes cannot have child nodes',
     },
   },
 
