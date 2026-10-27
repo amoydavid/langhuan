@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { faqFormSchema } from './schemas'
+import { faqFormSchema, faqNewSearchSchema } from './schemas'
 
 const validFAQ = {
   title: '退款政策',
@@ -54,5 +54,23 @@ describe('faqFormSchema', () => {
       questions: ['第一个问题', '第二个问题'],
       answer: '回答内容',
     })
+  })
+})
+
+describe('faqNewSearchSchema（健康面板零召回预填，v1.4.0 §9.3.6）', () => {
+  it('accepts an optional question within the 500-char limit', () => {
+    expect(faqNewSearchSchema.parse({})).toEqual({})
+    expect(faqNewSearchSchema.parse({ question: '发票抬头怎么改' })).toEqual({
+      question: '发票抬头怎么改',
+    })
+    expect(
+      faqNewSearchSchema.safeParse({ question: '问'.repeat(500) }).success
+    ).toBe(true)
+  })
+
+  it('rejects a question longer than 500 chars', () => {
+    expect(
+      faqNewSearchSchema.safeParse({ question: '问'.repeat(501) }).success
+    ).toBe(false)
   })
 })

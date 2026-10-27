@@ -37,7 +37,7 @@ type KnowledgeBaseWorkbenchLayoutProps = {
 type WorkbenchTab = {
   label: string
   href: string
-  segment: 'overview' | 'content' | 'search' | 'indexes' | 'settings'
+  segment: 'overview' | 'content' | 'search' | 'indexes' | 'health' | 'settings'
 }
 
 function activeTab(pathname: string, tabs: WorkbenchTab[]) {
@@ -106,6 +106,11 @@ export function KnowledgeBaseWorkbenchLayout({
       label: t('knowledgeBases.workbench.tabs.indexes'),
       href: `${base}/indexes`,
       segment: 'indexes',
+    },
+    {
+      label: t('knowledgeBases.workbench.tabs.health'),
+      href: `${base}/health`,
+      segment: 'health',
     },
     {
       label: t('knowledgeBases.workbench.tabs.settings'),

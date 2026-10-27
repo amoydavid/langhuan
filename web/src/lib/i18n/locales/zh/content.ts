@@ -55,6 +55,11 @@ export const content = {
       cancel: '取消',
       confirm: '确认删除',
       deleteAction: '删除',
+      // 引用预警（v1.4.0 §9.3.5）：citation_count > 0 时在节点信息块下方渲染。
+      citationWarningTitle: '近期仍被检索引用',
+      citationWarningBody:
+        '近 30 天该内容在 {{count}} 次检索中被返回{{suffix}}。删除后相关问题将失去依据，请确认不再需要。',
+      citationLastCited: '，最近一次 {{time}}',
     },
     // 文件树操作错误
     errors: {

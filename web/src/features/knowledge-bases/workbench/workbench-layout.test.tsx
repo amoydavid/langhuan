@@ -7,6 +7,9 @@ import type { KnowledgeBaseSummary } from './types'
 import { KnowledgeBaseWorkbenchLayout } from './workbench-layout'
 
 const syncKnowledgeBase = vi.hoisted(() => vi.fn())
+const location = vi.hoisted(() => ({
+  pathname: '/workspaces/acme/kb/de305d54-75b4-431b-adb2-eb6b9e546014',
+}))
 
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
@@ -19,9 +22,7 @@ vi.mock('@tanstack/react-router', () => ({
     </a>
   ),
   Outlet: () => <div>叶子路由内容</div>,
-  useLocation: () => ({
-    pathname: '/workspaces/acme/kb/de305d54-75b4-431b-adb2-eb6b9e546014',
-  }),
+  useLocation: () => location,
   useNavigate: () => vi.fn(),
   useMatches: () => [],
 }))
@@ -140,7 +141,7 @@ describe('KnowledgeBaseWorkbenchLayout', () => {
       .element(screen.getByText('产品文档', { exact: true }))
       .toBeVisible()
     await expect.element(screen.getByText('有失败')).toBeVisible()
-    for (const item of ['概览', '内容', '检索测试', '索引', '设置']) {
+    for (const item of ['概览', '内容', '检索测试', '索引', '健康', '设置']) {
       await expect
         .element(screen.getByRole('link', { name: item, exact: true }))
         .toBeVisible()
@@ -152,6 +153,37 @@ describe('KnowledgeBaseWorkbenchLayout', () => {
     expect(document.body.textContent).not.toContain(kbId)
     expect(document.body.textContent).not.toContain(workspaceId)
     expect(document.body.textContent).not.toContain('must-not-render')
+  })
+
+  it('renders the Health tab between Indexes and Settings with the health href', async () => {
+    const { screen } = await renderWorkbench()
+
+    const health = screen.getByRole('link', { name: '健康', exact: true })
+    await expect.element(health).toBeVisible()
+    await expect
+      .element(health)
+      .toHaveAttribute('href', `/workspaces/acme/kb/${kbId}/health`)
+    // 桌面页签顺序：健康位于索引与设置之间（DOM 顺序）。
+    const nav = document.querySelector('nav[aria-label="知识库区域"]')
+    const labels = [...(nav?.querySelectorAll('a') ?? [])].map((anchor) =>
+      anchor.textContent?.trim()
+    )
+    expect(labels).toEqual(['概览', '内容', '检索测试', '索引', '健康', '设置'])
+  })
+
+  it('marks the Health tab as the current page on /health paths', async () => {
+    location.pathname = `/workspaces/acme/kb/${kbId}/health`
+    try {
+      const { screen } = await renderWorkbench()
+      await expect
+        .element(screen.getByRole('link', { name: '健康', exact: true }))
+        .toHaveAttribute('aria-current', 'page')
+      await expect
+        .element(screen.getByRole('link', { name: '设置', exact: true }))
+        .not.toHaveAttribute('aria-current')
+    } finally {
+      location.pathname = `/workspaces/acme/kb/${kbId}`
+    }
   })
 
   it('hides the manual sync button for upload knowledge bases', async () => {

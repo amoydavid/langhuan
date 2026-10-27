@@ -1,9 +1,15 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
+import { syncWebSource } from '../api'
 import type { WebSourceView } from '../types'
 import { WebSourceDetail } from './web-source-detail'
 
+vi.mock('../api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api')>()),
+  syncWebSource: vi.fn().mockResolvedValue({ job_id: 'job-700' }),
+}))
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
     children,
@@ -17,6 +23,8 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
+const mockedSync = vi.mocked(syncWebSource)
 
 const sourceId = '60000000-0000-4000-8000-000000000006'
 
@@ -148,5 +156,19 @@ describe('WebSourceDetail', () => {
     await expect
       .element(urlsDetail.screen.getByRole('button', { name: '管理 URL' }))
       .toBeVisible()
+  })
+
+  it('queues a force re-crawl with force=true after the cost confirmation', async () => {
+    // 强制重爬（v1.4.0 §9.3.7）：详情页操作区入口，确认后走既有 force 链路。
+    const { screen } = await renderDetail({ canManage: true })
+    await userEvent.click(screen.getByRole('button', { name: '强制重爬' }))
+    await expect
+      .element(screen.getByText(/重新抓取全部 486 个页面并生成新版本/))
+      .toBeVisible()
+    expect(mockedSync).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: '开始强制重爬' }))
+    await vi.waitFor(() => expect(mockedSync).toHaveBeenCalledTimes(1))
+    expect(mockedSync).toHaveBeenCalledWith('acme', 'kb-1', sourceId, true)
   })
 })

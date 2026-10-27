@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Loader2, Pencil, RefreshCw, Trash2, Wrench } from 'lucide-react'
+import {
+  Loader2,
+  Pencil,
+  RefreshCw,
+  RotateCw,
+  Trash2,
+  Wrench,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -27,6 +34,7 @@ import {
 } from '../queries'
 import type { WebSourceView } from '../types'
 import { DeleteWebSourceDialog } from './delete-web-source-dialog'
+import { ForceRecrawlDialog } from './force-recrawl-dialog'
 import { HealthBadge } from './health-badge'
 import { ManageUrlsDialog } from './manage-urls-dialog'
 import { WebSourceFormDialog } from './web-source-form-dialog'
@@ -206,6 +214,7 @@ function DetailActions({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const config = readWebSourceConfig(view.source.config)
+  const [forceRecrawlOpen, setForceRecrawlOpen] = useState(false)
   const syncMutation = useMutation(
     syncWebSourceMutationOptions(
       workspaceSlug,
@@ -232,6 +241,19 @@ function DetailActions({
       })
     } catch (error) {
       toast.error(parseApiError(error).message)
+    }
+  }
+
+  /** 强制重爬（v1.4.0 §9.3.7）：忽略变更检测全量重抓，仅在确认对话框后触发。 */
+  async function handleForceRecrawl() {
+    try {
+      const result = await syncMutation.mutateAsync(true)
+      toast.success(t('webSource.detail.syncQueuedToast'), {
+        description: result.job_id,
+      })
+    } catch (error) {
+      toast.error(parseApiError(error).message)
+      throw error
     }
   }
 
@@ -262,6 +284,18 @@ function DetailActions({
             <RefreshCw />
           )}
           {t('webSource.detail.syncNow')}
+        </Button>
+      )}
+      {isActive && (
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          disabled={syncMutation.isPending}
+          onClick={() => setForceRecrawlOpen(true)}
+        >
+          <RotateCw />
+          {t('webSource.forceRecrawl.button')}
         </Button>
       )}
       <Button type='button' variant='outline' size='sm' onClick={onEdit}>
@@ -303,6 +337,14 @@ function DetailActions({
         <Trash2 />
         {t('webSource.detail.deleteButton')}
       </Button>
+      {isActive && (
+        <ForceRecrawlDialog
+          open={forceRecrawlOpen}
+          onOpenChange={setForceRecrawlOpen}
+          pageCount={view.page_count}
+          onConfirm={handleForceRecrawl}
+        />
+      )}
     </div>
   )
 }

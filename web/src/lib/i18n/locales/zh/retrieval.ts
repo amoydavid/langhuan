@@ -35,5 +35,8 @@ export const retrieval = {
     },
     durationMs: '{{ms}} 毫秒',
     durationSec: '{{seconds}} 秒',
+    // 新鲜度行（v1.4.0 §9.3.8）：来自结果 metadata 的 document_updated_at / source_last_fetch_at。
+    updatedAt: '更新于 {{date}}',
+    sourceFetchedAt: '来源抓取于 {{date}}',
   },
 } as const

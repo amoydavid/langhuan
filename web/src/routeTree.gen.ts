@@ -52,6 +52,7 @@ import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexRouteImport } f
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdSettingsRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/settings'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/search'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/indexes'
+import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/health'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/route'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentIndexRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content/index'
 import { Route as AuthenticatedWorkspacesWorkspaceSlugKbKbIdDocumentsNewRouteImport } from './routes/_authenticated/workspaces/$workspaceSlug/kb/$kbId/documents/new'
@@ -313,6 +314,12 @@ const AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute =
     path: '/indexes',
     getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute,
   } as any)
+const AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute =
+  AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRouteImport.update({
+    id: '/health',
+    path: '/health',
+    getParentRoute: () => AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute,
+  } as any)
 const AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute =
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteImport.update({
     id: '/content',
@@ -473,6 +480,7 @@ export interface FileRoutesByFullPath {
   '/workspaces/$workspaceSlug/kb/': typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   '/workspaces/$workspaceSlug/models/': typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
   '/workspaces/$workspaceSlug/kb/$kbId/content': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren
+  '/workspaces/$workspaceSlug/kb/$kbId/health': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute
   '/workspaces/$workspaceSlug/kb/$kbId/indexes': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute
   '/workspaces/$workspaceSlug/kb/$kbId/search': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRoute
   '/workspaces/$workspaceSlug/kb/$kbId/settings': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSettingsRoute
@@ -527,6 +535,7 @@ export interface FileRoutesByTo {
   '/workspaces/$workspaceSlug/integrations': typeof AuthenticatedWorkspacesWorkspaceSlugIntegrationsIndexRoute
   '/workspaces/$workspaceSlug/kb': typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   '/workspaces/$workspaceSlug/models': typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
+  '/workspaces/$workspaceSlug/kb/$kbId/health': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute
   '/workspaces/$workspaceSlug/kb/$kbId/indexes': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute
   '/workspaces/$workspaceSlug/kb/$kbId/search': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRoute
   '/workspaces/$workspaceSlug/kb/$kbId/settings': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSettingsRoute
@@ -587,6 +596,7 @@ export interface FileRoutesById {
   '/_authenticated/workspaces/$workspaceSlug/kb/': typeof AuthenticatedWorkspacesWorkspaceSlugKbIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/models/': typeof AuthenticatedWorkspacesWorkspaceSlugModelsIndexRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren
+  '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/health': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/indexes': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/search': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRoute
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/settings': typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSettingsRoute
@@ -648,6 +658,7 @@ export interface FileRouteTypes {
     | '/workspaces/$workspaceSlug/kb/'
     | '/workspaces/$workspaceSlug/models/'
     | '/workspaces/$workspaceSlug/kb/$kbId/content'
+    | '/workspaces/$workspaceSlug/kb/$kbId/health'
     | '/workspaces/$workspaceSlug/kb/$kbId/indexes'
     | '/workspaces/$workspaceSlug/kb/$kbId/search'
     | '/workspaces/$workspaceSlug/kb/$kbId/settings'
@@ -702,6 +713,7 @@ export interface FileRouteTypes {
     | '/workspaces/$workspaceSlug/integrations'
     | '/workspaces/$workspaceSlug/kb'
     | '/workspaces/$workspaceSlug/models'
+    | '/workspaces/$workspaceSlug/kb/$kbId/health'
     | '/workspaces/$workspaceSlug/kb/$kbId/indexes'
     | '/workspaces/$workspaceSlug/kb/$kbId/search'
     | '/workspaces/$workspaceSlug/kb/$kbId/settings'
@@ -761,6 +773,7 @@ export interface FileRouteTypes {
     | '/_authenticated/workspaces/$workspaceSlug/kb/'
     | '/_authenticated/workspaces/$workspaceSlug/models/'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content'
+    | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/health'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/indexes'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/search'
     | '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/settings'
@@ -1098,6 +1111,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRouteImport
       parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute
     }
+    '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/health': {
+      id: '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/health'
+      path: '/health'
+      fullPath: '/workspaces/$workspaceSlug/kb/$kbId/health'
+      preLoaderRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRouteImport
+      parentRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRoute
+    }
     '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content': {
       id: '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/content'
       path: '/content'
@@ -1329,6 +1349,7 @@ const AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren =
 
 interface AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteChildren {
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren
+  AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRoute
   AuthenticatedWorkspacesWorkspaceSlugKbKbIdSettingsRoute: typeof AuthenticatedWorkspacesWorkspaceSlugKbKbIdSettingsRoute
@@ -1340,6 +1361,8 @@ const AuthenticatedWorkspacesWorkspaceSlugKbKbIdRouteRouteChildren: Authenticate
   {
     AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRoute:
       AuthenticatedWorkspacesWorkspaceSlugKbKbIdContentRouteRouteWithChildren,
+    AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute:
+      AuthenticatedWorkspacesWorkspaceSlugKbKbIdHealthRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute:
       AuthenticatedWorkspacesWorkspaceSlugKbKbIdIndexesRoute,
     AuthenticatedWorkspacesWorkspaceSlugKbKbIdSearchRoute:

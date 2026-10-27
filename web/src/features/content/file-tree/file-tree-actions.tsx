@@ -1,5 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ChevronDown, ChevronRight, Folder, FolderOpen } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  TriangleAlert,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -23,7 +29,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { parseApiError } from '@/lib/api/error'
 import i18n from '@/lib/i18n'
+import { currentLocale } from '@/lib/i18n/datetime'
 import { cn } from '@/lib/utils'
+import { useDocumentCitationSummary } from './queries'
 import type { FileTreeNode } from './schemas'
 
 const renameSchema = z.object({
@@ -383,6 +391,22 @@ export function MoveDialog({
   )
 }
 
+/** 最近引用时间的相对表述（如「2 天前」）；非法时间返回空串，退化为不带后缀的文案。 */
+function formatRelativeTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const diffMs = date.getTime() - Date.now()
+  const formatter = new Intl.RelativeTimeFormat(currentLocale(), {
+    numeric: 'auto',
+  })
+  const absMinutes = Math.abs(diffMs) / 60_000
+  if (absMinutes < 60)
+    return formatter.format(Math.round(diffMs / 60_000), 'minute')
+  if (absMinutes < 60 * 24)
+    return formatter.format(Math.round(diffMs / 3_600_000), 'hour')
+  return formatter.format(Math.round(diffMs / 86_400_000), 'day')
+}
+
 export function DeleteDialog({
   node,
   open,
@@ -390,6 +414,8 @@ export function DeleteDialog({
   onDelete,
   onDeleted,
   onError,
+  workspaceSlug,
+  kbId,
 }: {
   node: FileTreeNode
   open: boolean
@@ -397,9 +423,23 @@ export function DeleteDialog({
   onDelete: (node: FileTreeNode) => Promise<void> | void
   onDeleted: () => void
   onError: (message: string) => void
+  /**
+   * 传入后文件删除会并行请求引用摘要并展示删除预警（v1.4.0 §9.3.5）；
+   * 缺省或请求失败时对话框与现状一致（预警是增强，不是删除闸门）。
+   */
+  workspaceSlug?: string
+  kbId?: string
 }) {
   const { t } = useTranslation()
   const isFile = node.node_type === 'file'
+  const citation = useDocumentCitationSummary({
+    workspaceSlug,
+    kbId,
+    documentId: node.document_id,
+    enabled: open,
+  })
+  const citationCount = citation.data?.citation_count ?? 0
+  const lastCitedAt = citation.data?.last_cited_at ?? null
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='sm:max-w-md'>
@@ -420,6 +460,27 @@ export function DeleteDialog({
               })}
             </p>
           </div>
+          {citationCount > 0 && (
+            <div
+              data-testid='delete-citation-warning'
+              className='rounded-lg border border-destructive/30 bg-destructive/5 p-3'
+            >
+              <p className='flex items-center gap-2 font-medium text-destructive text-sm'>
+                <TriangleAlert className='size-4 shrink-0' />
+                {t('content.fileTree.delete.citationWarningTitle')}
+              </p>
+              <p className='mt-1 text-destructive/90 text-sm'>
+                {t('content.fileTree.delete.citationWarningBody', {
+                  count: citationCount,
+                  suffix: lastCitedAt
+                    ? t('content.fileTree.delete.citationLastCited', {
+                        time: formatRelativeTime(lastCitedAt),
+                      })
+                    : '',
+                })}
+              </p>
+            </div>
+          )}
           <p className='text-muted-foreground text-sm'>
             {isFile
               ? t('content.fileTree.delete.fileWarning')

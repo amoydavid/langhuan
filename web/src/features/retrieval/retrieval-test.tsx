@@ -22,7 +22,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { parseApiError } from '@/lib/api/error'
 import i18n from '@/lib/i18n'
+import { formatDateTime } from '@/lib/i18n/datetime'
 import { retrievalTestQueryOptions } from './queries'
+import { resultFreshnessSchema } from './schemas'
 import type { RetrievalRequest, RetrievalResult } from './types'
 
 const optionalTopK = z
@@ -138,6 +140,25 @@ function resultBasePath(
 
 function score(value: number | undefined) {
   return value === undefined ? '—' : String(value)
+}
+
+/**
+ * 新鲜度行（v1.4.0 §9.3.8）：从结果 metadata 安全解析可选的
+ * document_updated_at / source_last_fetch_at；两项都缺（或解析失败）时返回 null，整行不渲染。
+ */
+function resultFreshnessLabels(result: RetrievalResult) {
+  const parsed = resultFreshnessSchema.safeParse(result.metadata)
+  if (!parsed.success) return null
+  function formatDate(value: string | undefined) {
+    if (!value) return null
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return null
+    return formatDateTime(date, { dateStyle: 'short', timeStyle: 'short' })
+  }
+  const updatedLabel = formatDate(parsed.data.document_updated_at)
+  const fetchedLabel = formatDate(parsed.data.source_last_fetch_at)
+  if (!updatedLabel && !fetchedLabel) return null
+  return { updatedLabel, fetchedLabel }
 }
 
 // useTrackDuration 在 startedAt 设置后、isFetching 从 true 变为 false 时
@@ -371,6 +392,7 @@ export function RetrievalTest({
                 ? result.metadata.heading
                 : undefined
             const showHeading = heading && !result.content.includes(heading)
+            const freshness = resultFreshnessLabels(result)
             return (
               <Card key={result.chunk_id}>
                 <CardHeader>
@@ -434,6 +456,24 @@ export function RetrievalTest({
                       ))}
                     </ul>
                   </div>
+                  {freshness && (
+                    <p
+                      data-testid='result-freshness'
+                      className='text-muted-foreground text-xs'
+                    >
+                      {freshness.updatedLabel &&
+                        t('retrieval.test.updatedAt', {
+                          date: freshness.updatedLabel,
+                        })}
+                      {freshness.updatedLabel &&
+                        freshness.fetchedLabel &&
+                        ' · '}
+                      {freshness.fetchedLabel &&
+                        t('retrieval.test.sourceFetchedAt', {
+                          date: freshness.fetchedLabel,
+                        })}
+                    </p>
+                  )}
                   <div className='flex flex-wrap items-center gap-x-4 gap-y-2 text-muted-foreground text-xs'>
                     {result.ranking_stage === 'rerank' && (
                       <span>

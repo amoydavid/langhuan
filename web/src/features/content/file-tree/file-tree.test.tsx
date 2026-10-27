@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
@@ -39,6 +40,16 @@ const tree = fileTreeSchema.parse({
   },
 })
 
+// DeleteDialog 起引用预警查询（v1.4.0 §9.3.5），FileTree 渲染需要 QueryClient 上下文。
+async function renderTree(ui: React.ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return await render(
+    <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+  )
+}
+
 describe('FileTree', () => {
   it('rejects non-file-domain node types at the API boundary', () => {
     const invalid = structuredClone(tree)
@@ -48,7 +59,7 @@ describe('FileTree', () => {
 
   it('shows the root and folders only, then reports the selected folder', async () => {
     const onSelectFolder = vi.fn()
-    const screen = await render(
+    const screen = await renderTree(
       <FileTree tree={tree} onSelectFolder={onSelectFolder} />
     )
 
@@ -69,7 +80,7 @@ describe('FileTree', () => {
   it('supports folder keyboard navigation and opens rename in a dialog', async () => {
     const onSelectFolder = vi.fn()
     const onRenameNode = vi.fn().mockResolvedValue(undefined)
-    const screen = await render(
+    const screen = await renderTree(
       <FileTree
         tree={tree}
         canManage
@@ -105,7 +116,7 @@ describe('FileTree', () => {
     const onCreateFolder = vi.fn().mockResolvedValue(undefined)
     const onMoveNode = vi.fn().mockResolvedValue(undefined)
     const onDeleteNode = vi.fn().mockResolvedValue(undefined)
-    const screen = await render(
+    const screen = await renderTree(
       <FileTree
         tree={tree}
         canManage
@@ -163,7 +174,7 @@ describe('FileTree', () => {
       .mockRejectedValue(
         new ApiError('conflict', 409, 'file_tree_name_conflict')
       )
-    const screen = await render(
+    const screen = await renderTree(
       <FileTree
         tree={tree}
         canManage
@@ -186,7 +197,7 @@ describe('FileTree', () => {
   })
 
   it('filters folders by readable directory name without exposing files', async () => {
-    const screen = await render(
+    const screen = await renderTree(
       <FileTree tree={tree} onSelectFolder={vi.fn()} />
     )
     await userEvent.fill(screen.getByLabelText('搜索目录'), 'docs')

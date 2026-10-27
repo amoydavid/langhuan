@@ -61,6 +61,11 @@ export const content = {
       cancel: 'Cancel',
       confirm: 'Confirm delete',
       deleteAction: 'Delete',
+      // Citation warning (v1.4.0 §9.3.5): rendered below the node info block when citation_count > 0.
+      citationWarningTitle: 'Recently cited in retrieval',
+      citationWarningBody:
+        'This content was returned in {{count}} searches in the last 30 days{{suffix}}. Related questions will lose their evidence after deletion; make sure it is no longer needed.',
+      citationLastCited: ', most recently {{time}}',
     },
     errors: {
       notEmpty: 'The folder still has contents; move or delete them first.',

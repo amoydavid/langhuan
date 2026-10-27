@@ -78,6 +78,16 @@ export const webSource = {
     statusChangedToast: 'Status updated',
   },
 
+  // Force re-crawl confirmation (v1.4.0 §9.3.7): shared by the list card and source detail.
+  forceRecrawl: {
+    button: 'Force re-crawl',
+    title: 'Force re-crawl',
+    description:
+      'This will ignore change detection, re-crawl all {{pages}} pages, and generate new versions. It may take a long time and consume your sync quota. Use it only when upstream change detection appears broken.',
+    cancel: 'Cancel',
+    confirm: 'Start force re-crawl',
+  },
+
   form: {
     createTitle: 'Add website source',
     createDescription:

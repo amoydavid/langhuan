@@ -40,6 +40,11 @@ import {
 type FAQFormProps = {
   mode: 'create' | 'edit'
   initialFAQ?: FAQDocument
+  /**
+   * create 模式下的预填问题（健康面板零召回跳转，v1.4.0 §9.3.6）：
+   * 仅作为标题与问题 1 的默认值，不影响校验与提交流程。
+   */
+  prefillQuestion?: string
   saveFAQ: (input: FAQSaveInput) => Promise<FAQDocument>
   loadLatestFAQ?: () => Promise<FAQDocument>
   onSaved?: (faq: FAQDocument) => void
@@ -48,17 +53,28 @@ type FAQFormProps = {
 
 type EditorView = 'edit' | 'preview' | 'split'
 
-function initialValues(faq?: FAQDocument): FAQFormValues {
+function initialValues(
+  faq?: FAQDocument,
+  prefillQuestion?: string
+): FAQFormValues {
+  if (faq) {
+    return {
+      title: faq.document.title ?? '',
+      questions: faq.questions.length ? faq.questions : [''],
+      answer: faq.answer ?? '',
+    }
+  }
   return {
-    title: faq?.document.title ?? '',
-    questions: faq?.questions.length ? faq.questions : [''],
-    answer: faq?.answer ?? '',
+    title: prefillQuestion ?? '',
+    questions: prefillQuestion ? [prefillQuestion] : [''],
+    answer: '',
   }
 }
 
 export function FAQForm({
   mode,
   initialFAQ,
+  prefillQuestion,
   saveFAQ,
   loadLatestFAQ,
   onSaved,
@@ -71,7 +87,7 @@ export function FAQForm({
     useState<ReturnType<typeof parseApiError>>()
   const form = useForm<FAQFormValues>({
     resolver: zodResolver(faqFormSchema),
-    defaultValues: initialValues(initialFAQ),
+    defaultValues: initialValues(initialFAQ, prefillQuestion),
   })
   const questionValues = form.watch('questions')
 

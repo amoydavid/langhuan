@@ -149,6 +149,7 @@ export const knowledgeBases = {
       content: 'Content',
       search: 'Search Test',
       indexes: 'Indexes',
+      health: 'Health',
       settings: 'Settings',
     },
     syncState: {

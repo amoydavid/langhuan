@@ -140,6 +140,7 @@ export const knowledgeBases = {
       content: '内容',
       search: '检索测试',
       indexes: '索引',
+      health: '健康',
       settings: '设置',
     },
     syncState: {

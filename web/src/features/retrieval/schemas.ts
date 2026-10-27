@@ -38,3 +38,13 @@ export const retrievalResultSchema = z.object({
 })
 
 export const retrievalResultsSchema = z.array(retrievalResultSchema)
+
+/**
+ * 结果 metadata 中的新鲜度字段（v1.4.0 §9.3.8）：后端仅在存在时返回
+ * `document_updated_at`（RFC3339）；web 文档附 `source_last_fetch_at`。
+ * metadata 整体是 record，渲染前用本 schema 对可选字段做一次安全解析。
+ */
+export const resultFreshnessSchema = z.object({
+  document_updated_at: z.string().optional(),
+  source_last_fetch_at: z.string().optional(),
+})

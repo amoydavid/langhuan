@@ -2,16 +2,19 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { createFAQDocument } from '@/features/content/faq-editor/api'
 import { FAQForm } from '@/features/content/faq-editor/faq-form'
+import { FAQInsightHint } from '@/features/content/faq-editor/faq-insight-hint'
 import {
   faqDocumentQueryKey,
   invalidateFAQExperience,
 } from '@/features/content/faq-editor/queries'
-import type {
-  CreateFAQInput,
-  FAQSaveInput,
+import {
+  type CreateFAQInput,
+  type FAQSaveInput,
+  faqNewSearchSchema,
 } from '@/features/content/faq-editor/schemas'
 
 function FAQCreatePage() {
@@ -20,6 +23,10 @@ function FAQCreatePage() {
   const navigate = Route.useNavigate()
   const queryClient = useQueryClient()
   const listHref = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/faq`
+  // 健康面板零召回跳转预填（v1.4.0 §9.3.6）：question 存在时预填表单并渲染来源提示条。
+  const search = Route.useSearch()
+  const prefillQuestion = search.question?.trim() || undefined
+  const healthHref = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/health`
 
   async function saveFAQ(input: FAQSaveInput) {
     if ('base_revision_id' in input) {
@@ -46,8 +53,10 @@ function FAQCreatePage() {
           </a>
         </Button>
       </div>
+      <FAQInsightHint question={prefillQuestion} />
       <FAQForm
         mode='create'
+        prefillQuestion={prefillQuestion}
         saveFAQ={saveFAQ}
         onSaved={(faq) => {
           queryClient.setQueryData(
@@ -63,6 +72,15 @@ function FAQCreatePage() {
           void navigate({
             to: `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/faq/${encodeURIComponent(faq.document.id)}`,
           })
+          // 预填入口保存后提示回健康页验证空召回率变化（主跳转流程不变）。
+          if (prefillQuestion) {
+            toast.success(t('contentFaq.insight.savedToast'), {
+              action: {
+                label: t('contentFaq.insight.backToHealth'),
+                onClick: () => window.location.assign(healthHref),
+              },
+            })
+          }
         }}
       />
     </div>
@@ -77,5 +95,6 @@ export const Route = createFileRoute(
       label: 'routes.workspaces.kb.content.faq.new.breadcrumb',
     },
   },
+  validateSearch: faqNewSearchSchema,
   component: FAQCreatePage,
 })

@@ -58,6 +58,14 @@ function stubResults() {
   })
 }
 
+function stubResultsWith(metadata: Record<string, unknown>) {
+  return (_ws: string, _kb: string, _req: RetrievalRequest | null) => ({
+    data: [{ ...results[0], metadata }],
+    isFetching: false,
+    error: null,
+  })
+}
+
 describe('RetrievalTest', () => {
   it('coerces typed URL params so direct/F5 routes replay the same request', () => {
     const search = retrievalSearchSchema.parse({
@@ -144,5 +152,59 @@ describe('RetrievalTest', () => {
     expect(document.body.textContent).not.toContain(chunkId)
     expect(document.body.textContent).not.toContain(matchedChildId)
     expect(document.body.textContent).not.toContain('do-not-render')
+  })
+
+  it('renders the freshness line with both dates for web results and omits missing items', async () => {
+    // 新鲜度行（v1.4.0 §9.3.8）：web 文档两项都显示；日期值依赖时区，只断言结构。
+    // 查询定位器挂在 document.body 上，逐段 unmount 避免跨渲染匹配。
+    const web = await render(
+      <RetrievalTest
+        workspaceSlug='acme'
+        kbId={kbId}
+        search={{ q: 'Docker' }}
+        defaults={defaults}
+        useResults={stubResultsWith({
+          heading: 'Docker 部署',
+          document_updated_at: '2026-10-20T08:00:00Z',
+          source_last_fetch_at: '2026-10-27T08:00:00Z',
+        })}
+      />
+    )
+    await expect
+      .element(web.getByText(/更新于 .+ · 来源抓取于 .+/))
+      .toBeVisible()
+    await web.unmount()
+
+    // file/faq 文档只显示「更新于」。
+    const file = await render(
+      <RetrievalTest
+        workspaceSlug='acme'
+        kbId={kbId}
+        search={{ q: 'Docker' }}
+        defaults={defaults}
+        useResults={stubResultsWith({
+          heading: 'Docker 部署',
+          document_updated_at: '2026-10-20T08:00:00Z',
+        })}
+      />
+    )
+    await expect.element(file.getByText(/更新于 .+/)).toBeVisible()
+    expect(document.body.textContent).not.toContain('来源抓取于')
+    await file.unmount()
+
+    // 两项都缺（老数据）时整行不渲染。
+    const legacy = await render(
+      <RetrievalTest
+        workspaceSlug='acme'
+        kbId={kbId}
+        search={{ q: 'Docker' }}
+        defaults={defaults}
+        useResults={stubResultsWith({ heading: 'Docker 部署' })}
+      />
+    )
+    await expect
+      .element(legacy.getByTestId('result-freshness'))
+      .not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('更新于')
   })
 })

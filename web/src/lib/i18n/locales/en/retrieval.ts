@@ -44,5 +44,8 @@ export const retrieval = {
     },
     durationMs: '{{ms}} ms',
     durationSec: '{{seconds}} s',
+    // Freshness line (v1.4.0 §9.3.8): from result metadata document_updated_at / source_last_fetch_at.
+    updatedAt: 'Updated {{date}}',
+    sourceFetchedAt: 'Source fetched {{date}}',
   },
 } satisfies Widen<typeof zhRetrieval>

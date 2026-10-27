@@ -146,6 +146,8 @@ export function FileTreeWorkspace() {
           tree={visibleTree}
           canManage={canManage}
           selectedFolderId={selectedFolder.id}
+          workspaceSlug={workspaceSlug}
+          kbId={kbId}
           onSelectFolder={(folder) => {
             void navigate({
               to: '/workspaces/$workspaceSlug/kb/$kbId/content/files',
@@ -276,6 +278,8 @@ export function FileTreeWorkspace() {
         <DeleteDialog
           node={deletingNode}
           open={Boolean(deletingNode)}
+          workspaceSlug={workspaceSlug}
+          kbId={kbId}
           onOpenChange={(open) => {
             if (!open) setDeletingNode(undefined)
           }}

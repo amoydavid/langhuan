@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, Globe2, Loader2, RefreshCw } from 'lucide-react'
+import { ArrowRight, Globe2, Loader2, RefreshCw, RotateCw } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -21,6 +22,7 @@ import {
   updateWebSourceMutationOptions,
 } from '../queries'
 import type { WebSourceView } from '../types'
+import { ForceRecrawlDialog } from './force-recrawl-dialog'
 import { HealthBadge } from './health-badge'
 
 type WebSourceCardProps = {
@@ -66,6 +68,7 @@ export function WebSourceCard({
   const queryClient = useQueryClient()
   const config = readWebSourceConfig(view.source.config)
   const health = webSourceHealth(view.source)
+  const [forceRecrawlOpen, setForceRecrawlOpen] = useState(false)
   const syncMutation = useMutation(
     syncWebSourceMutationOptions(
       workspaceSlug,
@@ -92,6 +95,19 @@ export function WebSourceCard({
       })
     } catch (error) {
       toast.error(parseApiError(error).message)
+    }
+  }
+
+  /** 强制重爬（v1.4.0 §9.3.7）：忽略变更检测全量重抓，仅在确认对话框后触发。 */
+  async function handleForceRecrawl() {
+    try {
+      const result = await syncMutation.mutateAsync(true)
+      toast.success(t('webSource.card.syncQueuedToast'), {
+        description: result.job_id,
+      })
+    } catch (error) {
+      toast.error(parseApiError(error).message)
+      throw error
     }
   }
 
@@ -208,6 +224,18 @@ export function WebSourceCard({
               {t('webSource.card.syncNow')}
             </Button>
           )}
+          {canManage && view.source.status === 'active' && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={syncMutation.isPending}
+              onClick={() => setForceRecrawlOpen(true)}
+            >
+              <RotateCw />
+              {t('webSource.forceRecrawl.button')}
+            </Button>
+          )}
           {canManage && view.source.status === 'disabled' && (
             <Button
               type='button'
@@ -233,6 +261,14 @@ export function WebSourceCard({
           </Button>
         </div>
       </CardContent>
+      {canManage && view.source.status === 'active' && (
+        <ForceRecrawlDialog
+          open={forceRecrawlOpen}
+          onOpenChange={setForceRecrawlOpen}
+          pageCount={view.page_count}
+          onConfirm={handleForceRecrawl}
+        />
+      )}
     </Card>
   )
 }

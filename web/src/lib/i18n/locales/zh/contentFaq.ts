@@ -52,6 +52,13 @@ export const contentFaq = {
     answerDescription: '已按安全规则渲染 Markdown',
   },
 
+  // 健康面板零召回预填（v1.4.0 §9.3.6，content/faq/new?question=…）
+  insight: {
+    hint: '本页来自健康面板的零召回查询，保存后回到健康页查看空召回率变化。',
+    savedToast: 'FAQ 已保存',
+    backToHealth: '回健康页查看空召回率变化',
+  },
+
   // 版本冲突对比（FAQConflictComparison）
   conflictComparison: {
     yourVersion: '你的版本',

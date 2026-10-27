@@ -77,3 +77,11 @@ export type UpdateFAQInput = Omit<FAQFormValues, 'title'> & {
   base_revision_id: string
 }
 export type FAQSaveInput = CreateFAQInput | UpdateFAQInput
+
+/**
+ * 新建 FAQ 路由的 search 参数（v1.4.0 §9.3.6 健康面板零召回跳转）：
+ * `question` 存在时预填标题与问题 1，并渲染来源提示条。
+ */
+export const faqNewSearchSchema = z.object({
+  question: z.string().max(500).optional(),
+})

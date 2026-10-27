@@ -40,6 +40,9 @@ type FileTreeProps = {
   tree: FileTreeData
   canManage?: boolean
   selectedFolderId?: string
+  /** 传入后删除确认会请求引用摘要展示删除预警（v1.4.0 §9.3.5）。 */
+  workspaceSlug?: string
+  kbId?: string
   onSelectFolder: (node: FileTreeNode) => void
   onRenameNode?: (node: FileTreeNode, name: string) => Promise<void> | void
   onCreateFolder?: (parent: FileTreeNode, name: string) => Promise<void> | void
@@ -54,6 +57,8 @@ export function FileTree({
   tree,
   canManage = false,
   selectedFolderId: controlledSelectedFolderId,
+  workspaceSlug,
+  kbId,
   onSelectFolder,
   onRenameNode,
   onCreateFolder,
@@ -355,6 +360,8 @@ export function FileTree({
         <DeleteDialog
           node={deletingNode}
           open={Boolean(deletingNode)}
+          workspaceSlug={workspaceSlug}
+          kbId={kbId}
           onOpenChange={(open) => {
             if (!open) setDeletingNode(undefined)
           }}

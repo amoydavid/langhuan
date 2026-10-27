@@ -60,6 +60,13 @@ export const contentFaq = {
     answerDescription: 'Markdown rendered with the safety rules applied',
   },
 
+  // Zero-recall prefill from the Health page (v1.4.0 §9.3.6, content/faq/new?question=…)
+  insight: {
+    hint: 'This page comes from a zero-recall query on the Health page; go back to Health after saving to see the empty-recall rate change.',
+    savedToast: 'FAQ saved',
+    backToHealth: 'View empty-recall rate on Health',
+  },
+
   // Revision conflict comparison (FAQConflictComparison)
   conflictComparison: {
     yourVersion: 'Your version',

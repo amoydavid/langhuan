@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { apiClient } from '@/lib/api/client'
 import { fileTreeNodeSchema, fileTreeSchema } from './schemas'
 
@@ -44,4 +45,28 @@ export async function deleteFileTreeNode(
   await apiClient.delete(
     `${fileTreePath(workspaceSlug, kbId)}/nodes/${encodeURIComponent(nodeId)}`
   )
+}
+
+/** 文档引用摘要（v1.4.0 §9.3.5 删除预警）：窗口期内该文档被检索返回的次数与最近一次时间。 */
+export const documentCitationSummarySchema = z.object({
+  window_days: z.number().int().positive(),
+  citation_count: z.number().int().nonnegative(),
+  last_cited_at: z.string().nullable().optional(),
+})
+
+export type DocumentCitationSummary = z.infer<
+  typeof documentCitationSummarySchema
+>
+
+export async function getDocumentCitationSummary(
+  workspaceSlug: string,
+  kbId: string,
+  documentId: string,
+  windowDays = 30
+): Promise<DocumentCitationSummary> {
+  const response = await apiClient.get<unknown>(
+    `/workspaces/${encodeURIComponent(workspaceSlug)}/knowledge-bases/${encodeURIComponent(kbId)}/documents/${encodeURIComponent(documentId)}/citation-summary`,
+    { params: { window_days: windowDays } }
+  )
+  return documentCitationSummarySchema.parse(response.data)
 }

@@ -77,6 +77,16 @@ export const webSource = {
     statusChangedToast: '状态已更新',
   },
 
+  // 强制重爬确认（v1.4.0 §9.3.7）：列表卡片与源详情共用。
+  forceRecrawl: {
+    button: '强制重爬',
+    title: '强制重爬',
+    description:
+      '将忽略变更检测，重新抓取全部 {{pages}} 个页面并生成新版本，可能持续较长时间并占用同步配额。仅在怀疑上游变更检测异常时使用。',
+    cancel: '取消',
+    confirm: '开始强制重爬',
+  },
+
   form: {
     createTitle: '添加网站源',
     createDescription:

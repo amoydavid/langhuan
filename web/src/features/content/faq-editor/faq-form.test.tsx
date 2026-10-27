@@ -67,6 +67,29 @@ describe('FAQForm', () => {
       .not.toBeInTheDocument()
   })
 
+  it('prefills the title and the first question from the insight question in create mode', async () => {
+    // 健康面板零召回跳转预填（v1.4.0 §9.3.6）：仅作为默认值，不改变校验流程。
+    const saveFAQ = vi.fn().mockResolvedValue(faqDocument())
+    const screen = await render(
+      <FAQForm
+        mode='create'
+        saveFAQ={saveFAQ}
+        prefillQuestion='发票抬头怎么改'
+      />
+    )
+
+    await expect
+      .element(screen.getByLabelText('标题'))
+      .toHaveValue('发票抬头怎么改')
+    await expect
+      .element(screen.getByRole('textbox', { name: '问题 1', exact: true }))
+      .toHaveValue('发票抬头怎么改')
+    // 预填只落一个问题变体，不追加多余空行。
+    await expect
+      .element(screen.getByRole('textbox', { name: '问题 2', exact: true }))
+      .not.toBeInTheDocument()
+  })
+
   it('renders sanitized Markdown preview and returns the created FAQ to canonical navigation', async () => {
     const created = faqDocument()
     const saveFAQ = vi.fn().mockResolvedValue(created)
