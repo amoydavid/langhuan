@@ -26,9 +26,11 @@ type KnowledgeBase struct {
 	SourceType              value.KnowledgeBaseSourceType
 	SourceConfig            map[string]any
 	SourceConnectionID      *uuid.UUID
-	CreatedAt               time.Time
-	UpdatedAt               time.Time
-	DeletedAt               *time.Time
+	// QueryLogEnabled 控制是否把检索 query 原文写入 search_query_log（v1.4.0，默认关闭）。
+	QueryLogEnabled bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DeletedAt       *time.Time
 }
 
 // ResolvedKnowledgeBase carries a KnowledgeBase and its configured model summary.

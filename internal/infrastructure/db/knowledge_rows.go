@@ -19,6 +19,7 @@ type KnowledgeBaseRow struct {
 	SourceType              string
 	SourceConfig            JSONMap    `gorm:"type:jsonb"`
 	SourceConnectionID      *uuid.UUID `gorm:"type:uuid"`
+	QueryLogEnabled         bool
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 	DeletedAt               *time.Time

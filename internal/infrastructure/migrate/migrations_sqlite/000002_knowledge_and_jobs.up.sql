@@ -30,6 +30,7 @@ CREATE TABLE knowledge_bases (
         CHECK (source_type IN ('upload','feishu_drive','feishu_wiki')),
     source_config               TEXT NOT NULL DEFAULT '{}' CHECK (json_type(source_config) = 'object'),
     source_connection_id        TEXT REFERENCES workspace_source_connections(id) ON DELETE SET NULL,
+    query_log_enabled           INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     deleted_at DATETIME,

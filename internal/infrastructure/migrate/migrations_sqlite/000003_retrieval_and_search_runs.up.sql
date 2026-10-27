@@ -115,3 +115,42 @@ CREATE TABLE search_run_generations (
 );
 CREATE INDEX search_run_generations_lookup_idx
     ON search_run_generations (workspace_id, search_run_id);
+
+-- search_citations：chunk 级引用遥测（PG 000027 的 SQLite 等价物，v1.4.0）。
+-- 不建跨表级联 FK：引用历史必须活过 search_run 过期清理与文档清理（删除预警依赖）；
+-- 生命周期由 insights 保留期独立清理。BOOLEAN 用 INTEGER 0/1 方言。
+CREATE TABLE search_citations (
+    id                TEXT PRIMARY KEY,
+    workspace_id      TEXT NOT NULL,
+    kb_id             TEXT NOT NULL,
+    search_run_id     TEXT NOT NULL,
+    document_id       TEXT NOT NULL,
+    chunk_revision_id TEXT NOT NULL,
+    rank              INTEGER NOT NULL CHECK (rank >= 1),
+    retrieval_status  TEXT NOT NULL CHECK (retrieval_status IN ('available', 'degraded')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (search_run_id, chunk_revision_id)
+);
+CREATE INDEX idx_citations_doc_window
+    ON search_citations (workspace_id, kb_id, document_id, created_at DESC);
+CREATE INDEX idx_citations_run ON search_citations (search_run_id);
+CREATE INDEX idx_citations_created ON search_citations (created_at);
+
+-- search_query_log：opt-in 查询原文日志（仅 query_log_enabled=true 的库写入）。
+CREATE TABLE search_query_log (
+    id                TEXT PRIMARY KEY,
+    workspace_id      TEXT NOT NULL,
+    kb_id             TEXT NOT NULL,
+    search_run_id     TEXT NOT NULL,
+    query_text        TEXT NOT NULL CHECK (trim(query_text) <> ''),
+    query_hash        TEXT NOT NULL,
+    query_chars       INTEGER NOT NULL CHECK (query_chars >= 0),
+    retrieval_status  TEXT NOT NULL
+        CHECK (retrieval_status IN ('running','available','empty','degraded','failed')),
+    created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX idx_query_log_kb_time
+    ON search_query_log (workspace_id, kb_id, created_at DESC);
+CREATE INDEX idx_query_log_hash
+    ON search_query_log (workspace_id, kb_id, query_hash, created_at DESC);
+CREATE INDEX idx_query_log_created ON search_query_log (created_at);

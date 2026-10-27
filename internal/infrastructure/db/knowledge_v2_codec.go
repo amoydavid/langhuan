@@ -18,6 +18,7 @@ func knowledgeBaseV2ToRow(kb *model.KnowledgeBase) *KnowledgeBaseRow {
 		ActiveIndexGenerationID: kb.ActiveIndexGenerationID, FileTreeRootID: kb.FileTreeRootID,
 		SourceType: string(kb.SourceType), SourceConfig: normalizedJSONMap(kb.SourceConfig),
 		SourceConnectionID: kb.SourceConnectionID,
+		QueryLogEnabled:    kb.QueryLogEnabled,
 		CreatedAt:          kb.CreatedAt, UpdatedAt: kb.UpdatedAt, DeletedAt: kb.DeletedAt,
 	}
 }
@@ -29,6 +30,7 @@ func knowledgeBaseV2FromRow(row *KnowledgeBaseRow) *model.KnowledgeBase {
 		ActiveIndexGenerationID: row.ActiveIndexGenerationID, FileTreeRootID: row.FileTreeRootID,
 		SourceType: value.KnowledgeBaseSourceType(row.SourceType), SourceConfig: normalizedDomainMap(row.SourceConfig),
 		SourceConnectionID: row.SourceConnectionID,
+		QueryLogEnabled:    row.QueryLogEnabled,
 		CreatedAt:          row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
 	}
 }
