@@ -356,6 +356,30 @@ render 引擎需要部署侧提供 CDP 渲染端（来源连接 `provider='brows
 
 连接测试契约（`POST .../source-connections/:connection_id/test`；`feishu` 不支持：firecrawl/jina 抓取固定测试页验证抓取链路，`browser` 与渲染端点完成 CDP `Browser.getVersion` 握手、不打开任何页面）：探测成功与失败同为 `200`，以 `ok` 字段区分——**与模型连接测试（失败 4xx/5xx）契约不同**，详见 `docs/API_ACCESS.md` 8.2 节。
 
+### 8.3 检索遥测与知识健康回路（v1.4.0）
+
+琅嬛不引入新的变更检测——web 源（content_hash/etag/cron/force）、飞书源（cursor/hash/软删检测）与本地内容（revisions/软删）的变更事实已经全部落库。健康回路只做两件事：**把检索消费信号记录下来**（此前引用血缘在响应后即丢弃），**把已发生的变更与消费信号聚合成管理员可行动的面板**。
+
+```text
+记录（旁路，异步）                 洞察（只读聚合）                行动（全部复用既有端点）
+search_citations  ─┐    ┌ 健康 tab（Session admin）   ┌ 零召回 → 创建 FAQ（预填）
+search_query_log  ─┼──→ │ · 空召回率（北极星）        │ 沉睡内容 → 查看（删除走既有流+预警）
+（检索 Finish 后非  │    │ · 零召回查询 Top N          │ 源变更 → 立即同步/强制重爬
+ 阻塞投递，批量落库）│    │ · 沉睡内容 Top N            │ 删除前 → 引用预警（citation-summary）
+                   ┘    │ · 内容动态 feed（四源 UNION）└ 验证：行动前后空召回率环比
+```
+
+关键合同：
+
+- **写入旁路**：`CitationRecorder`（`internal/application/service/citation_recorder.go`）持有进程内有界 buffered channel，后台 flusher 批量落库；缓冲满丢批 + 计数 + 结构化日志（`insights_telemetry_dropped`），任何拥塞不反压检索路径。standalone 模式同样工作（不依赖 asynq）。
+- **隐私边界**：`search_runs` 继续零明文（v0.9.0 合同）；查询原文仅当 `knowledge_bases.query_log_enabled=true`（默认 false）时由投递侧构造写入 `search_query_log`——门控在构造时而非事后过滤，明文只出现在 owner/admin 的 insights 端点响应中，任何日志/指标/MCP 输出不含 query_text。
+- **D3 生命周期独立**：两张遥测表不建跨表级联 FK。引用历史必须活过 search_run 过期清理与文档清理（删除预警依赖"文档已删、引用还在"）；保留期 `insights.citation_retention_days`（默认 35 天）/`insights.query_log_retention_days`（默认 30 天）由定时清理独立执行。
+- **指标口径**：空召回率 = `empty / (available + empty + degraded)`，failed 剔除分母；聚合排除 `transport='console'`（管理台检索测试前端带 `X-Langhuan-Console-Search: 1` 头、仅 Session principal 识别）。北极星定在查询级而非文档级：本地文件"删了重传"会产生新 document 身份，文档级引用历史会断，查询 hash 是唯一跨内容变更稳定的锚。
+- **沉睡样本护栏**：窗口内完成 run 数 < 10 时不出沉睡清单（`insufficient_sample`）——零流量知识库会把全部内容误报为沉睡。
+- **新鲜度透出**：检索结果（REST/MCP，`detail` 两档一致）metadata 增 `document_updated_at` 与 web 文档的 `source_last_fetch_at`（RFC3339，缺失省略）；MCP `document_get`/`document_list` 同字段。排序零改动。
+
+设计文档：`docs/superpowers/specs/2026-10-27-v1.4.0-telemetry-freshness-design.md`。
+
 ## 9. 状态、删除与保留
 
 Document v2 状态固定为：

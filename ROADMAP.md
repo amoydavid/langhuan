@@ -518,6 +518,45 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 4. langhuan-eval 命中判定恒等：带/不带子块正文的排名逐位一致（表驱动单测对照 v1.1.x 行为）。
 5. `go test ./...`（50 包）、`make test-integration`（51 包，临时 docker PG）、web `pnpm check/test/build`（333 测试）全绿。
 
+### v1.3.0 - 网站内容源：知识库内多源网页爬取（已完成，补录）
+
+> 本条目为发版后补录（2026-10-27）；版本已发布（tag 双远程），设计规格与实现记录见 `docs/superpowers/specs/2026-09-16-v1.3.0-web-source-design.md` 与 `docs/superpowers/plans/2026-09-16-v1.3.0-web-source.md`。
+
+目标：知识库是检索域，网站是库内可管理的内容源——一个 KB 可挂多个网站源，页面与上传文件混居同一索引，一次检索覆盖全部。
+
+- `kb_sources` 实体（本版仅 kind='web'）：三模式导入（crawl 受限 BFS / sitemap / urls 列表）、可插拔引擎（http/render/firecrawl/jina + auto JS-shell 升级）、参数化正文抽取（go-readability + 整页回退）。
+- 三级增量检测（sitemap lastmod → ETag/Last-Modified 条件请求 → content_hash 兜底）、robots 遵守、per-host 限速、SSRF 分层防护（http 完整、render/provider 前置校验 + 文档明示降级）。
+- 源级编排：cron 调度（Meta Scheduler 60s tick）、全局在飞上限 `max_concurrent_syncs`、按源推导任务超时；源 CRUD/启停/删除（页面处置 keep/remove 二选一）。
+- Web Console「Web」子 tab：抓取请求列表 → 源详情（页面清单）→ 源表单/管理 URL 对话框；连接管理扩展 firecrawl/jina/browser provider + 连接测试。
+- Playwright 全栈 E2E（`make e2e-web`：真实后端 standalone SQLite + 内嵌 SPA + 本地站点桩）；firecrawl/Obscura 真实链路实测跑通。
+- 验收：T1–T19 全量 ACCEPTED，四项门禁全绿。
+
+### v1.4.0 - 检索遥测与知识健康回路（已完成）
+
+目标：把已发生但不可见的事实变成维护闭环——检索已经发生、同步已经发生、内容变更已经落库，缺的是"记录消费信号 + 聚合成可行动面板"。不新建任何变更检测（web/飞书/本地的检测在 v1.3.0 及更早已完备）。设计规格：`docs/superpowers/specs/2026-10-27-v1.4.0-telemetry-freshness-design.md`。
+
+**记录（旁路，异步）**：
+
+- `search_citations`：每次检索最终返回的结果行（chunk_revision 级、含 rank）在 SearchRun Finish 之后非阻塞投递、进程内有界缓冲批量落库；缓冲满丢批 + 计数（`insights_telemetry_dropped`），任何拥塞不反压检索路径；standalone 模式同样工作（不依赖 asynq）。
+- `search_query_log`（opt-in）：查询原文仅当 `knowledge_bases.query_log_enabled=true`（默认 false）时由投递侧构造写入——门控在构造时而非事后过滤；`search_runs` 继续零明文（v0.9.0 合同不变）。
+- 两表不建跨表级联 FK（D3）：引用历史必须活过 run 过期清理与文档清理（删除预警依赖），按 `insights.*_retention_days` 独立清理（35/30 天）。
+
+**洞察（健康 tab，Session owner/admin；API Key 不可达）**：
+
+- 空召回率北极星：`empty/(available+empty+degraded)`、failed 剔除分母、排除 `transport='console'`（管理台检索测试带 `X-Langhuan-Console-Search: 1` 头、仅 Session principal 识别）；环比文字表达。
+- 零召回查询 Top N（按 query_hash 聚合；开启原文后附最新原文 + 「创建 FAQ」预填入口）。
+- 沉睡内容（窗口前就绪 + 窗口内零引用 anti-join；样本护栏：完成 run<10 时 `insufficient_sample` 不出清单，防零流量全库误报）。
+- 内容动态 feed：源同步/文档新版本/软删三类事件 UNION，时间倒序，覆盖 web/飞书/本地/FAQ 四类来源。
+
+**行动与护栏（全部挂既有端点，唯一新写入口是开关本身）**：
+
+- 零召回 → 创建 FAQ（`?question=` 预填）、沉睡 → 查看（删除必须走既有删除流）。
+- 删除预警：`GET .../documents/:id/citation-summary`（prog 组）；DeleteDialog 在 citation_count>0 时插入预警块，请求失败静默降级——预警是增强不是闸门。
+- 强制重爬 UI：web 源「强制重爬」按钮调既有 `sync {"force":true}`（确认框说明成本）。
+- 新鲜度透出：检索结果 metadata 增 `document_updated_at`/`source_last_fetch_at`（RFC3339，缺失省略），MCP `knowledge_search`/`document_get`/`document_list` 同字段；排序零改动，`detail=lean` 尺寸断言重跑通过。
+
+验收标准（spec §11.5 九条，全 PASS，证据见实现计划 T19）：遥测旁路故障注入下检索响应逐位不变；`query_log_enabled=false` 时任何面零明文；零召回→FAQ→命中→环比变化的完整剧本走通；跨 workspace 404；五项门禁全绿。
+
 ## 暂不进入首版的能力
 
 - Chat/Agent/回答生成。

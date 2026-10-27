@@ -309,6 +309,27 @@ web 内容源（kb_sources.kind='web'）挂在知识库下管理：读操作 mem
 - Bearer API Key 调用上述任一接口返回 `401 unauthorized`（路由不注册到 progGroup）。
 - `app_secret` 经 AES-256-GCM 加密落库，List/Get/PATCH 响应绝不回显明文；轮换只接受新值替换旧密文。
 
+### 8.2.2 知识健康洞察与查询原文开关（v1.4.0）
+
+健康洞察端点全部为 **Session owner/admin**（浏览器管理台专用；API Key 不可达——健康信号是运营者视角，agent 消费的新鲜度经检索结果 metadata 满足）。均挂在 `GET/PUT /api/v1/workspaces/:workspace_slug/knowledge-bases/:kb_id/insights/...`：
+
+| 端点 | 说明 |
+|---|---|
+| `GET .../insights/overview?window_days=14` | 窗口状态计数、空召回率与环比、沉睡计数、变更计数、query_log_enabled |
+| `GET .../insights/queries?window_days=14&limit=10` | 零召回查询（按 query_hash 聚合；开启原文记录时附 latest_query_text） |
+| `GET .../insights/documents?limit=10` | 沉睡内容清单；样本不足时 `insufficient_sample=true` 且不出清单 |
+| `GET .../insights/activity?limit=20` | 内容动态（源同步/新版本/软删三类事件，时间倒序） |
+| `PUT .../insights/query-log-settings` `{"enabled":bool}` | 查询原文记录开关（默认关闭；开启即从当下积累，不回填历史） |
+
+引用摘要（prog 组，Bearer 或 Session，`documents:read` scope；删除预警与审计用）：
+
+```
+GET /api/v1/workspaces/:workspace_slug/knowledge-bases/:kb_id/documents/:document_id/citation-summary?window_days=30
+→ {"window_days":30,"citation_count":23,"last_cited_at":"2026-10-25T09:14:00Z"}
+```
+
+`window_days ∈ [1,31]`、list `limit ∈ [1,50]`、activity `limit ∈ [1,100]`，越界返回 validation error。隐私合同：`query_log_enabled=false` 的知识库，任何 API 响应、日志与界面均不出现查询原文。
+
 ## 8.3 OIDC 登录（内部 IdP、OIDC-first）
 
 琅嬛支持接入**企业内部受控 OIDC issuer**（Keycloak / Authentik / 自建 Dex 等），以 Authorization Code flow（PKCE S256 + OIDC nonce + id_token 验签）完成浏览器登录。OIDC 登录成功后复用既有 session cookie，`SessionAuth` 中间件与 API Key/MCP 程序化访问路径完全不变。
