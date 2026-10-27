@@ -77,6 +77,8 @@ type MultiKnowledgeSearchService struct {
 	mergeRRFK          int
 	searchRuns         SearchRunStore
 	searchRunRetention time.Duration
+	telemetry          *CitationRecorder
+	kbFlags            SearchKBFlagReader
 }
 
 // NewMultiKnowledgeSearchService 构造多知识库检索服务。
@@ -115,6 +117,14 @@ func NewMultiKnowledgeSearchService(
 		logger: logger, multiLimit: limit, multiConcurrency: concurrency, mergeRRFK: rrfK,
 		searchRuns: searchRuns, searchRunRetention: retention,
 	}
+}
+
+// WithTelemetry 注入引用遥测写入器与 KB 开关读取器（v1.4.0）。
+// 未注入时全部投递为 no-op；链式返回自身。
+func (s *MultiKnowledgeSearchService) WithTelemetry(telemetry *CitationRecorder, flags SearchKBFlagReader) *MultiKnowledgeSearchService {
+	s.telemetry = telemetry
+	s.kbFlags = flags
+	return s
 }
 
 // Search 执行多知识库检索。任一 Generation 无效、Provider 失败、维度不匹配或查询
@@ -263,6 +273,10 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 		status = value.RetrievalStatusDegraded
 	}
 	recorder.Finish(ctx, status, "", runRankingStage, runResultCount, runSnapshots)
+	// 遥测投递：Finish 之后、响应构造之前；非阻塞，不影响返回（spec §6）。
+	recordMultiKBTelemetry(ctx, s.telemetry, s.kbFlags, s.logger,
+		input.WorkspaceID, recorder.RunID(),
+		query, queryHash, results, orderedKBIDs, status)
 	summary := recorder.buildSummary(status, "", runRankingStage, runResultCount, orderedKBIDs, runSnapshots, requestedScope)
 	summary.CompletedAt = ptrTime(time.Now())
 	return &dto.SearchResponse{Run: summary, Results: results}, nil

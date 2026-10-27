@@ -42,7 +42,11 @@ type SearchServiceDeps struct {
 	SearchProfile      SearchProfileResolver
 	SearchRuns         SearchRunStore
 	SearchRunRetention time.Duration
-	Logger             *slog.Logger
+	// Telemetry 是引用遥测异步写入器；nil 表示遥测未装配（全部投递为 no-op）。
+	Telemetry *CitationRecorder
+	// KBFlags 读取 KB 级遥测开关（查询原文 opt-in）；nil 时不记明文。
+	KBFlags SearchKBFlagReader
+	Logger  *slog.Logger
 }
 
 // SearchService executes active-Generation vector/FTS retrieval and RRF fusion.
@@ -53,6 +57,8 @@ type SearchService struct {
 	searchProfile      SearchProfileResolver
 	searchRuns         SearchRunStore
 	searchRunRetention time.Duration
+	telemetry          *CitationRecorder
+	kbFlags            SearchKBFlagReader
 	logger             *slog.Logger
 }
 
@@ -69,7 +75,8 @@ func NewSearchService(deps SearchServiceDeps) *SearchService {
 	return &SearchService{
 		repository: deps.Repository, resolver: deps.Resolver,
 		rerankResolver: deps.RerankResolver, searchProfile: deps.SearchProfile,
-		searchRuns: deps.SearchRuns, searchRunRetention: retention, logger: logger,
+		searchRuns: deps.SearchRuns, searchRunRetention: retention,
+		telemetry: deps.Telemetry, kbFlags: deps.KBFlags, logger: logger,
 	}
 }
 
@@ -403,6 +410,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 	}
 	gens := []model.SearchRunGeneration{runGenerationSnapshot}
 	recorder.Finish(ctx, status, "", runRankingStage, runResultCount, gens)
+	// 遥测投递：Finish 之后、响应构造之前；非阻塞，不影响返回（spec §6）。
+	recordSingleKBTelemetry(ctx, s.telemetry, s.kbFlags, s.logger,
+		input.WorkspaceID, input.KnowledgeBaseID, recorder.RunID(),
+		query, queryHash, results, status)
 	summary := recorder.buildSummary(status, "", runRankingStage, runResultCount, []uuid.UUID{input.KnowledgeBaseID}, gens, value.SearchScopeSelected)
 	summary.CompletedAt = ptrTime(time.Now())
 	_ = runOptions

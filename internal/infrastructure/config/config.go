@@ -31,6 +31,7 @@ type Config struct {
 	WebSource     WebSourceConfig     `yaml:"web_source"`
 	Queue         QueueConfig         `yaml:"queue"`
 	Observability ObservabilityConfig `yaml:"observability"`
+	Insights      InsightsConfig      `yaml:"insights"`
 }
 
 // WebSourceConfig 描述 web 内容源（kb_sources.kind='web'）的进程级参数（spec §4.2）。
@@ -320,6 +321,21 @@ type RetrievalConfig struct {
 	// SearchRunRetention 是 SearchRun 元数据的保留期，默认 168 小时，
 	// 且不得长于 retired_generation_retention。
 	SearchRunRetention time.Duration `yaml:"search_run_retention"`
+}
+
+// InsightsConfig 描述检索遥测与知识健康回路的进程级参数（v1.4.0 spec §5.1）。
+type InsightsConfig struct {
+	// CitationRetentionDays 是 search_citations 引用遥测的保留期（天）。
+	CitationRetentionDays int `yaml:"citation_retention_days"`
+	// QueryLogRetentionDays 是 search_query_log 查询原文的保留期（天），
+	// 仅 query_log_enabled=true 的知识库有数据。
+	QueryLogRetentionDays int `yaml:"query_log_retention_days"`
+	// CitationBufferSize 是异步写入缓冲的最大批次数；缓冲满时丢批并计数。
+	CitationBufferSize int `yaml:"citation_buffer_size"`
+	// CitationFlushIntervalMs 是批量落库的最长等待间隔（毫秒）。
+	CitationFlushIntervalMs int `yaml:"citation_flush_interval_ms"`
+	// CitationFlushBatchSize 是单批落库的最大行数。
+	CitationFlushBatchSize int `yaml:"citation_flush_batch_size"`
 }
 
 // CredentialsConfig 描述持久化敏感凭证所使用的主密钥。
@@ -764,6 +780,21 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Retrieval.CleanupIntervalSeconds <= 0 {
 		c.Retrieval.CleanupIntervalSeconds = 3600
+	}
+	if c.Insights.CitationRetentionDays <= 0 {
+		c.Insights.CitationRetentionDays = 35
+	}
+	if c.Insights.QueryLogRetentionDays <= 0 {
+		c.Insights.QueryLogRetentionDays = 30
+	}
+	if c.Insights.CitationBufferSize <= 0 {
+		c.Insights.CitationBufferSize = 4096
+	}
+	if c.Insights.CitationFlushIntervalMs <= 0 {
+		c.Insights.CitationFlushIntervalMs = 500
+	}
+	if c.Insights.CitationFlushBatchSize <= 0 {
+		c.Insights.CitationFlushBatchSize = 200
 	}
 	if c.Observability.Traces.SampleRate <= 0 {
 		c.Observability.Traces.SampleRate = 1.0

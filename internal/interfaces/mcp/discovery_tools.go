@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 	"github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/value"
+	sourceport "github.com/dajee/langhuan/internal/ports/source"
 )
 
 const (
@@ -87,6 +89,8 @@ type documentListOutputItem struct {
 	Status       string `json:"status"`
 	ErrorMessage string `json:"error_message,omitempty"`
 	UpdatedAt    string `json:"updated_at"`
+	// SourceLastFetchAt 是 web 文档最近一次来源抓取时间（RFC3339）；非 web 或不可得时省略。
+	SourceLastFetchAt string `json:"source_last_fetch_at,omitempty"`
 }
 
 type documentListOutput struct {
@@ -148,7 +152,8 @@ func registerDocumentListTool(srv *mcpserver.MCPServer, deps Dependencies) {
 			items = append(items, documentListOutputItem{
 				ID: doc.ID.String(), Title: doc.Title, Kind: string(doc.Kind),
 				Status: string(doc.Status), ErrorMessage: doc.ErrorMessage,
-				UpdatedAt: doc.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+				UpdatedAt:         doc.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+				SourceLastFetchAt: sourceLastFetchAtOf(doc.SourceMeta),
 			})
 		}
 		return jsonResult(documentListOutput{
@@ -171,14 +176,16 @@ type documentOutlineEntry struct {
 }
 
 type documentGetOutput struct {
-	ID        string                 `json:"id"`
-	Title     string                 `json:"title"`
-	Kind      string                 `json:"kind"`
-	Status    string                 `json:"status"`
-	UpdatedAt string                 `json:"updated_at"`
-	Truncated bool                   `json:"truncated"`
-	Content   string                 `json:"content"`
-	Outline   []documentOutlineEntry `json:"outline"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	UpdatedAt string `json:"updated_at"`
+	// SourceLastFetchAt 是 web 文档最近一次来源抓取时间（RFC3339）；非 web 或不可得时省略。
+	SourceLastFetchAt string                 `json:"source_last_fetch_at,omitempty"`
+	Truncated         bool                   `json:"truncated"`
+	Content           string                 `json:"content"`
+	Outline           []documentOutlineEntry `json:"outline"`
 }
 
 func registerDocumentGetTool(srv *mcpserver.MCPServer, deps Dependencies) {
@@ -231,9 +238,24 @@ func registerDocumentGetTool(srv *mcpserver.MCPServer, deps Dependencies) {
 		return jsonResult(documentGetOutput{
 			ID: document.ID.String(), Title: document.Title, Kind: string(document.Kind),
 			Status: string(document.Status), UpdatedAt: document.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z"),
-			Truncated: truncated, Content: content, Outline: documentOutlineOf(document.NormalizedMarkdown),
+			SourceLastFetchAt: sourceLastFetchAtOf(document.SourceMeta),
+			Truncated:         truncated, Content: content, Outline: documentOutlineOf(document.NormalizedMarkdown),
 		}), nil
 	}))
+}
+
+// sourceLastFetchAtOf 从 documents.source_meta 投影解析 last_fetch_at（RFC3339）。
+// 键名合同来自 ports/source（SourceMetaLastFetchAt）；缺失/非法返回空串（省略字段）。
+func sourceLastFetchAtOf(meta map[string]any) string {
+	raw, _ := meta[sourceport.SourceMetaLastFetchAt].(string)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return ""
+	}
+	return parsed.UTC().Format(time.RFC3339)
 }
 
 // documentOutlineOf 从归一化 Markdown 的标题行生成章节大纲（信息等价于

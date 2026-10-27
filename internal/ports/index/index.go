@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -48,6 +49,10 @@ type SearchEvidence struct {
 	MatchedSearchContent                   string
 	MatchedSourceAnchor                    value.SourceAnchor
 	MatchedRole                            value.ChunkRole
+	// DocumentUpdatedAt 是文档最近更新时间（新鲜度元数据，v1.4.0）；nil 表示不可得。
+	DocumentUpdatedAt *time.Time
+	// SourceLastFetchAt 是 web 文档最近一次来源抓取时间（source_meta.last_fetch_at）；nil 表示非 web 或不可得。
+	SourceLastFetchAt *time.Time
 }
 
 // SearchReader performs candidate and evidence reads on one Workspace-bound transaction.

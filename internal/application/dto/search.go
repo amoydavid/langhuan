@@ -3,6 +3,7 @@ package dto
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -113,13 +114,21 @@ func SearchResultFromEvidence(
 ) *SearchResult {
 	anchorMap := searchSourceAnchorMap(evidence.SourceAnchor)
 	child := matchedChildFromEvidence(evidence, score, vectorScore, keywordScore)
+	metadata := cloneDTOMap(evidence.Metadata)
+	// 新鲜度元数据（v1.4.0 spec §4.6）：RFC3339 字符串；不可得时省略字段。
+	if evidence.DocumentUpdatedAt != nil {
+		metadata["document_updated_at"] = evidence.DocumentUpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if evidence.SourceLastFetchAt != nil {
+		metadata["source_last_fetch_at"] = evidence.SourceLastFetchAt.UTC().Format(time.RFC3339)
+	}
 	return &SearchResult{
 		ChunkID: evidence.ChunkID, ChunkRevisionID: evidence.ChunkRevisionID,
 		DocumentID: evidence.DocumentID, DocumentKind: evidence.DocumentKind,
 		Content: evidence.Content, DocumentName: evidence.DocumentName,
 		SourceAnchor: anchorMap, Score: score,
 		VectorScore: vectorScore, KeywordScore: keywordScore,
-		Metadata:           cloneDTOMap(evidence.Metadata),
+		Metadata:           metadata,
 		MatchedChildren:    []MatchedChild{child},
 		Evidence:           MatchedEvidenceOf(child),
 		DocumentRevisionID: evidence.DocumentRevisionID,

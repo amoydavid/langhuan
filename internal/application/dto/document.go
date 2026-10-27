@@ -10,26 +10,29 @@ import (
 )
 
 type Document struct {
-	ID                 uuid.UUID                `json:"id"`
-	WorkspaceID        uuid.UUID                `json:"workspace_id"`
-	KnowledgeBaseID    uuid.UUID                `json:"knowledge_base_id"`
-	Kind               value.DocumentKind       `json:"kind"`
-	Title              string                   `json:"title"`
-	SourceURI          string                   `json:"source_uri,omitempty"`
-	FileType           string                   `json:"file_type"`
-	SourceType         string                   `json:"source_type"`
-	Status             value.DocumentStatus     `json:"status"`
-	SHA256             string                   `json:"sha256"`
-	RawStorageKey      string                   `json:"-"`
-	SizeBytes          int64                    `json:"size_bytes"`
-	ContentType        string                   `json:"content_type"`
-	NormalizedMarkdown string                   `json:"normalized_markdown"`
-	Metadata           map[string]any           `json:"metadata"`
-	FAQQuestionCount   int                      `json:"faq_question_count,omitempty"`
-	ErrorMessage       string                   `json:"error_message"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
-	ActiveRevision     *DocumentRevisionSummary `json:"active_revision,omitempty"`
+	ID                 uuid.UUID            `json:"id"`
+	WorkspaceID        uuid.UUID            `json:"workspace_id"`
+	KnowledgeBaseID    uuid.UUID            `json:"knowledge_base_id"`
+	Kind               value.DocumentKind   `json:"kind"`
+	Title              string               `json:"title"`
+	SourceURI          string               `json:"source_uri,omitempty"`
+	FileType           string               `json:"file_type"`
+	SourceType         string               `json:"source_type"`
+	Status             value.DocumentStatus `json:"status"`
+	SHA256             string               `json:"sha256"`
+	RawStorageKey      string               `json:"-"`
+	SizeBytes          int64                `json:"size_bytes"`
+	ContentType        string               `json:"content_type"`
+	NormalizedMarkdown string               `json:"normalized_markdown"`
+	Metadata           map[string]any       `json:"metadata"`
+	// SourceMeta 是每文档抓取运行态投影（documents.source_meta）；REST 序列化省略
+	// （RawStorageKey 同类的内部字段），供 MCP document_get/document_list 提取新鲜度。
+	SourceMeta       map[string]any           `json:"-"`
+	FAQQuestionCount int                      `json:"faq_question_count,omitempty"`
+	ErrorMessage     string                   `json:"error_message"`
+	CreatedAt        time.Time                `json:"created_at"`
+	UpdatedAt        time.Time                `json:"updated_at"`
+	ActiveRevision   *DocumentRevisionSummary `json:"active_revision,omitempty"`
 }
 
 // DocumentRevisionSummary exposes safe revision facts without object-storage keys.
@@ -72,6 +75,7 @@ func DocumentFromModel(doc *model.Document) *Document {
 		ContentType:        doc.ContentType,
 		NormalizedMarkdown: doc.NormalizedMarkdown,
 		Metadata:           doc.Metadata,
+		SourceMeta:         doc.SourceMeta,
 		FAQQuestionCount:   doc.FAQQuestionCount,
 		ErrorMessage:       doc.ErrorMessage,
 		CreatedAt:          doc.CreatedAt,

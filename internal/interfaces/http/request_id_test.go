@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/application/requestmeta"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 func TestRequestIDMiddlewareAcceptsValidAndReplacesInvalid(t *testing.T) {
@@ -85,4 +86,48 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestMarkConsoleSearchOverridesTransportForSessionPrincipal(t *testing.T) {
+	t.Parallel()
+	newRouter := func(auth value.AuthContext) *gin.Engine {
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			if auth.PrincipalKind != "" {
+				c.Set("auth", auth)
+			}
+			c.Next()
+		}, RequestID(), func(c *gin.Context) {
+			markConsoleSearch(c)
+			meta := requestmeta.From(c.Request.Context())
+			c.JSON(http.StatusOK, meta)
+		})
+		router.GET("/", func(c *gin.Context) {})
+		return router
+	}
+
+	// Session principal + 标记头 → transport=console。
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(consoleSearchHeader, "1")
+	newRouter(value.AuthContext{UserID: uuid.New(), PrincipalKind: value.PrincipalUser}).ServeHTTP(rec, req)
+	if !contains(rec.Body.String(), `"Transport":"console"`) {
+		t.Fatalf("session + console header 应覆盖 transport=console，body = %s", rec.Body.String())
+	}
+
+	// API Key principal 携带该头 → 忽略，保持 rest。
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(consoleSearchHeader, "1")
+	newRouter(value.AuthContext{PrincipalKind: value.PrincipalAPIKey}).ServeHTTP(rec, req)
+	if !contains(rec.Body.String(), `"Transport":"rest"`) {
+		t.Fatalf("api_key 携带 console header 必须被忽略，body = %s", rec.Body.String())
+	}
+
+	// 无标记头 → 保持 rest。
+	rec = httptest.NewRecorder()
+	newRouter(value.AuthContext{UserID: uuid.New(), PrincipalKind: value.PrincipalUser}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !contains(rec.Body.String(), `"Transport":"rest"`) {
+		t.Fatalf("无 header 必须保持 rest，body = %s", rec.Body.String())
+	}
 }

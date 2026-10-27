@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -188,7 +189,8 @@ func (r *retrievalSearchReader) LoadEvidence(
 			"d.kind AS document_kind, COALESCE(parent_revision.content, re.content) AS content, re.search_content AS search_content, d.title AS document_title, "+
 			"ftn.name AS file_node_name, COALESCE(parent.source_anchor, re.source_anchor) AS source_anchor, COALESCE(parent.metadata, re.metadata) AS metadata, "+
 			"re.document_revision_id AS document_revision_id, "+
-			"re.chunk_id AS matched_chunk_id, re.chunk_revision_id AS matched_chunk_revision_id, re.content AS matched_content, re.search_content AS matched_search_content, re.source_anchor AS matched_source_anchor, child.role AS matched_role",
+			"re.chunk_id AS matched_chunk_id, re.chunk_revision_id AS matched_chunk_revision_id, re.content AS matched_content, re.search_content AS matched_search_content, re.source_anchor AS matched_source_anchor, child.role AS matched_role, "+
+			"d.updated_at AS document_updated_at, d.source_meta AS source_meta",
 	).Joins(
 		"JOIN chunks AS child ON child.workspace_id = re.workspace_id AND child.id = re.chunk_id",
 	).Joins(
@@ -243,9 +245,29 @@ func (r *retrievalSearchReader) LoadEvidence(
 			MatchedChunkID: row.MatchedChunkID, MatchedChunkRevisionID: row.MatchedChunkRevisionID,
 			MatchedContent: row.MatchedContent, MatchedSearchContent: row.MatchedSearchContent,
 			MatchedSourceAnchor: matchedAnchor, MatchedRole: matchedRole,
+			DocumentUpdatedAt: row.DocumentUpdatedAt,
+			// source_meta.last_fetch_at 为 RFC3339 UTC（ports/source 契约）；解析失败按不可得处理。
+			SourceLastFetchAt: lastFetchAtFromSourceMeta(row.SourceMeta),
 		}
 	}
 	return result, nil
+}
+
+// lastFetchAtFromSourceMeta 从 documents.source_meta jsonb 解析 last_fetch_at（RFC3339）。
+// 缺失或非法格式返回 nil（新鲜度字段按不可得省略）。
+func lastFetchAtFromSourceMeta(meta JSONMap) *time.Time {
+	if meta == nil {
+		return nil
+	}
+	raw, ok := meta["last_fetch_at"].(string)
+	if !ok || raw == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 type searchCandidateRow struct {
@@ -269,6 +291,8 @@ type searchEvidenceRow struct {
 	MatchedContent, MatchedSearchContent, MatchedRole string
 	FileNodeName                                      *string
 	SourceAnchor, Metadata, MatchedSourceAnchor       JSONMap
+	DocumentUpdatedAt                                 *time.Time
+	SourceMeta                                        JSONMap
 }
 
 func searchCandidatesFromRows(rows []searchCandidateRow) []indexport.SearchCandidate {

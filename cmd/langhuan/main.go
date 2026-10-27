@@ -167,6 +167,12 @@ type runtimeServices struct {
 	kbSources               *service.KbSourceService
 	search                  *service.SearchService
 	multiSearch             *service.MultiKnowledgeSearchService
+	citationRecorder        *service.CitationRecorder
+	telemetryRepo           *db.TelemetryRepository
+	telemetryCleanup        *service.InsightsTelemetryCleanupService
+	insightsQuery           *service.InsightsQueryService
+	queryLogSettings        *service.QueryLogSettingsService
+	citationSummary         *service.CitationSummaryService
 	searchReplay            *service.SearchReplayService
 	retrievalCleanup        *service.RetrievalCleanupService
 	searchRunCleanup        *service.SearchRunCleanupService
@@ -710,16 +716,34 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		searchRunRetention = service.DefaultSearchRunRetention
 	}
 	searchRunCleanup := service.NewSearchRunCleanupService(searchRunRepo)
+	// 检索遥测（v1.4.0）：引用血缘旁路落库 + opt-in 查询原文；异步批量，
+	// 缓冲满丢批可观测，任何拥塞不反压检索路径。
+	telemetryRepo := db.NewTelemetryRepository(gormDB)
+	telemetryCleanup := service.NewInsightsTelemetryCleanupService(
+		telemetryRepo,
+		time.Duration(cfg.Insights.CitationRetentionDays)*24*time.Hour,
+		time.Duration(cfg.Insights.QueryLogRetentionDays)*24*time.Hour,
+	)
+	insightsRepo := db.NewInsightsQueryRepository(gormDB)
+	insightsQuery := service.NewInsightsQueryService(insightsRepo, telemetryRepo, kbRepo, log)
+	queryLogSettings := service.NewQueryLogSettingsService(telemetryRepo, kbRepo)
+	citationSummary := service.NewCitationSummaryService(insightsRepo, kbRepo)
+	citationRecorder := service.NewCitationRecorder(telemetryRepo, service.CitationRecorderConfig{
+		BufferSize:     cfg.Insights.CitationBufferSize,
+		FlushInterval:  time.Duration(cfg.Insights.CitationFlushIntervalMs) * time.Millisecond,
+		FlushBatchSize: cfg.Insights.CitationFlushBatchSize,
+	}, log)
 	search := service.NewSearchService(service.SearchServiceDeps{
 		Repository: retrievalRepo, Resolver: embeddingResolver, RerankResolver: rerankResolver,
 		SearchProfile: workspaceSearchSettings, SearchRuns: searchRunRepo,
 		SearchRunRetention: searchRunRetention, Logger: log,
+		Telemetry: citationRecorder, KBFlags: telemetryRepo,
 	})
 	apiKeyNameStore := db.NewAPIKeyNameStoreDB(gormDB)
 	multiSearch := service.NewMultiKnowledgeSearchService(
 		retrievalRepo, embeddingResolver, rerankResolver, workspaceSearchSettings,
 		apiKeyNameStore, cfg.Search, log, searchRunRepo, searchRunRetention,
-	)
+	).WithTelemetry(citationRecorder, telemetryRepo)
 	searchReplay := service.NewSearchReplayService(service.SearchReplayDeps{
 		Runs: searchRunRepo, Repository: retrievalRepo, Resolver: embeddingResolver,
 		RerankResolver: rerankResolver, SearchProfile: workspaceSearchSettings,
@@ -915,6 +939,12 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 		kbSources:              kbSources,
 		search:                 search,
 		multiSearch:            multiSearch,
+		citationRecorder:       citationRecorder,
+		telemetryRepo:          telemetryRepo,
+		telemetryCleanup:       telemetryCleanup,
+		insightsQuery:          insightsQuery,
+		queryLogSettings:       queryLogSettings,
+		citationSummary:        citationSummary,
 		searchReplay:           searchReplay,
 		retrievalCleanup:       retrievalCleanup,
 		searchRunCleanup:       searchRunCleanup,
@@ -1134,6 +1164,9 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		Jobs:                      services.jobs,
 		SourceConnections:         services.sourceConnections,
 		WebSources:                services.kbSources,
+		Insights:                  services.insightsQuery,
+		QueryLogSettings:          services.queryLogSettings,
+		CitationSummary:           services.citationSummary,
 		MCPHandler:                mcpServer.Handler(),
 		SPA:                       webspa.SPA,
 		MaxFileSizeBytes:          services.maxFileSize,
@@ -1257,7 +1290,7 @@ func (a *appRuntime) startWorkerBackgroundJobs(ctx context.Context, log *slog.Lo
 	// 避免 rebuildable 数据无限增长。
 	if a.services.retrievalCleanup != nil && a.cfg.Retrieval.CleanupIntervalSeconds > 0 {
 		interval := time.Duration(a.cfg.Retrieval.CleanupIntervalSeconds) * time.Second
-		go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, a.services.searchRunCleanup, a.cfg.Retrieval.CleanupBatchSize, interval, log)
+		go runRetrievalCleanupLoop(ctx, a.services.retrievalCleanup, a.services.searchRunCleanup, a.services.telemetryCleanup, a.cfg.Retrieval.CleanupBatchSize, interval, log)
 	}
 }
 
@@ -1270,6 +1303,10 @@ func (a *appRuntime) shutdown(ctx context.Context) error {
 	}
 	if a.httpServer != nil {
 		capture(a.httpServer.Shutdown(ctx))
+	}
+	if a.services.citationRecorder != nil {
+		// 遥测 flusher 残量落库；ctx 超时后放弃剩余批次（丢批可接受）。
+		a.services.citationRecorder.Close(ctx)
 	}
 	if a.memoryQueue != nil {
 		// 内存队列：等待运行中任务到 ctx 超时。

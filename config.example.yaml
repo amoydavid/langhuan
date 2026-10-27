@@ -227,3 +227,14 @@ observability:
     endpoint: ""                  # 例：otel-collector:4317（grpc）或 otel-collector:4318（http）
     protocol: grpc                # grpc（默认）或 http
     insecure: true                # 本地/内网 Collector 禁用 TLS
+
+# 检索遥测与知识健康回路（v1.4.0）。
+# 引用遥测（search_citations）与 opt-in 查询原文（search_query_log，仅
+# knowledge_bases.query_log_enabled=true 的库写入）按各自保留期独立清理，
+# 不随 search_run 过期级联（删除预警依赖引用历史活过 run 清理）。
+insights:
+  citation_retention_days: 35    # 引用遥测保留期（天），覆盖"近 30 天"口径 + 余量
+  query_log_retention_days: 30   # 查询原文保留期（天），仅 opt-in 知识库有数据
+  citation_buffer_size: 4096     # 异步写入缓冲的最大批次数；缓冲满时丢批并计数
+  citation_flush_interval_ms: 500  # 批量落库最长等待间隔（毫秒）
+  citation_flush_batch_size: 200   # 单批落库最大行数

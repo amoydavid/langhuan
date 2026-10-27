@@ -71,6 +71,7 @@ func (h searchHandler) search(c *gin.Context) {
 	if !ok {
 		return
 	}
+	markConsoleSearch(c)
 	knowledgeBaseID, ok := parseUUIDParam(c, "id")
 	if !ok {
 		return
@@ -135,6 +136,7 @@ func (h searchHandler) multiSearchHandler(c *gin.Context) {
 		writeError(c, stdhttp.StatusNotImplemented, "not_implemented", "多知识库检索未启用")
 		return
 	}
+	markConsoleSearch(c)
 	var request multiSearchRequest
 	if err := decodeStrictJSON(c, &request); err != nil {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "检索参数无效")

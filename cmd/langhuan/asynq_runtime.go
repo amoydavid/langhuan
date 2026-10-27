@@ -22,6 +22,7 @@ func runRetrievalCleanupLoop(
 	ctx context.Context,
 	cleanup *service.RetrievalCleanupService,
 	searchRunCleanup *service.SearchRunCleanupService,
+	telemetryCleanup *service.InsightsTelemetryCleanupService,
 	batchSize int,
 	interval time.Duration,
 	log *slog.Logger,

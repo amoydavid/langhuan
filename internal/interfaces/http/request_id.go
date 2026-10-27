@@ -66,3 +66,21 @@ func MCPTransport() gin.HandlerFunc {
 }
 
 // requestIDTransportMarker 用于测试暴露 transport 设置时机。
+
+// consoleSearchHeader 标记管理台检索测试流量（v1.4.0 健康口径）：
+// 仅 Session principal 识别；API Key/MCP 携带该头一律忽略。
+const consoleSearchHeader = "X-Langhuan-Console-Search"
+
+// markConsoleSearch 若请求来自管理台检索测试（Session principal + 标记头），
+// 把 requestmeta.transport 覆盖为 console，供健康聚合排除调试流量。
+func markConsoleSearch(c *gin.Context) {
+	if c.GetHeader(consoleSearchHeader) != "1" {
+		return
+	}
+	if authCtx, ok := authFromContext(c); !ok || authCtx.IsAPIKey() {
+		return
+	}
+	meta := requestmeta.From(c.Request.Context())
+	meta.Transport = "console"
+	c.Request = c.Request.WithContext(requestmeta.With(c.Request.Context(), meta))
+}
