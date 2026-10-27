@@ -62,6 +62,9 @@ type Dependencies struct {
 	Jobs                      JobQueryService
 	SourceConnections         SourceConnectionService
 	WebSources                WebSourceService
+	Insights                  InsightsHTTPService
+	QueryLogSettings          QueryLogSettingsHTTPService
+	CitationSummary           CitationSummaryHTTPService
 	MCPHandler                stdhttp.Handler
 	SPA                       fs.FS
 	MaxFileSizeBytes          int64
@@ -574,6 +577,29 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			sourceWrite.PATCH("/:source_id", wsSourceH.update)
 			sourceWrite.POST("/:source_id/sync", wsSourceH.sync)
 			sourceWrite.DELETE("/:source_id", wsSourceH.delete)
+		}
+
+		// 健康洞察（v1.4.0 spec §7）：Session owner/admin，API Key 不可达——
+		// 健康信号是运营者视角，agent 消费的新鲜度经检索响应 metadata 满足。
+		if deps.Insights != nil {
+			insightsH := newInsightsHandler(deps.Insights, deps.QueryLogSettings)
+			insightsGroup := wsGroup.Group("/knowledge-bases/:id/insights")
+			insightsGroup.Use(RequireWorkspaceRole(value.RoleAdmin))
+			{
+				insightsGroup.GET("/overview", insightsH.getOverview)
+				insightsGroup.GET("/queries", insightsH.getQueries)
+				insightsGroup.GET("/documents", insightsH.getDocuments)
+				insightsGroup.GET("/activity", insightsH.getActivity)
+				insightsGroup.PUT("/query-log-settings", insightsH.putQueryLogSettings)
+			}
+		}
+
+		// 文档引用摘要（v1.4.0 删除预警）：prog 组，与文档读取同 scope。
+		if deps.CitationSummary != nil {
+			citationH := newCitationSummaryHandler(deps.CitationSummary)
+			progGroup.GET("/knowledge-bases/:id/documents/:document_id/citation-summary",
+				RequireScopeForAPIKey(value.ScopeDocumentsRead), RequireKnowledgeBaseForAPIKey("id"),
+				citationH.get)
 		}
 
 		// owner-only routes.

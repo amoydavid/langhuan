@@ -82,6 +82,7 @@ func (b *specBuilder) allOps() []op {
 	ops = append(ops, b.modelOps()...)
 	ops = append(ops, b.sourceConnectionOps()...)
 	ops = append(ops, b.webSourceOps()...)
+	ops = append(ops, b.insightsOps()...)
 	ops = append(ops, b.apiKeyOps()...)
 	ops = append(ops, b.apiKeySelfOps()...)
 	ops = append(ops, b.membershipOps()...)
@@ -584,6 +585,35 @@ func (b *specBuilder) webSourceOps() []op {
 	}
 }
 
+// insightsOps 声明知识健康洞察路由（v1.4.0 spec §7）。Session owner/admin 专用
+// （API Key 不可达）；citation-summary 在 prog 组（Bearer documents:read）。
+func (b *specBuilder) insightsOps() []op {
+	return []op{
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/insights/overview", tag: "知识健康", summary: "健康总览（空召回率与环比）",
+			respBody: service.InsightsOverview{}, status: http.StatusOK, sec: secSessionAdminRole,
+			params:      []openapiParam{{name: "window_days", in: "query", typeName: "integer", defaultValue: "14"}},
+			description: "口径：empty/(available+empty+degraded)，failed 剔除分母，排除管理台检索测试流量。"},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/insights/queries", tag: "知识健康", summary: "零召回查询 Top N",
+			respBody: map[string]any{}, status: http.StatusOK, sec: secSessionAdminRole,
+			params:      []openapiParam{{name: "window_days", in: "query", typeName: "integer", defaultValue: "14"}, {name: "limit", in: "query", typeName: "integer", defaultValue: "10"}},
+			description: "按 query_hash 聚合；仅 query_log_enabled=true 时附 latest_query_text（明文只在本端点出现）。"},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/insights/documents", tag: "知识健康", summary: "沉睡内容清单",
+			respBody: map[string]any{}, status: http.StatusOK, sec: secSessionAdminRole,
+			params:      []openapiParam{{name: "limit", in: "query", typeName: "integer", defaultValue: "10"}},
+			description: "窗口固定 30 天；完成 run<10 时 insufficient_sample=true 且不出清单。"},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/insights/activity", tag: "知识健康", summary: "内容动态 feed",
+			respBody: map[string]any{}, status: http.StatusOK, sec: secSessionAdminRole,
+			params:      []openapiParam{{name: "limit", in: "query", typeName: "integer", defaultValue: "20"}},
+			description: "源同步/文档新版本/软删三类事件，时间倒序。"},
+		{method: http.MethodPut, path: wsBase + "/knowledge-bases/:id/insights/query-log-settings", tag: "知识健康", summary: "查询原文记录开关",
+			reqBody: map[string]any{"enabled": true}, respBody: map[string]any{"enabled": true, "retention_days": 30}, status: http.StatusOK, sec: secSessionAdminRole,
+			description: "默认关闭；开启即从当下积累，不回填历史。关闭后历史原文随保留期清除。"},
+		{method: http.MethodGet, path: wsBase + "/knowledge-bases/:id/documents/:document_id/citation-summary", tag: "知识健康", summary: "文档引用摘要（删除预警）",
+			respBody: map[string]any{}, status: http.StatusOK, sec: secBearerOrSession, requiredScopes: []value.APIScope{value.ScopeDocumentsRead},
+			params:      []openapiParam{{name: "window_days", in: "query", typeName: "integer", defaultValue: "30"}},
+			description: "窗口内被返回次数与最近引用时间；引用历史活过 run 清理与文档清理（D3）。"},
+	}
+}
 func (b *specBuilder) apiKeyOps() []op {
 	base := wsBase + "/api-keys"
 	return []op{
