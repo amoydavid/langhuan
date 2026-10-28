@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { CircleCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -59,7 +60,6 @@ export function ZeroRecallQueries({
   enablePending,
 }: ZeroRecallQueriesProps) {
   const { t } = useTranslation()
-  const base = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}`
 
   if (queries.length === 0) {
     // 面板级空态是好状态（spec §9.4）；未开启记录时仍保留提示条与开启入口。
@@ -161,18 +161,22 @@ export function ZeroRecallQueries({
                       {item.latest_query_text ? (
                         <div className='flex items-center gap-1'>
                           <Button variant='outline' size='sm' asChild>
-                            <a
-                              href={`${base}/content/faq/new?question=${encodeURIComponent(item.latest_query_text)}`}
+                            <Link
+                              to='/workspaces/$workspaceSlug/kb/$kbId/content/faq/new'
+                              params={{ workspaceSlug, kbId }}
+                              search={{ question: item.latest_query_text }}
                             >
                               {t('insights.zeroRecall.createFaq')}
-                            </a>
+                            </Link>
                           </Button>
                           <Button variant='ghost' size='sm' asChild>
-                            <a
-                              href={`${base}/search?q=${encodeURIComponent(item.latest_query_text)}`}
+                            <Link
+                              to='/workspaces/$workspaceSlug/kb/$kbId/search'
+                              params={{ workspaceSlug, kbId }}
+                              search={{ q: item.latest_query_text }}
                             >
                               {t('insights.zeroRecall.testSearch')}
-                            </a>
+                            </Link>
                           </Button>
                         </div>
                       ) : (

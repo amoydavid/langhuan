@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { FilePenLine, RefreshCw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -124,8 +125,8 @@ export function ContentActivity({
               )
               return (
                 <li key={`${event.kind}-${event.occurred_at}-${index}`}>
-                  <a
-                    href={activityEventHref(event, workspaceSlug, kbId)}
+                  <Link
+                    to={activityEventHref(event, workspaceSlug, kbId)}
                     className='flex flex-col gap-2 py-3 transition-colors first:pt-0 last:pb-0 hover:text-primary sm:flex-row sm:items-center sm:justify-between'
                   >
                     <div className='flex min-w-0 items-start gap-2'>
@@ -155,7 +156,7 @@ export function ContentActivity({
                         {formatTime(event.occurred_at)}
                       </span>
                     </div>
-                  </a>
+                  </Link>
                 </li>
               )
             })}

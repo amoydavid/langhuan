@@ -1,4 +1,42 @@
+import type * as React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+// Link 的最小 <a> 替身（项目既有惯例，见 web-source-card/knowledge-base-form 测试）：
+// 替换 $params 并把 search 拼为 querystring，保持 href 断言语义。
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    children,
+    to,
+    params,
+    search,
+    ...props
+  }: React.ComponentProps<'a'> & {
+    to: string
+    params?: Record<string, string>
+    search?: Record<string, string | undefined>
+  }) => (
+    <a
+      href={
+        Object.entries(params ?? {}).reduce<string>(
+          (acc, [key, value]) => acc.replace(`$${key}`, value),
+          to
+        ) +
+        (search
+          ? `?${new URLSearchParams(
+              Object.entries(search).filter(([, v]) => v !== undefined) as [
+                string,
+                string,
+              ][]
+            ).toString()}`
+          : '')
+      }
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+}))
+
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
 import type { ZeroRecallQuery } from '../types'

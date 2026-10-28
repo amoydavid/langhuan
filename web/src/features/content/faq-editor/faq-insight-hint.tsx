@@ -19,9 +19,12 @@ export function FAQInsightHint({ question }: FAQInsightHintProps) {
       className='flex items-start gap-2 rounded-lg border bg-muted/20 p-3'
     >
       <Info className='mt-0.5 size-4 shrink-0 text-muted-foreground' />
-      <p className='text-muted-foreground text-sm'>
-        {t('contentFaq.insight.hint')}
-      </p>
+      <div className='min-w-0 text-muted-foreground text-sm'>
+        <p>{t('contentFaq.insight.hint')}</p>
+        <p className='mt-1 truncate font-medium text-foreground/80'>
+          「{question}」
+        </p>
+      </div>
     </div>
   )
 }

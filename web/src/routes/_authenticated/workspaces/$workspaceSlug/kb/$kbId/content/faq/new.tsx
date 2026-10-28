@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -47,10 +47,10 @@ function FAQCreatePage() {
           </p>
         </div>
         <Button asChild variant='outline'>
-          <a href={listHref}>
+          <Link to={listHref}>
             <ArrowLeft />
             {t('routes.workspaces.kb.content.faq.new.backToList')}
-          </a>
+          </Link>
         </Button>
       </div>
       <FAQInsightHint question={prefillQuestion} />
@@ -77,7 +77,7 @@ function FAQCreatePage() {
             toast.success(t('contentFaq.insight.savedToast'), {
               action: {
                 label: t('contentFaq.insight.backToHealth'),
-                onClick: () => window.location.assign(healthHref),
+                onClick: () => void navigate({ to: healthHref }),
               },
             })
           }

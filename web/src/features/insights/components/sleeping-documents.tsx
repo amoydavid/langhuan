@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { ArrowRight, CircleAlert, FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { StatusBadge } from '@/components/status-badge'
@@ -114,18 +115,14 @@ export function SleepingDocuments({
                     </TableCell>
                     <TableCell>
                       <Button variant='ghost' size='icon' asChild>
-                        <a
-                          href={canonicalSleepingHref(
-                            workspaceSlug,
-                            kbId,
-                            item
-                          )}
+                        <Link
+                          to={canonicalSleepingHref(workspaceSlug, kbId, item)}
                           aria-label={t('insights.sleeping.viewAriaLabel', {
                             name: item.title,
                           })}
                         >
                           <ArrowRight />
-                        </a>
+                        </Link>
                       </Button>
                     </TableCell>
                   </TableRow>
