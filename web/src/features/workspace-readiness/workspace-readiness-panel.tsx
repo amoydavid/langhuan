@@ -34,20 +34,42 @@ type WorkspaceReadinessPanelProps = {
   canManageInvitations: boolean
 }
 
+type NextActionLink =
+  | {
+      to: '/workspaces/$workspaceSlug/models'
+      params: { workspaceSlug: string }
+    }
+  | {
+      to: '/workspaces/$workspaceSlug/kb/new'
+      params: { workspaceSlug: string }
+    }
+  | {
+      to: '/workspaces/$workspaceSlug/kb'
+      params: { workspaceSlug: string }
+    }
+  | {
+      to: '/workspaces/$workspaceSlug/kb/$kbId/documents/new'
+      params: { workspaceSlug: string; kbId: string }
+    }
+  | {
+      to: '/workspaces/$workspaceSlug/documents/$documentId'
+      params: { workspaceSlug: string; documentId: string }
+    }
+  | {
+      to: '/workspaces/$workspaceSlug/kb/$kbId'
+      params: { workspaceSlug: string; kbId: string }
+    }
+  | {
+      to: '/workspaces/$workspaceSlug/kb/$kbId/search'
+      params: { workspaceSlug: string; kbId: string }
+    }
+
 type NextAction = {
   eyebrow: string
   title: string
   description: string
   label?: string
-  href?: string
-}
-
-function workspacePath(workspaceSlug: string) {
-  return `/workspaces/${encodeURIComponent(workspaceSlug)}`
-}
-
-function knowledgeBasePath(workspaceSlug: string, kbId: string) {
-  return `${workspacePath(workspaceSlug)}/kb/${encodeURIComponent(kbId)}`
+  link?: NextActionLink
 }
 
 function ReadinessRow({
@@ -95,7 +117,6 @@ export function WorkspaceReadinessPanel({
   const counts = readiness.document_counts
 
   function nextAction(): NextAction {
-    const base = workspacePath(workspaceSlug)
     const kbName =
       readiness.recommended_knowledge_base_name ||
       t('workspaceReadiness.recentKnowledgeBase')
@@ -115,7 +136,10 @@ export function WorkspaceReadinessPanel({
                 'workspaceReadiness.nextAction.provider.description'
               ),
               label: t('workspaceReadiness.nextAction.provider.label'),
-              href: `${base}/models`,
+              link: {
+                to: '/workspaces/$workspaceSlug/models',
+                params: { workspaceSlug },
+              },
             }
           : {
               eyebrow: t('workspaceReadiness.nextAction.waitingAdmin'),
@@ -135,7 +159,10 @@ export function WorkspaceReadinessPanel({
                 'workspaceReadiness.nextAction.embeddingModel.description'
               ),
               label: t('workspaceReadiness.nextAction.embeddingModel.label'),
-              href: `${base}/models`,
+              link: {
+                to: '/workspaces/$workspaceSlug/models',
+                params: { workspaceSlug },
+              },
             }
           : {
               eyebrow: t('workspaceReadiness.nextAction.waitingAdmin'),
@@ -154,7 +181,10 @@ export function WorkspaceReadinessPanel({
             'workspaceReadiness.nextAction.knowledgeBase.description'
           ),
           label: t('workspaceReadiness.nextAction.knowledgeBase.label'),
-          href: `${base}/kb/new`,
+          link: {
+            to: '/workspaces/$workspaceSlug/kb/new',
+            params: { workspaceSlug },
+          },
         }
       case 'add_content':
         return {
@@ -168,9 +198,15 @@ export function WorkspaceReadinessPanel({
             'workspaceReadiness.nextAction.addContent.description'
           ),
           label: t('workspaceReadiness.nextAction.addContent.label'),
-          href: kbId
-            ? `${knowledgeBasePath(workspaceSlug, kbId)}/documents/new`
-            : `${base}/kb`,
+          link: kbId
+            ? {
+                to: '/workspaces/$workspaceSlug/kb/$kbId/documents/new',
+                params: { workspaceSlug, kbId },
+              }
+            : {
+                to: '/workspaces/$workspaceSlug/kb',
+                params: { workspaceSlug },
+              },
         }
       case 'wait_for_processing':
         return {
@@ -182,11 +218,20 @@ export function WorkspaceReadinessPanel({
           }),
           description: t('workspaceReadiness.nextAction.waiting.description'),
           label: t('workspaceReadiness.nextAction.waiting.label'),
-          href: documentId
-            ? `${base}/documents/${encodeURIComponent(documentId)}`
+          link: documentId
+            ? {
+                to: '/workspaces/$workspaceSlug/documents/$documentId',
+                params: { workspaceSlug, documentId },
+              }
             : kbId
-              ? knowledgeBasePath(workspaceSlug, kbId)
-              : `${base}/kb`,
+              ? {
+                  to: '/workspaces/$workspaceSlug/kb/$kbId',
+                  params: { workspaceSlug, kbId },
+                }
+              : {
+                  to: '/workspaces/$workspaceSlug/kb',
+                  params: { workspaceSlug },
+                },
         }
       case 'resolve_failed_document':
         return {
@@ -196,11 +241,20 @@ export function WorkspaceReadinessPanel({
           title: documentName,
           description: t('workspaceReadiness.nextAction.failed.description'),
           label: t('workspaceReadiness.nextAction.failed.label'),
-          href: documentId
-            ? `${base}/documents/${encodeURIComponent(documentId)}`
+          link: documentId
+            ? {
+                to: '/workspaces/$workspaceSlug/documents/$documentId',
+                params: { workspaceSlug, documentId },
+              }
             : kbId
-              ? knowledgeBasePath(workspaceSlug, kbId)
-              : `${base}/kb`,
+              ? {
+                  to: '/workspaces/$workspaceSlug/kb/$kbId',
+                  params: { workspaceSlug, kbId },
+                }
+              : {
+                  to: '/workspaces/$workspaceSlug/kb',
+                  params: { workspaceSlug },
+                },
         }
       case 'test_retrieval':
         return {
@@ -214,9 +268,15 @@ export function WorkspaceReadinessPanel({
             'workspaceReadiness.nextAction.testRetrieval.description'
           ),
           label: t('workspaceReadiness.nextAction.testRetrieval.label'),
-          href: kbId
-            ? `${knowledgeBasePath(workspaceSlug, kbId)}/search`
-            : `${base}/kb`,
+          link: kbId
+            ? {
+                to: '/workspaces/$workspaceSlug/kb/$kbId/search',
+                params: { workspaceSlug, kbId },
+              }
+            : {
+                to: '/workspaces/$workspaceSlug/kb',
+                params: { workspaceSlug },
+              },
         }
       case 'none':
         return {
@@ -244,12 +304,12 @@ export function WorkspaceReadinessPanel({
               {action.description}
             </p>
           </div>
-          {action.href && action.label && (
+          {action.link && action.label && (
             <Button asChild className='shrink-0'>
-              <a href={action.href}>
+              <Link to={action.link.to} params={action.link.params}>
                 {action.label}
                 <ArrowRight />
-              </a>
+              </Link>
             </Button>
           )}
         </CardContent>
@@ -411,12 +471,16 @@ export function WorkspaceReadinessPanel({
             )}
             {readiness.recommended_knowledge_base_id && (
               <Button variant='outline' asChild className='justify-start'>
-                <a
-                  href={`${knowledgeBasePath(workspaceSlug, readiness.recommended_knowledge_base_id)}/search`}
+                <Link
+                  to='/workspaces/$workspaceSlug/kb/$kbId/search'
+                  params={{
+                    workspaceSlug,
+                    kbId: readiness.recommended_knowledge_base_id,
+                  }}
                 >
                   <Search />
                   {t('workspaceReadiness.quickLinks.searchTest')}
-                </a>
+                </Link>
               </Button>
             )}
           </CardContent>

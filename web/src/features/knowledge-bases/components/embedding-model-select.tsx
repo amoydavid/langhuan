@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { Boxes, Building2 } from 'lucide-react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -93,12 +94,14 @@ export function EmbeddingModelSelect({
           {canManage ? (
             <p>
               {t('knowledgeBases.embeddingModelSelect.noModelsManageable')}{' '}
-              <a
-                href={`/workspaces/${encodeURIComponent(workspaceSlug)}/models`}
+              <Link
+                to='/workspaces/$workspaceSlug/models'
+                params={{ workspaceSlug }}
+                search={{}}
                 className='font-medium text-primary hover:underline'
               >
                 {t('knowledgeBases.embeddingModelSelect.configureModelsLink')}
-              </a>
+              </Link>
             </p>
           ) : (
             <p>{t('knowledgeBases.embeddingModelSelect.noModelsMember')}</p>

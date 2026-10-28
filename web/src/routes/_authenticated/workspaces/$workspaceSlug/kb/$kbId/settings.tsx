@@ -59,7 +59,7 @@ function SettingsPage() {
       canManage={canManage}
       saveBasics={(input) => mutation.mutateAsync(input)}
       copyText={(text) => navigator.clipboard.writeText(text)}
-      buildIndexHref={`/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/indexes?create=true`}
+      workspaceSlug={workspaceSlug}
     />
   )
 }

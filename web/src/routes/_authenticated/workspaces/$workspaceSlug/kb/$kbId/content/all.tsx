@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { Plus, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
@@ -132,20 +132,24 @@ function ContentAllPage() {
         {canManage && (
           <div className='flex flex-wrap gap-2'>
             <Button asChild variant='outline'>
-              <a
-                href={`/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/files?upload=true`}
+              <Link
+                to='/workspaces/$workspaceSlug/kb/$kbId/content/files'
+                params={{ workspaceSlug, kbId }}
+                search={{ upload: true }}
               >
                 <Upload />
                 {t('routes.workspaces.kb.content.all.uploadButton')}
-              </a>
+              </Link>
             </Button>
             <Button asChild>
-              <a
-                href={`/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/faq/new`}
+              <Link
+                to='/workspaces/$workspaceSlug/kb/$kbId/content/faq/new'
+                params={{ workspaceSlug, kbId }}
+                search={{}}
               >
                 <Plus />
                 {t('routes.workspaces.kb.content.all.newFaqButton')}
-              </a>
+              </Link>
             </Button>
           </div>
         )}

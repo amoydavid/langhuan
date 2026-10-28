@@ -1,10 +1,35 @@
+import type * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { userEvent } from 'vitest/browser'
 import { render } from 'vitest-browser-react'
-import { ModelProviderDetailContent } from './model-provider-detail-page'
-import type { ModelProvider } from './types'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+
+// Link 的最小 <a> 替身（项目既有惯例，见 content-activity/web-source-card 测试）。
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    children,
+    to,
+    params,
+    ...props
+  }: React.ComponentProps<'a'> & {
+    to: string
+    params?: Record<string, string>
+  }) => (
+    <a
+      href={Object.entries(params ?? {}).reduce<string>(
+        (acc, [key, value]) => acc.replace(`$${key}`, value),
+        to
+      )}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+}))
+
+import { ModelProviderDetailContent } from './model-provider-detail-page'
+import type { ModelProvider } from './types'
 
 const provider: ModelProvider = {
   id: 'provider-1',

@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { KeyRound, PlugZap } from 'lucide-react'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
@@ -8,16 +9,6 @@ type ProviderCatalogProps = {
   routeScope: ModelScope
   workspaceSlug?: string
   isPending?: boolean
-}
-
-function detailHref(
-  provider: ModelProvider,
-  routeScope: ModelScope,
-  workspaceSlug?: string
-) {
-  return routeScope === 'platform'
-    ? `/admin/models/${provider.id}`
-    : `/workspaces/${encodeURIComponent(workspaceSlug ?? '')}/models/${provider.id}`
 }
 
 function capabilityLabel(capability: string) {
@@ -54,9 +45,21 @@ export function ProviderCatalog({
           provider.capabilities.length === 1 &&
           provider.capabilities[0] === 'parser'
         return (
-          <a
+          <Link
             key={provider.id}
-            href={detailHref(provider, routeScope, workspaceSlug)}
+            to={
+              routeScope === 'platform'
+                ? '/admin/models/$providerId'
+                : '/workspaces/$workspaceSlug/models/$providerId'
+            }
+            params={
+              routeScope === 'platform'
+                ? { providerId: provider.id }
+                : {
+                    workspaceSlug: workspaceSlug ?? '',
+                    providerId: provider.id,
+                  }
+            }
             className='group grid gap-4 rounded-xl border p-4 transition-colors hover:bg-muted/30 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] md:items-center'
           >
             <div className='min-w-0'>
@@ -105,7 +108,7 @@ export function ProviderCatalog({
                 {provider.status === 'active' ? '运行中' : '已停用'}
               </StatusBadge>
             </div>
-          </a>
+          </Link>
         )
       })}
     </div>

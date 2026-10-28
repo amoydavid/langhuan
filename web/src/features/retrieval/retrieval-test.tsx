@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { Search } from 'lucide-react'
 import { type FormEvent, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -123,19 +124,13 @@ function sourceAnchorLabel(anchor: Record<string, unknown>) {
   return i18n.t('retrieval.test.anchor.unknown')
 }
 
-function resultBasePath(
-  workspaceSlug: string,
-  kbId: string,
-  result: RetrievalResult
-) {
-  const base = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content`
-  if (result.document_kind === 'faq') {
-    return `${base}/faq/${encodeURIComponent(result.document_id)}`
-  }
-  if (result.document_kind === 'web') {
-    return `${base}/web/${encodeURIComponent(result.document_id)}`
-  }
-  return `${base}/files/${encodeURIComponent(result.document_id)}`
+/** 检索结果来源的规范详情路由模式（file 归入 files 轨道），供类型化 Link 使用。 */
+function resultDetailTo(kind: RetrievalResult['document_kind']) {
+  if (kind === 'faq')
+    return '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId'
+  if (kind === 'web')
+    return '/workspaces/$workspaceSlug/kb/$kbId/content/web/$documentId'
+  return '/workspaces/$workspaceSlug/kb/$kbId/content/files/$documentId'
 }
 
 function score(value: number | undefined) {
@@ -386,7 +381,6 @@ export function RetrievalTest({
           )}
 
           {results.map((result, index) => {
-            const basePath = resultBasePath(workspaceSlug, kbId, result)
             const heading =
               typeof result.metadata.heading === 'string'
                 ? result.metadata.heading
@@ -494,16 +488,34 @@ export function RetrievalTest({
                     </span>
                     <span className='ms-auto flex gap-2'>
                       <Button asChild variant='outline' size='sm'>
-                        <a href={basePath}>
+                        <Link
+                          to={resultDetailTo(result.document_kind)}
+                          params={{
+                            workspaceSlug,
+                            kbId,
+                            documentId: result.document_id,
+                          }}
+                        >
                           {t('retrieval.test.viewSourceLink')}
-                        </a>
+                        </Link>
                       </Button>
                       <Button asChild variant='outline' size='sm'>
-                        <a
-                          href={`${basePath}?chunk=${encodeURIComponent(result.matched_children[0]?.chunk_id ?? result.chunk_id)}&anchor=1`}
+                        <Link
+                          to={resultDetailTo(result.document_kind)}
+                          params={{
+                            workspaceSlug,
+                            kbId,
+                            documentId: result.document_id,
+                          }}
+                          search={{
+                            chunk:
+                              result.matched_children[0]?.chunk_id ??
+                              result.chunk_id,
+                            anchor: 1,
+                          }}
                         >
                           {t('retrieval.test.openChunkLink')}
-                        </a>
+                        </Link>
                       </Button>
                     </span>
                   </div>

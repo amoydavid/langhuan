@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { Boxes, Braces, Building2, RadioTower } from 'lucide-react'
 import { StatusBadge } from '@/components/status-badge'
 import { Badge } from '@/components/ui/badge'
@@ -14,16 +15,6 @@ function availabilityLabel(model: Model) {
   if (model.status === 'disabled') return '模型已停用'
   if (model.provider.status === 'disabled') return '连接已停用'
   return model.available ? '可用' : '不可用'
-}
-
-function providerHref(
-  model: Model,
-  routeScope: ModelScope,
-  workspaceSlug?: string
-) {
-  return routeScope === 'platform'
-    ? `/admin/models/${model.provider_id}`
-    : `/workspaces/${encodeURIComponent(workspaceSlug ?? '')}/models/${model.provider_id}`
 }
 
 export function ModelCatalog({
@@ -81,12 +72,24 @@ export function ModelCatalog({
                   </Badge>
                 </td>
                 <td className='px-4 py-4'>
-                  <a
+                  <Link
                     className='font-medium text-primary hover:underline'
-                    href={providerHref(model, routeScope, workspaceSlug)}
+                    to={
+                      routeScope === 'platform'
+                        ? '/admin/models/$providerId'
+                        : '/workspaces/$workspaceSlug/models/$providerId'
+                    }
+                    params={
+                      routeScope === 'platform'
+                        ? { providerId: model.provider_id }
+                        : {
+                            workspaceSlug: workspaceSlug ?? '',
+                            providerId: model.provider_id,
+                          }
+                    }
                   >
                     {model.provider.display_name}
-                  </a>
+                  </Link>
                   <p className='mt-1 flex items-center gap-1 text-muted-foreground text-xs'>
                     {model.provider.scope === 'platform' ? (
                       <Building2 className='size-3' />
@@ -138,12 +141,24 @@ export function ModelCatalog({
               </Badge>
               <Badge variant='outline'>{model.reference_count} 个引用</Badge>
             </div>
-            <a
+            <Link
               className='block border-t pt-3 font-medium text-primary text-sm'
-              href={providerHref(model, routeScope, workspaceSlug)}
+              to={
+                routeScope === 'platform'
+                  ? '/admin/models/$providerId'
+                  : '/workspaces/$workspaceSlug/models/$providerId'
+              }
+              params={
+                routeScope === 'platform'
+                  ? { providerId: model.provider_id }
+                  : {
+                      workspaceSlug: workspaceSlug ?? '',
+                      providerId: model.provider_id,
+                    }
+              }
             >
               {model.provider.display_name} · 查看连接
-            </a>
+            </Link>
           </article>
         ))}
       </div>

@@ -20,18 +20,12 @@ function loaderDocumentName(data: unknown) {
 }
 
 function FAQDetailPage() {
-  const { workspaceSlug, kbId, documentId } = Route.useParams()
+  const { workspaceSlug, documentId } = Route.useParams()
   const { data: faq } = useQuery(
     faqDocumentQueryOptions(workspaceSlug, documentId)
   )
   if (!faq) return null
-  return (
-    <FAQDetail
-      faq={faq}
-      canEdit
-      editHref={`/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/faq/${encodeURIComponent(documentId)}/edit`}
-    />
-  )
+  return <FAQDetail faq={faq} canEdit workspaceSlug={workspaceSlug} />
 }
 
 export const Route = createFileRoute(

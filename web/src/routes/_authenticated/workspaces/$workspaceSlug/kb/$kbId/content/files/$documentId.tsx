@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { Workflow } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -244,14 +244,15 @@ function FileDetailPage() {
                       </label>
                       {search.job && (
                         <Button variant='outline' size='sm' asChild>
-                          <a
-                            href={`/workspaces/${encodeURIComponent(workspaceSlug)}/jobs/${encodeURIComponent(search.job)}`}
+                          <Link
+                            to='/workspaces/$workspaceSlug/jobs/$jobId'
+                            params={{ workspaceSlug, jobId: search.job }}
                           >
                             <Workflow />
                             {t(
                               'routes.workspaces.kb.content.files.detail.viewJob'
                             )}
-                          </a>
+                          </Link>
                         </Button>
                       )}
                     </div>

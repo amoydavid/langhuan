@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { ArrowLeft, Pencil, Plus, Power, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -65,21 +66,27 @@ export function ModelProviderDetailContent({
   const [deleteProviderOpen, setDeleteProviderOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'models' | 'connection'>('models')
   const mutable = canManage && provider.scope === routeScope
-  const backHref =
-    routeScope === 'platform'
-      ? '/admin/models'
-      : `/workspaces/${encodeURIComponent(workspaceSlug ?? '')}/models`
 
   return (
     <div className='space-y-8'>
       <div className='space-y-5'>
-        <a
-          href={backHref}
+        <Link
+          to={
+            routeScope === 'platform'
+              ? '/admin/models'
+              : '/workspaces/$workspaceSlug/models'
+          }
+          params={
+            routeScope === 'platform'
+              ? {}
+              : { workspaceSlug: workspaceSlug ?? '' }
+          }
+          search={{}}
           className='inline-flex items-center gap-1.5 text-muted-foreground text-sm hover:text-foreground'
         >
           <ArrowLeft className='size-4' />
           {t('models.detailPage.backLink')}
-        </a>
+        </Link>
         <div className='flex flex-col justify-between gap-4 lg:flex-row lg:items-start'>
           <div>
             <div className='flex flex-wrap items-center gap-2'>

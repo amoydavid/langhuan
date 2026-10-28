@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { Clock3, FilePenLine, MessageCircleQuestion } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { SafeMarkdown } from '@/components/safe-markdown'
@@ -17,7 +18,7 @@ import type { FAQDocument } from './schemas'
 type FAQDetailProps = {
   faq: FAQDocument
   canEdit: boolean
-  editHref: string
+  workspaceSlug: string
 }
 
 function formatCreatedAt(value: string) {
@@ -27,7 +28,7 @@ function formatCreatedAt(value: string) {
   })
 }
 
-export function FAQDetail({ faq, canEdit, editHref }: FAQDetailProps) {
+export function FAQDetail({ faq, canEdit, workspaceSlug }: FAQDetailProps) {
   const { t } = useTranslation()
   const statusMeta = {
     pending: { label: t('contentFaq.detail.statusPending'), tone: 'warning' },
@@ -67,10 +68,17 @@ export function FAQDetail({ faq, canEdit, editHref }: FAQDetailProps) {
         </div>
         {canEdit && (
           <Button asChild>
-            <a href={editHref}>
+            <Link
+              to='/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId/edit'
+              params={{
+                workspaceSlug,
+                kbId: faq.document.knowledge_base_id,
+                documentId: faq.document.id,
+              }}
+            >
               <FilePenLine />
               {t('contentFaq.detail.editButton')}
-            </a>
+            </Link>
           </Button>
         )}
       </header>

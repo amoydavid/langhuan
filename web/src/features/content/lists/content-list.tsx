@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import {
   ArrowRight,
   FileText,
@@ -39,12 +40,13 @@ type ContentListProps = {
   status?: DocumentStatus
 }
 
-function canonicalContentPath(
-  workspaceSlug: string,
-  kbId: string,
-  item: Document
-) {
-  return `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/${item.kind === 'file' ? 'files' : item.kind}/${encodeURIComponent(item.id)}`
+/** 各 kind 的规范详情路由模式（file 归入 files 轨道），供类型化 Link 使用。 */
+function canonicalContentTo(kind: DocumentKind) {
+  if (kind === 'file')
+    return '/workspaces/$workspaceSlug/kb/$kbId/content/files/$documentId'
+  if (kind === 'faq')
+    return '/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId'
+  return '/workspaces/$workspaceSlug/kb/$kbId/content/web/$documentId'
 }
 
 function questionCount(item: Document) {
@@ -181,14 +183,15 @@ export function ContentList({
                   </TableCell>
                   <TableCell>
                     <Button variant='ghost' size='icon' asChild>
-                      <a
-                        href={canonicalContentPath(workspaceSlug, kbId, item)}
+                      <Link
+                        to={canonicalContentTo(item.kind)}
+                        params={{ workspaceSlug, kbId, documentId: item.id }}
                         aria-label={t('content.contentList.viewAriaLabel', {
                           name: item.title || t('content.contentList.unnamed'),
                         })}
                       >
                         <ArrowRight />
-                      </a>
+                      </Link>
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -203,9 +206,10 @@ export function ContentList({
           const meta = kindMeta[item.kind]
           const Icon = meta.icon
           return (
-            <a
+            <Link
               key={item.id}
-              href={canonicalContentPath(workspaceSlug, kbId, item)}
+              to={canonicalContentTo(item.kind)}
+              params={{ workspaceSlug, kbId, documentId: item.id }}
               aria-label={t('content.contentList.viewAriaLabel', {
                 name: item.title || t('content.contentList.unnamed'),
               })}
@@ -233,7 +237,7 @@ export function ContentList({
                   })}
                 </CardContent>
               </Card>
-            </a>
+            </Link>
           )
         })}
       </div>

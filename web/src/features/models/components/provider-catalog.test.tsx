@@ -1,5 +1,30 @@
-import { describe, expect, it } from 'vitest'
+import type * as React from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
+
+// Link 的最小 <a> 替身（项目既有惯例，见 content-activity/web-source-card 测试）。
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    children,
+    to,
+    params,
+    ...props
+  }: React.ComponentProps<'a'> & {
+    to: string
+    params?: Record<string, string>
+  }) => (
+    <a
+      href={Object.entries(params ?? {}).reduce<string>(
+        (acc, [key, value]) => acc.replace(`$${key}`, value),
+        to
+      )}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+}))
+
 import type { ModelProvider } from '../types'
 import { ProviderCatalog } from './provider-catalog'
 

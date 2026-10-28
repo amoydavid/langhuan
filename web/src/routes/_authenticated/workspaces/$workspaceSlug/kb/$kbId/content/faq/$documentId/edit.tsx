@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { ArrowLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -40,7 +40,6 @@ function FAQEditPage() {
     faqDocumentQueryOptions(workspaceSlug, documentId)
   )
   if (!faq) return null
-  const detailHref = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/faq/${encodeURIComponent(documentId)}`
 
   async function saveFAQ(input: FAQSaveInput) {
     if (!('base_revision_id' in input)) {
@@ -65,10 +64,13 @@ function FAQEditPage() {
           </p>
         </div>
         <Button asChild variant='outline'>
-          <a href={detailHref}>
+          <Link
+            to='/workspaces/$workspaceSlug/kb/$kbId/content/faq/$documentId'
+            params={{ workspaceSlug, kbId, documentId }}
+          >
             <ArrowLeft />
             {t('routes.workspaces.kb.content.faq.edit.backToDetail')}
-          </a>
+          </Link>
         </Button>
       </div>
       <FAQForm

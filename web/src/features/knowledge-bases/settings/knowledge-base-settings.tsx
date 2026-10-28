@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Link } from '@tanstack/react-router'
 import { Copy, Database, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
@@ -45,7 +46,7 @@ type KnowledgeBaseSettingsProps = {
   canManage: boolean
   saveBasics: (input: UpdateKnowledgeBaseBasicsInput) => Promise<KnowledgeBase>
   copyText: (text: string) => Promise<void>
-  buildIndexHref: string
+  workspaceSlug: string
 }
 
 function configValue(config: Record<string, unknown>, key: string) {
@@ -59,7 +60,7 @@ export function KnowledgeBaseSettings({
   canManage,
   saveBasics,
   copyText,
-  buildIndexHref,
+  workspaceSlug,
 }: KnowledgeBaseSettingsProps) {
   const { t } = useTranslation()
   const [submitError, setSubmitError] = useState<string>()
@@ -241,10 +242,14 @@ export function KnowledgeBaseSettings({
             )}
             {canManage && (
               <Button asChild variant='outline'>
-                <a href={buildIndexHref}>
+                <Link
+                  to='/workspaces/$workspaceSlug/kb/$kbId/indexes'
+                  params={{ workspaceSlug, kbId: knowledgeBase.id }}
+                  search={{ create: true }}
+                >
                   <Database />
                   {t('knowledgeBases.settings.buildIndexButton')}
-                </a>
+                </Link>
               </Button>
             )}
           </CardContent>

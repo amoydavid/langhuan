@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
@@ -28,7 +28,6 @@ function FAQListPage() {
   const { data: documents = [] } = useQuery(
     documentsQueryOptions(workspaceSlug, kbId)
   )
-  const newHref = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}/content/faq/new`
 
   return (
     <div className='space-y-4'>
@@ -86,10 +85,14 @@ function FAQListPage() {
           </Select>
         </div>
         <Button asChild>
-          <a href={newHref}>
+          <Link
+            to='/workspaces/$workspaceSlug/kb/$kbId/content/faq/new'
+            params={{ workspaceSlug, kbId }}
+            search={{}}
+          >
             <Plus />
             {t('routes.workspaces.kb.content.faq.newButton')}
-          </a>
+          </Link>
         </Button>
       </div>
       <ContentList

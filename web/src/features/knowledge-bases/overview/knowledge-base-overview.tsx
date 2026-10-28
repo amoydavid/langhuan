@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import {
   AlertTriangle,
   ArrowRight,
@@ -53,7 +54,6 @@ export function KnowledgeBaseOverview({
     failed: t('knowledgeBases.overview.jobStatus.failed'),
     cancelled: t('knowledgeBases.overview.jobStatus.cancelled'),
   }
-  const base = `/workspaces/${encodeURIComponent(workspaceSlug)}/kb/${encodeURIComponent(kbId)}`
   const counts = summary.document_counts
   const active = summary.active_generation
 
@@ -61,22 +61,22 @@ export function KnowledgeBaseOverview({
     {
       label: t('knowledgeBases.overview.countTotal'),
       value: counts.total,
-      href: `${base}/content/all`,
+      status: undefined,
     },
     {
       label: t('knowledgeBases.overview.countReady'),
       value: counts.ready,
-      href: `${base}/content/all?status=ready`,
+      status: 'ready' as const,
     },
     {
       label: t('knowledgeBases.overview.countProcessing'),
       value: counts.processing,
-      href: `${base}/content/all?status=processing`,
+      status: 'processing' as const,
     },
     {
       label: t('knowledgeBases.overview.countFailed'),
       value: counts.failed,
-      href: `${base}/content/all?status=failed`,
+      status: 'failed' as const,
     },
   ]
 
@@ -84,14 +84,20 @@ export function KnowledgeBaseOverview({
     <div className='space-y-5'>
       <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
         {countCards.map((item) => (
-          <a key={item.label} href={item.href} className='group'>
+          <Link
+            key={item.label}
+            to='/workspaces/$workspaceSlug/kb/$kbId/content/all'
+            params={{ workspaceSlug, kbId }}
+            search={item.status ? { status: item.status } : {}}
+            className='group'
+          >
             <Card className='h-full transition-colors group-hover:border-primary/30'>
               <CardHeader className='gap-1 pb-3'>
                 <CardDescription>{item.label}</CardDescription>
                 <CardTitle className='text-2xl'>{item.value}</CardTitle>
               </CardHeader>
             </Card>
-          </a>
+          </Link>
         ))}
       </div>
 
@@ -258,31 +264,46 @@ export function KnowledgeBaseOverview({
 
       <div className='flex flex-wrap gap-2'>
         <Button asChild>
-          <a href={`${base}/content/all`}>
+          <Link
+            to='/workspaces/$workspaceSlug/kb/$kbId/content/all'
+            params={{ workspaceSlug, kbId }}
+            search={{}}
+          >
             <FileText />
             {t('knowledgeBases.overview.addContentButton')}
-          </a>
+          </Link>
         </Button>
         <Button variant='outline' asChild>
-          <a href={`${base}/search`}>
+          <Link
+            to='/workspaces/$workspaceSlug/kb/$kbId/search'
+            params={{ workspaceSlug, kbId }}
+          >
             <Search />
             {t('knowledgeBases.overview.searchTestButton')}
-          </a>
+          </Link>
         </Button>
         {canManageIndex && (
           <Button variant='outline' asChild>
-            <a href={`${base}/indexes?create=true`}>
+            <Link
+              to='/workspaces/$workspaceSlug/kb/$kbId/indexes'
+              params={{ workspaceSlug, kbId }}
+              search={{ create: true }}
+            >
               <Boxes />
               {t('knowledgeBases.overview.buildIndexButton')}
-            </a>
+            </Link>
           </Button>
         )}
         {summary.candidate_generation && (
           <Button variant='ghost' asChild>
-            <a href={`${base}/indexes`}>
+            <Link
+              to='/workspaces/$workspaceSlug/kb/$kbId/indexes'
+              params={{ workspaceSlug, kbId }}
+              search={{}}
+            >
               {t('knowledgeBases.overview.checkCandidateButton')}
               <ArrowRight />
-            </a>
+            </Link>
           </Button>
         )}
       </div>

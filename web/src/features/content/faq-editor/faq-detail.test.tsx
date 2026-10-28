@@ -1,5 +1,43 @@
-import { describe, expect, it } from 'vitest'
+import type * as React from 'react'
+import { describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-react'
+
+// Link 的最小 <a> 替身（项目既有惯例，见 content-activity/web-source-card 测试）：
+// 替换 $params 并把 search 拼为 querystring，保持 href 断言语义。
+vi.mock('@tanstack/react-router', () => ({
+  Link: ({
+    children,
+    to,
+    params,
+    search,
+    ...props
+  }: React.ComponentProps<'a'> & {
+    to: string
+    params?: Record<string, string>
+    search?: Record<string, string | number | undefined>
+  }) => (
+    <a
+      href={
+        Object.entries(params ?? {}).reduce<string>(
+          (acc, [key, value]) => acc.replace(`$${key}`, value),
+          to
+        ) +
+        (search
+          ? `?${new URLSearchParams(
+              Object.entries(search).filter(([, v]) => v !== undefined) as [
+                string,
+                string,
+              ][]
+            ).toString()}`
+          : '')
+      }
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+}))
+
 import { FAQDetail } from './faq-detail'
 import type { FAQDocument } from './schemas'
 
@@ -36,11 +74,7 @@ const faq: FAQDocument = {
 describe('FAQDetail', () => {
   it('shows readable questions, sanitized answer, processing feedback and edit action', async () => {
     const screen = await render(
-      <FAQDetail
-        faq={faq}
-        canEdit
-        editHref={`/workspaces/acme/kb/product-docs/content/faq/${documentId}/edit`}
-      />
+      <FAQDetail faq={faq} canEdit workspaceSlug='acme' />
     )
 
     await expect
@@ -53,7 +87,7 @@ describe('FAQDetail', () => {
       .element(screen.getByRole('link', { name: '编辑 FAQ' }))
       .toHaveAttribute(
         'href',
-        `/workspaces/acme/kb/product-docs/content/faq/${documentId}/edit`
+        `/workspaces/acme/kb/${faq.document.knowledge_base_id}/content/faq/${documentId}/edit`
       )
     const answer = document.querySelector('[data-testid="faq-answer"]')
     expect(answer?.querySelector('script')).toBeNull()
@@ -64,7 +98,7 @@ describe('FAQDetail', () => {
 
   it('keeps the detail read-only when editing is not allowed', async () => {
     const screen = await render(
-      <FAQDetail faq={faq} canEdit={false} editHref='/should-not-render' />
+      <FAQDetail faq={faq} canEdit={false} workspaceSlug='acme' />
     )
 
     await expect

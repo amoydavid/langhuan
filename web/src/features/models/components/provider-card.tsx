@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { ArrowRight, Building2, KeyRound, RadioTower } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { StatusBadge } from '@/components/status-badge'
@@ -27,10 +28,6 @@ export function ProviderCard({
     siliconflow: 'SiliconFlow',
     mineru: t('models.common.providerMinerU'),
   }
-  const href =
-    routeScope === 'platform'
-      ? `/admin/models/${provider.id}`
-      : `/workspaces/${encodeURIComponent(workspaceSlug ?? '')}/models/${provider.id}`
   const shared = routeScope === 'workspace' && provider.scope === 'platform'
 
   return (
@@ -86,14 +83,26 @@ export function ProviderCard({
                   : t('models.providerCard.missingCredentials')}
             </span>
           </div>
-          <a
-            href={href}
+          <Link
+            to={
+              routeScope === 'platform'
+                ? '/admin/models/$providerId'
+                : '/workspaces/$workspaceSlug/models/$providerId'
+            }
+            params={
+              routeScope === 'platform'
+                ? { providerId: provider.id }
+                : {
+                    workspaceSlug: workspaceSlug ?? '',
+                    providerId: provider.id,
+                  }
+            }
             className='inline-flex items-center gap-1.5 font-medium text-primary hover:underline'
             aria-label={t('models.providerCard.viewLinkAriaLabel')}
           >
             {t('models.providerCard.viewLink')}
             <ArrowRight className='size-4 transition-transform group-hover:translate-x-0.5' />
-          </a>
+          </Link>
         </div>
       </CardContent>
     </Card>
