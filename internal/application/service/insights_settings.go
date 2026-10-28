@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // QueryLogSettingsStore 是查询原文开关的持久化接口。
@@ -64,8 +64,8 @@ func (s *CitationSummaryService) DocumentCitationSummary(ctx context.Context, wo
 	if _, err := s.kbs.Get(ctx, workspaceID, kbID); err != nil {
 		return 0, nil, err
 	}
-	if windowDays <= 0 {
-		return 0, nil, domainerrors.ErrValidation
+	if err := value.ValidateInsightsWindowDays(windowDays); err != nil {
+		return 0, nil, err
 	}
 	since := time.Now().UTC().AddDate(0, 0, -windowDays)
 	return s.store.DocumentCitationSummary(ctx, workspaceID, kbID, documentID, since)

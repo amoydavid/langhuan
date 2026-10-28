@@ -114,15 +114,17 @@ func (r *SearchRunRepository) Get(ctx context.Context, workspaceID, searchRunID 
 	return searchRunFromRow(&row, generations), nil
 }
 
-// DeleteExpired 批量删除已过 expires_at 的 SearchRun（级联删除 generations），返回删除行数。
+// DeleteExpired 有界批量删除已过 expires_at 的 SearchRun（级联删除 generations）。
+// 子查询 LIMIT 双方言同构——GORM 的 DELETE 构建器不支持 LIMIT 子句，链式 Limit 会被静默忽略。
 func (r *SearchRunRepository) DeleteExpired(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, fmt.Errorf("%w: DeleteExpired limit 必须为正", domainerrors.ErrValidation)
 	}
-	result := r.db.WithContext(ctx).
-		Where("expires_at < ?", before).
-		Limit(limit).
-		Delete(&SearchRunRow{})
+	result := r.db.WithContext(ctx).Exec(`
+		DELETE FROM search_runs WHERE id IN (
+			SELECT id FROM search_runs WHERE expires_at < ? LIMIT ?
+		)
+	`, before, limit)
 	if result.Error != nil {
 		return 0, translateDBError(result.Error, "删除过期 SearchRun 失败")
 	}

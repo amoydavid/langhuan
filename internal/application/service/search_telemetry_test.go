@@ -29,6 +29,20 @@ func (f *kbFlagsStub) GetQueryLogEnabled(_ context.Context, _, kbID uuid.UUID) (
 	return f.enabled[kbID], nil
 }
 
+func (f *kbFlagsStub) GetQueryLogEnabledBatch(_ context.Context, _ uuid.UUID, kbIDs []uuid.UUID) (map[uuid.UUID]bool, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	result := make(map[uuid.UUID]bool, len(kbIDs))
+	for _, kbID := range kbIDs {
+		if f.enabled[kbID] {
+			result[kbID] = true
+		}
+	}
+	return result, nil
+}
+
 func telemetryTestRepo(t *testing.T) (*searchRepositoryFake, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	workspaceID, knowledgeBaseID := uuid.New(), uuid.New()
@@ -190,7 +204,7 @@ func TestBuildCitationEntriesRules(t *testing.T) {
 	}
 
 	t.Run("多库行按自带 KBID 归属且 rank 连续", func(t *testing.T) {
-		entries := buildCitationEntries(workspaceID, uuid.Nil, runID, []*dto.SearchResult{multi, other}, value.RetrievalStatusAvailable, now)
+		entries := buildCitationEntries(workspaceID, uuid.Nil, runID, []*dto.SearchResult{multi, other}, value.RetrievalStatusAvailable, "rest", now)
 		require.Len(t, entries, 2)
 		require.Equal(t, kbID, entries[0].KbID)
 		require.Equal(t, other.KnowledgeBaseID, entries[1].KbID)
@@ -200,20 +214,20 @@ func TestBuildCitationEntriesRules(t *testing.T) {
 
 	t.Run("单库 fallback KbID 生效", func(t *testing.T) {
 		single := &dto.SearchResult{DocumentID: uuid.New(), ChunkRevisionID: uuid.New()}
-		entries := buildCitationEntries(workspaceID, kbID, runID, []*dto.SearchResult{single}, value.RetrievalStatusDegraded, now)
+		entries := buildCitationEntries(workspaceID, kbID, runID, []*dto.SearchResult{single}, value.RetrievalStatusDegraded, "rest", now)
 		require.Len(t, entries, 1)
 		require.Equal(t, kbID, entries[0].KbID)
 		require.Equal(t, value.RetrievalStatusDegraded, entries[0].RetrievalStatus)
 	})
 
 	t.Run("empty/failed 与空结果不产出", func(t *testing.T) {
-		require.Empty(t, buildCitationEntries(workspaceID, kbID, runID, nil, value.RetrievalStatusEmpty, now))
-		require.Empty(t, buildCitationEntries(workspaceID, kbID, runID, []*dto.SearchResult{multi}, value.RetrievalStatusEmpty, now))
+		require.Empty(t, buildCitationEntries(workspaceID, kbID, runID, nil, value.RetrievalStatusEmpty, "rest", now))
+		require.Empty(t, buildCitationEntries(workspaceID, kbID, runID, []*dto.SearchResult{multi}, value.RetrievalStatusEmpty, "rest", now))
 	})
 
 	t.Run("缺 lineage 的行被跳过", func(t *testing.T) {
 		broken := &dto.SearchResult{KnowledgeBaseID: kbID, DocumentID: uuid.Nil, ChunkRevisionID: uuid.New()}
-		entries := buildCitationEntries(workspaceID, kbID, runID, []*dto.SearchResult{broken, multi}, value.RetrievalStatusAvailable, now)
+		entries := buildCitationEntries(workspaceID, kbID, runID, []*dto.SearchResult{broken, multi}, value.RetrievalStatusAvailable, "rest", now)
 		require.Len(t, entries, 1)
 	})
 }

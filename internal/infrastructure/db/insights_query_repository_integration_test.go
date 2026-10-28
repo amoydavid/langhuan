@@ -98,7 +98,7 @@ func (w *insightsWorld) insertDocument(kbID uuid.UUID, kind, title string, updat
 		INSERT INTO documents (id, workspace_id, knowledge_base_id, kind, title, source_type, source_uri,
 			status, created_at, updated_at, deleted_at)
 		VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 = 'web' THEN 'web' ELSE 'upload' END,
-			CASE WHEN $4 = 'web' THEN 'https://example.com/insights-page' ELSE NULL END,
+			CASE WHEN $4 = 'web' THEN 'https://example.com/' || $5 ELSE NULL END,
 			'ready', $6, $6, `
 	args := []any{docID, w.workspaceID(), kbID, kind, title, updatedAt}
 	if deleted {
@@ -173,12 +173,21 @@ func TestInsightsSleepingDocumentsAntiJoin(t *testing.T) {
 	// 给"常被引用的页面"一条窗口内引用。
 	runID := w.insertRun(w.kbID(), "available", "rest", "h1", w.now.Add(-2*24*time.Hour))
 	w.insertCitation(w.kbID(), runID, citedDoc, w.now.Add(-2*24*time.Hour))
+	// console 引用不救沉睡：管理台测试流量被健康口径排除。
+	consoleRun := w.insertRun(w.kbID(), "available", "console", "hc", w.now.Add(-1*24*time.Hour))
+	w.insertCitation(w.kbID(), consoleRun, sleeping, w.now.Add(-1*24*time.Hour))
+	_ = w.db.WithContext(ctx).Exec(`UPDATE search_citations SET transport = 'console' WHERE search_run_id = ?`, consoleRun)
 
 	rows, err := w.repo.SleepingDocuments(ctx, w.workspaceID(), w.kbID(), windowStart, 10)
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "只剩窗口前就绪+零引用+未删的文档")
+	require.Len(t, rows, 1, "只剩窗口前就绪+非console零引用+未删的文档")
 	require.Equal(t, sleeping, rows[0].DocumentID.String())
 	require.Equal(t, "faq", rows[0].Kind)
+
+	// citation-summary 同口径排除 console。
+	consoleOnlyCount, _, err := w.repo.DocumentCitationSummary(ctx, w.workspaceID(), w.kbID(), uuid.MustParse(sleeping), w.now.Add(-30*24*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), consoleOnlyCount, "引用摘要必须排除 console 流量")
 }
 
 func TestInsightsRecentActivityThreeKinds(t *testing.T) {
@@ -203,32 +212,77 @@ func TestInsightsRecentActivityThreeKinds(t *testing.T) {
 		VALUES ($1, $2, $3, $4, 'web', 2, 'edit', 1, 'pending', $5)
 	`, uuid.NewString(), w.workspaceID(), w.kbID(), docID, w.now.Add(-2*time.Hour)).Error)
 
+	// chunk 人工修订：edit_source='user'。
+	chunkDoc := w.insertDocument(w.kbID(), "web", "手册页", w.now.Add(-3*24*time.Hour), false)
+	insertChunkRevision(w, ctx, chunkDoc)
+
 	// delete：软删。
 	w.insertDocument(w.kbID(), "faq", "过期文件", w.now.Add(-3*time.Hour), true)
 
 	events, err := w.repo.RecentActivity(ctx, w.workspaceID(), w.kbID(), since, 20)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(events), 3)
+	require.GreaterOrEqual(t, len(events), 4)
 	kinds := map[string]bool{}
+	// revision 事件可能有多条（chunk 夹具的基线 revision 也进 feed），按标题匹配断言。
+	revisionEdit, chunkEdit := false, false
 	for _, event := range events {
 		kinds[event.Kind] = true
-		switch event.Kind {
-		case "sync":
+		switch {
+		case event.Kind == "sync":
 			require.Equal(t, "产品文档站", event.SourceName)
 			require.True(t, event.Success)
-		case "revision":
-			require.Equal(t, "退款政策", event.DocumentTitle)
+		case event.Kind == "revision" && event.DocumentTitle == "退款政策":
 			require.Equal(t, "edit", event.RevisionReason)
-		case "delete":
+			revisionEdit = true
+		case event.Kind == "delete":
 			require.Equal(t, "过期文件", event.DocumentTitle)
+		case event.Kind == "chunk_edit":
+			require.Equal(t, "手册页", event.DocumentTitle)
+			require.NotNil(t, event.TargetDocumentID)
+			chunkEdit = true
 		}
 	}
-	require.True(t, kinds["sync"] && kinds["revision"] && kinds["delete"], "三类事件齐备: %v", kinds)
+	require.True(t, revisionEdit && chunkEdit, "revision 编辑与 chunk 修订事件齐备: %v", kinds)
+	require.True(t, kinds["sync"] && kinds["revision"] && kinds["delete"] && kinds["chunk_edit"], "四类事件齐备: %v", kinds)
 
 	// 时间倒序。
 	for i := 1; i < len(events); i++ {
 		require.False(t, events[i-1].OccurredAt.Before(events[i].OccurredAt), "feed 必须按时间倒序")
 	}
+}
+
+// insertChunkRevision 插入一条人工编辑的 chunk revision（edit_source='user'）。
+// chunk_revisions 需要完整 lineage（chunks/chunk_sets/document_revisions 级联 FK），
+// 直接按表最小列集绕过业务层构造。
+func insertChunkRevision(w *insightsWorld, ctx context.Context, docID string) {
+	w.t.Helper()
+	kbID := w.kbID()
+	revID := uuid.NewString()
+	require.NoError(w.t, w.db.WithContext(ctx).Exec(`
+		INSERT INTO document_revisions (id, workspace_id, knowledge_base_id, document_id, kind, revision_no, revision_reason, processing_version, status, created_at)
+		VALUES ($1, $2, $3, $4, 'web', 1, 'crawl', 1, 'ready', $5)
+	`, revID, w.workspaceID(), kbID, docID, w.now.Add(-1*24*time.Hour)).Error)
+	chunkSetID := uuid.NewString()
+	require.NoError(w.t, w.db.WithContext(ctx).Exec(`
+		INSERT INTO document_chunk_sets (id, workspace_id, knowledge_base_id, document_id, document_revision_id, strategy, chunker_version, config_hash, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, 'standard', 3, 'ch', 'ready', $6)
+	`, chunkSetID, w.workspaceID(), kbID, docID, revID, w.now.Add(-1*24*time.Hour)).Error)
+	chunkID := uuid.NewString()
+	require.NoError(w.t, w.db.WithContext(ctx).Exec(`
+		INSERT INTO chunks (id, workspace_id, knowledge_base_id, document_id, document_revision_id, chunk_set_id, sequence, source_content, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 1, '内容', $7)
+	`, chunkID, w.workspaceID(), kbID, docID, revID, chunkSetID, w.now.Add(-1*24*time.Hour)).Error)
+	// edit_source='user' 要求 editor_user_id 与 base_revision_id 双非空（editor_check）：
+	// 先插 system 基线版，再插引用它的 user 编辑版。
+	baseRevisionID := uuid.NewString()
+	require.NoError(w.t, w.db.WithContext(ctx).Exec(`
+		INSERT INTO chunk_revisions (id, workspace_id, knowledge_base_id, document_id, document_revision_id, chunk_set_id, chunk_id, revision_no, content, context_header, embedding_content, enabled, status, edit_source, editor_user_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 1, '原始内容', '', '原始内容', true, 'ready', 'system', NULL, $8)
+	`, baseRevisionID, w.workspaceID(), kbID, docID, revID, chunkSetID, chunkID, w.now.Add(-1*24*time.Hour)).Error)
+	require.NoError(w.t, w.db.WithContext(ctx).Exec(`
+		INSERT INTO chunk_revisions (id, workspace_id, knowledge_base_id, document_id, document_revision_id, chunk_set_id, chunk_id, revision_no, base_revision_id, content, context_header, embedding_content, enabled, status, edit_source, editor_user_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 2, $9, '编辑后的内容', '', '编辑后的内容', true, 'ready', 'user', $8, $10)
+	`, uuid.NewString(), w.workspaceID(), kbID, docID, revID, chunkSetID, chunkID, w.seed.userID, baseRevisionID, w.now.Add(-30*time.Minute)).Error)
 }
 
 func TestInsightsDocumentCitationSummary(t *testing.T) {

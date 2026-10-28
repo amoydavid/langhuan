@@ -123,6 +123,7 @@ func (r *InsightsQueryRepository) SleepingDocuments(
 		        AND sc.kb_id = d.knowledge_base_id
 		        AND sc.document_id = d.id
 		        AND sc.created_at >= ?
+		        AND sc.transport <> 'console'
 		  )
 		ORDER BY d.updated_at ASC
 		LIMIT ?
@@ -183,7 +184,27 @@ func (r *InsightsQueryRepository) RecentActivity(
 	}
 	events = append(events, revRows...)
 
-	// 3) 内容软删（deleted_at 近窗）。
+	// 3) chunk 人工修订/启停（spec §4.4 第 4 类：edit_source='user' 的 chunk revision）。
+	var chunkRows []dto.InsightsActivityEvent
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT 'chunk_edit' AS kind, cr.document_id AS target_document_id,
+		       d.kind AS document_kind, d.title AS document_title,
+		       CASE WHEN cr.enabled THEN 'chunk_enabled' ELSE 'chunk_disabled' END AS revision_reason,
+		       cr.created_at AS occurred_at
+		FROM chunk_revisions cr
+		JOIN documents d
+		  ON d.workspace_id = cr.workspace_id AND d.knowledge_base_id = cr.knowledge_base_id
+		  AND d.id = cr.document_id
+		WHERE cr.workspace_id = ? AND cr.knowledge_base_id = ?
+		  AND cr.edit_source = 'user' AND cr.created_at >= ?
+		ORDER BY cr.created_at DESC
+		LIMIT ?
+	`, workspaceID, kbID, since, limit).Scan(&chunkRows).Error; err != nil {
+		return nil, translateDBError(err, "查询分块修订动态失败")
+	}
+	events = append(events, chunkRows...)
+
+	// 4) 内容软删（deleted_at 近窗）。
 	var delRows []dto.InsightsActivityEvent
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT 'delete' AS kind, d.id AS target_document_id,
@@ -222,6 +243,7 @@ func (r *InsightsQueryRepository) DocumentCitationSummary(
 		SELECT COUNT(*) AS count, MAX(created_at) AS last_cited_at
 		FROM search_citations
 		WHERE workspace_id = ? AND kb_id = ? AND document_id = ? AND created_at >= ?
+		  AND transport <> 'console' 
 	`, workspaceID, kbID, documentID, since).Scan(&row).Error
 	if err != nil {
 		return 0, nil, translateDBError(err, "统计文档引用摘要失败")

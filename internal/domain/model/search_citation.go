@@ -22,7 +22,10 @@ type SearchCitation struct {
 	ChunkRevisionID uuid.UUID
 	Rank            int
 	RetrievalStatus value.RetrievalStatus
-	CreatedAt       time.Time
+	// Transport 冗余自 SearchRun（rest/mcp/console）：健康聚合与引用摘要按口径
+	// 排除 console 调试流量，且判定不随 run 过期失效（D3）。
+	Transport string
+	CreatedAt time.Time
 }
 
 // Validate 校验 SearchCitation 的不变量。

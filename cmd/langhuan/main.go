@@ -173,6 +173,7 @@ type runtimeServices struct {
 	insightsQuery           *service.InsightsQueryService
 	queryLogSettings        *service.QueryLogSettingsService
 	citationSummary         *service.CitationSummaryService
+	queryLogRetentionDays   int
 	searchReplay            *service.SearchReplayService
 	retrievalCleanup        *service.RetrievalCleanupService
 	searchRunCleanup        *service.SearchRunCleanupService
@@ -728,6 +729,10 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	insightsQuery := service.NewInsightsQueryService(insightsRepo, telemetryRepo, kbRepo, log)
 	queryLogSettings := service.NewQueryLogSettingsService(telemetryRepo, kbRepo)
 	citationSummary := service.NewCitationSummaryService(insightsRepo, kbRepo)
+	queryLogRetentionDays := cfg.Insights.QueryLogRetentionDays
+	if queryLogRetentionDays <= 0 {
+		queryLogRetentionDays = 30
+	}
 	citationRecorder := service.NewCitationRecorder(telemetryRepo, service.CitationRecorderConfig{
 		BufferSize:     cfg.Insights.CitationBufferSize,
 		FlushInterval:  time.Duration(cfg.Insights.CitationFlushIntervalMs) * time.Millisecond,
@@ -1166,6 +1171,7 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		WebSources:                services.kbSources,
 		Insights:                  services.insightsQuery,
 		QueryLogSettings:          services.queryLogSettings,
+		QueryLogRetentionDays:     services.queryLogRetentionDays,
 		CitationSummary:           services.citationSummary,
 		MCPHandler:                mcpServer.Handler(),
 		SPA:                       webspa.SPA,

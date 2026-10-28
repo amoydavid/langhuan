@@ -145,19 +145,30 @@ func (s *InsightsQueryService) Overview(ctx context.Context, workspaceID, kbID u
 		overview.PreviousEmptyRecallRate = emptyRate(prevEmpty, prevTotal)
 	}
 
-	// 沉睡计数：口径固定 30 天窗口 + 样本护栏。
+	// 沉睡护栏：与 Sleeping 端点同口径（固定 30 天窗口的完成 run 数），避免 overview
+	// 卡与 documents 端点对同一面板给出不一致结论；护栏不满足时跳过 anti-join 查询。
 	sleepingFrom := now.AddDate(0, 0, -30)
-	sleeping, err := s.store.SleepingDocuments(ctx, workspaceID, kbID, sleepingFrom, value.InsightsListMaxLimit)
+	sleepingWindowCounts, err := s.store.CountRunsByStatus(ctx, workspaceID, kbID, sleepingFrom, now)
 	if err != nil {
 		return nil, err
 	}
-	if overview.RunsTotal < SleepingSampleMinRuns {
+	var sleepingWindowCompleted int64
+	for _, row := range sleepingWindowCounts {
+		if row.RetrievalStatus != "failed" {
+			sleepingWindowCompleted += row.Runs
+		}
+	}
+	if sleepingWindowCompleted < SleepingSampleMinRuns {
 		overview.SleepingInsufficientData = true
 		overview.SleepingDocumentsCount = 0
 	} else {
+		sleeping, err := s.store.SleepingDocuments(ctx, workspaceID, kbID, sleepingFrom, value.InsightsListMaxLimit)
+		if err != nil {
+			return nil, err
+		}
 		overview.SleepingDocumentsCount = int64(len(sleeping))
 	}
-	// 近窗变更计数（activity 段数，仅计数不做上限展开）。
+	// 近窗变更计数：是"事件段数"而非真实总数——超过 activity limit（100）时截断。
 	activity, err := s.store.RecentActivity(ctx, workspaceID, kbID, windowFrom, value.InsightsActivityMaxLimit)
 	if err != nil {
 		return nil, err

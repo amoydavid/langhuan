@@ -18,8 +18,10 @@ type InsightsSleepingDocument struct {
 // InsightsActivityEvent 是内容动态 feed 的单条事件。
 // Kind: sync（源同步终态）| revision（内容新版本）| delete（软删）。
 type InsightsActivityEvent struct {
-	Kind             string     `json:"kind"`
-	TargetDocumentID uuid.UUID  `json:"target_document_id,omitempty"`
+	Kind string `json:"kind"`
+	// TargetDocumentID 为指针：sync 事件无目标文档时整个字段省略
+	// （非指针 uuid 的 omitempty 对 [16]byte 数组不生效，会序列化全零 UUID）。
+	TargetDocumentID *uuid.UUID `json:"target_document_id,omitempty"`
 	SourceID         *uuid.UUID `json:"source_id,omitempty"`
 	SourceName       string     `json:"source_name,omitempty"`
 	DocumentKind     string     `json:"document_kind,omitempty"`

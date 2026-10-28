@@ -142,4 +142,19 @@ func TestTelemetryRepositoryDeleteExpiredRespectsRetention(t *testing.T) {
 	deleted, err = repo.DeleteExpiredCitations(ctx, cutoff, 100)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), deleted)
+
+	// 有界删除（M2）：多行过期时单批不超过 limit（GORM 链式 Limit 对 DELETE 无效，
+	// 必须由子查询 LIMIT 兜底）。
+	var extraOld []model.SearchCitation
+	for i := 0; i < 3; i++ {
+		entry := validCitationFor(seedA, uuid.New(), i+1)
+		entry.CreatedAt = now.Add(-40 * 24 * time.Hour)
+		extraOld = append(extraOld, entry)
+	}
+	require.NoError(t, repo.InsertCitations(ctx, extraOld))
+	deleted, err = repo.DeleteExpiredCitations(ctx, cutoff, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), deleted, "limit=1 必须只删 1 行")
+	// 清掉剩余，避免影响其它断言。
+	_, _ = repo.DeleteExpiredCitations(ctx, cutoff, 100)
 }

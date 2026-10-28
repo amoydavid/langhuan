@@ -276,7 +276,7 @@ func (s *MultiKnowledgeSearchService) Search(ctx context.Context, input MultiKno
 	// 遥测投递：Finish 之后、响应构造之前；非阻塞，不影响返回（spec §6）。
 	recordMultiKBTelemetry(ctx, s.telemetry, s.kbFlags, s.logger,
 		input.WorkspaceID, recorder.RunID(),
-		query, queryHash, results, orderedKBIDs, status)
+		query, queryHash, meta.Transport, results, orderedKBIDs, status)
 	summary := recorder.buildSummary(status, "", runRankingStage, runResultCount, orderedKBIDs, runSnapshots, requestedScope)
 	summary.CompletedAt = ptrTime(time.Now())
 	return &dto.SearchResponse{Run: summary, Results: results}, nil

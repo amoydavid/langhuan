@@ -35,10 +35,16 @@ type CitationSummaryHTTPService interface {
 type insightsHandler struct {
 	insights InsightsHTTPService
 	settings QueryLogSettingsHTTPService
+	// queryLogRetentionDays 来自 config insights.query_log_retention_days，
+	// 用于 settings 响应与确认文案——不得硬编码（与实际清理保留期脱钩会误导用户）。
+	queryLogRetentionDays int
 }
 
-func newInsightsHandler(insights InsightsHTTPService, settings QueryLogSettingsHTTPService) *insightsHandler {
-	return &insightsHandler{insights: insights, settings: settings}
+func newInsightsHandler(insights InsightsHTTPService, settings QueryLogSettingsHTTPService, queryLogRetentionDays int) *insightsHandler {
+	if queryLogRetentionDays <= 0 {
+		queryLogRetentionDays = 30
+	}
+	return &insightsHandler{insights: insights, settings: settings, queryLogRetentionDays: queryLogRetentionDays}
 }
 
 type queryLogSettingsRequest struct {
@@ -168,7 +174,7 @@ func (h insightsHandler) putQueryLogSettings(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(stdhttp.StatusOK, queryLogSettingsResponse{Enabled: *request.Enabled, RetentionDays: 30})
+	c.JSON(stdhttp.StatusOK, queryLogSettingsResponse{Enabled: *request.Enabled, RetentionDays: h.queryLogRetentionDays})
 }
 
 // citationSummaryGet 处理 GET /knowledge-bases/:id/documents/:document_id/citation-summary?window_days=30。

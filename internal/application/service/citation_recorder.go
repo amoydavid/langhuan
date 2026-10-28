@@ -10,6 +10,9 @@ import (
 	"github.com/dajee/langhuan/internal/domain/model"
 )
 
+// telemetryFlushTimeout 是单批落库的硬超时；具名常量而非字面量（AGENTS 5.8）。
+const telemetryFlushTimeout = 10 * time.Second
+
 // TelemetryStore 持久化检索遥测（v1.4.0）。由 infrastructure/db 实现；
 // 写入失败不应阻塞检索——CitationRecorder 会吞掉并记录错误。
 type TelemetryStore interface {
@@ -41,15 +44,16 @@ type telemetryBatch struct {
 // 任何拥塞都不得反压检索路径。明文门控在投递侧（RecordCitations 调用方）完成，
 // recorder 不感知开关。
 type CitationRecorder struct {
-	store    TelemetryStore
-	logger   *slog.Logger
-	cfg      CitationRecorderConfig
-	now      func() time.Time
-	ch       chan telemetryBatch
-	stop     chan struct{}
-	done     chan struct{}
-	dropped  atomic.Int64
-	flushing sync.Mutex
+	store     TelemetryStore
+	logger    *slog.Logger
+	cfg       CitationRecorderConfig
+	now       func() time.Time
+	ch        chan telemetryBatch
+	stop      chan struct{}
+	done      chan struct{}
+	dropped   atomic.Int64
+	flushing  sync.Mutex
+	closeOnce sync.Once
 }
 
 // NewCitationRecorder 构造并启动后台 flusher。cfg 非法值兜底为保守默认。
@@ -87,6 +91,18 @@ func (r *CitationRecorder) RecordCitations(citations []model.SearchCitation, que
 		return
 	}
 	batch := telemetryBatch{citations: citations, queryLogs: queryLogs}
+	// 已停止（Close 完成）后的投递无人消费，直接计入丢弃，不留无主的缓冲批。
+	select {
+	case <-r.stop:
+		dropped := r.dropped.Add(1)
+		r.logger.Warn("insights_telemetry_dropped",
+			slog.String("event", "insights_telemetry_dropped"),
+			slog.String("reason", "recorder_stopped"),
+			slog.Int64("total_dropped_batches", dropped),
+		)
+		return
+	default:
+	}
 	select {
 	case r.ch <- batch:
 	default:
@@ -109,11 +125,14 @@ func (r *CitationRecorder) Dropped() int64 {
 }
 
 // Close 停止 flusher 并尽量落库缓冲中的残量；ctx 取消或超时后放弃剩余批次。
+// 幂等：重复调用安全。
 func (r *CitationRecorder) Close(ctx context.Context) {
 	if r == nil {
 		return
 	}
-	close(r.stop)
+	r.closeOnce.Do(func() {
+		close(r.stop)
+	})
 	select {
 	case <-r.done:
 	case <-ctx.Done():
@@ -174,7 +193,7 @@ func (r *CitationRecorder) flush(citations []model.SearchCitation, queryLogs []m
 			)
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
 	defer cancel()
 	for start := 0; start < len(citations); start += r.cfg.FlushBatchSize {
 		end := start + r.cfg.FlushBatchSize

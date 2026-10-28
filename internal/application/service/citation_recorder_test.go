@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -206,5 +205,3 @@ func TestCitationRecorderSplitsLargeBatches(t *testing.T) {
 	require.Len(t, got, 12, "全部行最终落库")
 	require.GreaterOrEqual(t, calls, 3, "12 行 / batch=5 至少分 3 次落库")
 }
-
-var _ atomic.Int64 // 保持 import 对齐（避免不同 Go 版本 unused import 行为差异）

@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS search_citations (
     chunk_revision_id uuid NOT NULL,
     rank integer NOT NULL CHECK (rank >= 1),
     retrieval_status text NOT NULL CHECK (retrieval_status IN ('available', 'degraded')),
+    -- transport 冗余自 search_run（rest/mcp/console）：沉睡判定与引用摘要按健康口径
+    -- 排除管理台检索测试流量，且不受 search_run 过期清理影响（D3）。
+    transport text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (search_run_id, chunk_revision_id)
 );

@@ -128,6 +128,7 @@ CREATE TABLE search_citations (
     chunk_revision_id TEXT NOT NULL,
     rank              INTEGER NOT NULL CHECK (rank >= 1),
     retrieval_status  TEXT NOT NULL CHECK (retrieval_status IN ('available', 'degraded')),
+    transport         TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (search_run_id, chunk_revision_id)
 );

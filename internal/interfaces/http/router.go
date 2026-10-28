@@ -64,6 +64,7 @@ type Dependencies struct {
 	WebSources                WebSourceService
 	Insights                  InsightsHTTPService
 	QueryLogSettings          QueryLogSettingsHTTPService
+	QueryLogRetentionDays     int // settings 响应用；<=0 时 handler 兜底 30
 	CitationSummary           CitationSummaryHTTPService
 	MCPHandler                stdhttp.Handler
 	SPA                       fs.FS
@@ -582,7 +583,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		// 健康洞察（v1.4.0 spec §7）：Session owner/admin，API Key 不可达——
 		// 健康信号是运营者视角，agent 消费的新鲜度经检索响应 metadata 满足。
 		if deps.Insights != nil {
-			insightsH := newInsightsHandler(deps.Insights, deps.QueryLogSettings)
+			insightsH := newInsightsHandler(deps.Insights, deps.QueryLogSettings, deps.QueryLogRetentionDays)
 			insightsGroup := wsGroup.Group("/knowledge-bases/:id/insights")
 			insightsGroup.Use(RequireWorkspaceRole(value.RoleAdmin))
 			{

@@ -49,6 +49,21 @@ func runRetrievalCleanupLoop(
 					log.Info("search_run 清理完成", "deleted_search_runs", deleted)
 				}
 			}
+			// 遥测两表按各自保留期独立清理（D3）：不随 search_run 过期级联——
+			// 引用历史必须活过 run 清理与文档清理（删除预警依赖）。
+			if telemetryCleanup != nil {
+				citationsDeleted, logsDeleted, err := telemetryCleanup.RunNow(cctx, batchSize)
+				if err != nil {
+					if ctx.Err() == nil {
+						log.Warn("检索遥测清理失败", "error", err.Error())
+					}
+				} else if citationsDeleted > 0 || logsDeleted > 0 {
+					log.Info("检索遥测清理完成",
+						"deleted_citations", citationsDeleted,
+						"deleted_query_logs", logsDeleted,
+					)
+				}
+			}
 			result, err := cleanup.CleanupGlobal(cctx)
 			cancel()
 			if err != nil {

@@ -16,6 +16,9 @@ import (
 type SearchKBFlagReader interface {
 	// GetQueryLogEnabled 返回 KB 的查询原文记录开关；KB 不存在返回 ErrNotFound。
 	GetQueryLogEnabled(ctx context.Context, workspaceID, kbID uuid.UUID) (bool, error)
+	// GetQueryLogEnabledBatch 批量读取开关（单条 IN 查询）；不存在的 KB 不在结果中。
+	// 多库检索投递必须走批量，避免逐库点查放大热路径。
+	GetQueryLogEnabledBatch(ctx context.Context, workspaceID uuid.UUID, kbIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 // buildCitationEntries 把最终返回的结果行构造为引用遥测（spec §4.2）。
@@ -25,6 +28,7 @@ func buildCitationEntries(
 	workspaceID, fallbackKbID, runID uuid.UUID,
 	results []*dto.SearchResult,
 	status value.RetrievalStatus,
+	transport string,
 	now time.Time,
 ) []model.SearchCitation {
 	if len(results) == 0 {
@@ -78,7 +82,7 @@ func recordSingleKBTelemetry(
 	flags SearchKBFlagReader,
 	logger *slog.Logger,
 	workspaceID, kbID, runID uuid.UUID,
-	query, queryHash string,
+	query, queryHash, transport string,
 	results []*dto.SearchResult,
 	status value.RetrievalStatus,
 ) {
@@ -86,7 +90,7 @@ func recordSingleKBTelemetry(
 		return
 	}
 	now := time.Now().UTC()
-	citations := buildCitationEntries(workspaceID, kbID, runID, results, status, now)
+	citations := buildCitationEntries(workspaceID, kbID, runID, results, status, transport, now)
 	var logs []model.SearchQueryLogEntry
 	if queryLogEnabled(ctx, logger, flags, workspaceID, kbID) {
 		logs = append(logs, buildQueryLogEntry(workspaceID, kbID, runID, query, queryHash, status, now))
@@ -102,7 +106,7 @@ func recordMultiKBTelemetry(
 	flags SearchKBFlagReader,
 	logger *slog.Logger,
 	workspaceID, runID uuid.UUID,
-	query, queryHash string,
+	query, queryHash, transport string,
 	results []*dto.SearchResult,
 	kbIDs []uuid.UUID,
 	status value.RetrievalStatus,
@@ -111,11 +115,22 @@ func recordMultiKBTelemetry(
 		return
 	}
 	now := time.Now().UTC()
-	citations := buildCitationEntries(workspaceID, uuid.Nil, runID, results, status, now)
+	citations := buildCitationEntries(workspaceID, uuid.Nil, runID, results, status, transport, now)
 	var logs []model.SearchQueryLogEntry
-	for _, kbID := range kbIDs {
-		if queryLogEnabled(ctx, logger, flags, workspaceID, kbID) {
-			logs = append(logs, buildQueryLogEntry(workspaceID, kbID, runID, query, queryHash, status, now))
+	// 批量读开关（单条 IN 查询）：多库投递不做逐库点查。
+	if enabledByKB, err := flags.GetQueryLogEnabledBatch(ctx, workspaceID, kbIDs); err != nil {
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("insights_query_log_flag_read_failed",
+			slog.String("event", "insights_query_log_flag_read_failed"),
+			slog.String("error", err.Error()),
+		)
+	} else {
+		for _, kbID := range kbIDs {
+			if enabledByKB[kbID] {
+				logs = append(logs, buildQueryLogEntry(workspaceID, kbID, runID, query, queryHash, status, now))
+			}
 		}
 	}
 	recorder.RecordCitations(citations, logs)

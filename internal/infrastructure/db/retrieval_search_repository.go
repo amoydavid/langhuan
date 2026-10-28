@@ -13,6 +13,7 @@ import (
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
 	indexport "github.com/dajee/langhuan/internal/ports/index"
+	sourceport "github.com/dajee/langhuan/internal/ports/source"
 )
 
 // WithinWorkspace binds all candidate and evidence reads to one tenant-local transaction.
@@ -259,7 +260,7 @@ func lastFetchAtFromSourceMeta(meta JSONMap) *time.Time {
 	if meta == nil {
 		return nil
 	}
-	raw, ok := meta["last_fetch_at"].(string)
+	raw, ok := meta[sourceport.SourceMetaLastFetchAt].(string)
 	if !ok || raw == "" {
 		return nil
 	}

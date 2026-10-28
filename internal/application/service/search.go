@@ -413,7 +413,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 	// 遥测投递：Finish 之后、响应构造之前；非阻塞，不影响返回（spec §6）。
 	recordSingleKBTelemetry(ctx, s.telemetry, s.kbFlags, s.logger,
 		input.WorkspaceID, input.KnowledgeBaseID, recorder.RunID(),
-		query, queryHash, results, status)
+		query, queryHash, meta.Transport, results, status)
 	summary := recorder.buildSummary(status, "", runRankingStage, runResultCount, []uuid.UUID{input.KnowledgeBaseID}, gens, value.SearchScopeSelected)
 	summary.CompletedAt = ptrTime(time.Now())
 	_ = runOptions

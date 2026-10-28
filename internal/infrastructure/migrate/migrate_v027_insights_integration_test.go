@@ -31,6 +31,14 @@ func TestMigrateV027InsightsTelemetry(t *testing.T) {
 		require.Equal(t, 1, count, "table %s should exist", table)
 	}
 
+	// citations 冗余 transport 列（健康口径排除 console 流量，D3：不随 run 清理失效）。
+	var transportCol int
+	require.NoError(t, database.QueryRowContext(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'search_citations' AND column_name = 'transport'
+	`).Scan(&transportCol))
+	require.Equal(t, 1, transportCol, "search_citations.transport 列")
+
 	for _, indexName := range []string{
 		"idx_citations_doc_window",
 		"idx_citations_run",

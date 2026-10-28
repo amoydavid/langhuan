@@ -79,7 +79,7 @@ func newInsightsTestRouter(t *testing.T, stub *insightsServiceStub) *gin.Engine 
 		c.Next()
 	})
 	insights := router.Group("/api/v1/workspaces/:workspace_slug/knowledge-bases/:id/insights")
-	h := newInsightsHandler(stub, stub)
+	h := newInsightsHandler(stub, stub, 30)
 	{
 		insights.GET("/overview", h.getOverview)
 		insights.GET("/queries", h.getQueries)
