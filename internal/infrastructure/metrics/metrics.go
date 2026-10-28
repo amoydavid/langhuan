@@ -26,6 +26,7 @@ type Metrics struct {
 	httpRequestDuration   metric.Float64Histogram
 	documentStageTotal    metric.Int64Counter
 	documentStageDuration metric.Float64Histogram
+	telemetryDropped      metric.Int64Counter
 }
 
 // New 用给定 MeterProvider 构造指标集。mp 为 nil 时回退到全局 MeterProvider。
@@ -42,6 +43,7 @@ func New(mp metric.MeterProvider) *Metrics {
 	m.httpRequestDuration = histogram(meter, "langhuan.http.request.duration.seconds", "HTTP 请求耗时（秒）")
 	m.documentStageTotal = counter(meter, "langhuan.document.stage.total", "导入主链路各阶段执行次数")
 	m.documentStageDuration = histogram(meter, "langhuan.document.stage.duration.seconds", "导入主链路各阶段耗时（秒）")
+	m.telemetryDropped = counter(meter, "langhuan.insights.telemetry.dropped.total", "检索遥测因缓冲满被丢弃的批次数")
 	return m
 }
 
@@ -61,6 +63,15 @@ func histogram(meter metric.Meter, name, desc string) metric.Float64Histogram {
 		return nil
 	}
 	return h
+}
+
+// ObserveTelemetryDropped 记录一次遥测丢批（缓冲满或已停止后的投递）。
+func (m *Metrics) ObserveTelemetryDropped(reason string) {
+	if m == nil || m.telemetryDropped == nil {
+		return
+	}
+	m.telemetryDropped.Add(context.Background(), 1,
+		metric.WithAttributes(attribute.String("reason", reason)))
 }
 
 // ObserveHTTPRequest 记录一次 HTTP 请求的计数与耗时。

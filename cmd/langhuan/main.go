@@ -449,6 +449,8 @@ func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*appRu
 	app.otelProviders = otelProviders
 	// 指标经 OTel Meter 产出，由 Prometheus exporter 暴露 /metrics，可选 OTLP 推送。
 	app.services.httpMetrics = metricspkg.New(otelProviders.MeterProvider)
+	// 丢批计数外接指标（延迟绑定：metrics 实例晚于 recorder 构造）。
+	app.services.citationRecorder.SetDropObserver(app.services.httpMetrics.ObserveTelemetryDropped)
 	// redis pinger 仅在 Redis 启用时构造；内存模式下传 nil redisPinger，
 	// readiness 自动跳过 Redis 探活（避免对 nil redisClient 调用 Ping）。
 	var redisPingerVal redisPinger

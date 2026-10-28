@@ -24,13 +24,17 @@ type TelemetryStore interface {
 
 // CitationRecorderConfig 是引用遥测异步写入的进程级参数（config.yaml insights 小节）。
 type CitationRecorderConfig struct {
-	// BufferSize 是进程内有界缓冲的最大批次数；缓冲满时丢弃新批并计数。
+	// BufferSize 是进程内有界缓冲的最大批位数；缓冲满时丢弃新批并计数。
 	BufferSize int
 	// FlushInterval 是批量落库的最长等待间隔。
 	FlushInterval time.Duration
 	// FlushBatchSize 是单批落库的最大行数（单批 INSERT 行数上限）。
 	FlushBatchSize int
 }
+
+// CitationDropObserver 接收丢批事件（reason: buffer_full | recorder_stopped），
+// 供装配层接到指标（OTel counter）；nil 时仅保留结构化日志。
+type CitationDropObserver func(reason string)
 
 // telemetryBatch 是一次投递的原子单元：同一次检索的引用行与（可选）查询原文
 // 同批落库，保证明文与引用来自同一次 run。
@@ -44,19 +48,36 @@ type telemetryBatch struct {
 // 任何拥塞都不得反压检索路径。明文门控在投递侧（RecordCitations 调用方）完成，
 // recorder 不感知开关。
 type CitationRecorder struct {
-	store     TelemetryStore
-	logger    *slog.Logger
-	cfg       CitationRecorderConfig
-	now       func() time.Time
-	ch        chan telemetryBatch
-	stop      chan struct{}
-	done      chan struct{}
-	dropped   atomic.Int64
-	flushing  sync.Mutex
-	closeOnce sync.Once
+	store        TelemetryStore
+	logger       *slog.Logger
+	cfg          CitationRecorderConfig
+	now          func() time.Time
+	ch           chan telemetryBatch
+	stop         chan struct{}
+	done         chan struct{}
+	dropped      atomic.Int64
+	flushing     sync.Mutex
+	closeOnce    sync.Once
+	dropObserver atomic.Pointer[CitationDropObserver]
+}
+
+// SetDropObserver 延迟绑定丢批观察者（装配顺序晚于构造时调用）。
+func (r *CitationRecorder) SetDropObserver(observer CitationDropObserver) {
+	if r == nil || observer == nil {
+		return
+	}
+	r.dropObserver.Store(&observer)
+}
+
+// notifyDrop 触发已绑定的观察者（未绑定为 no-op）。
+func (r *CitationRecorder) notifyDrop(reason string) {
+	if observer := r.dropObserver.Load(); observer != nil {
+		(*observer)(reason)
+	}
 }
 
 // NewCitationRecorder 构造并启动后台 flusher。cfg 非法值兜底为保守默认。
+// 丢批观察者经 SetDropObserver 延迟绑定（metrics 实例在装配顺序上晚于本构造）。
 func NewCitationRecorder(store TelemetryStore, cfg CitationRecorderConfig, logger *slog.Logger) *CitationRecorder {
 	if cfg.BufferSize <= 0 {
 		cfg.BufferSize = 1024
@@ -95,6 +116,7 @@ func (r *CitationRecorder) RecordCitations(citations []model.SearchCitation, que
 	select {
 	case <-r.stop:
 		dropped := r.dropped.Add(1)
+		r.notifyDrop("recorder_stopped")
 		r.logger.Warn("insights_telemetry_dropped",
 			slog.String("event", "insights_telemetry_dropped"),
 			slog.String("reason", "recorder_stopped"),
@@ -107,8 +129,10 @@ func (r *CitationRecorder) RecordCitations(citations []model.SearchCitation, que
 	case r.ch <- batch:
 	default:
 		dropped := r.dropped.Add(1)
+		r.notifyDrop("buffer_full")
 		r.logger.Warn("insights_telemetry_dropped",
 			slog.String("event", "insights_telemetry_dropped"),
+			slog.String("reason", "buffer_full"),
 			slog.Int("citation_rows", len(citations)),
 			slog.Int("query_log_rows", len(queryLogs)),
 			slog.Int64("total_dropped_batches", dropped),

@@ -205,3 +205,48 @@ func TestCitationRecorderSplitsLargeBatches(t *testing.T) {
 	require.Len(t, got, 12, "全部行最终落库")
 	require.GreaterOrEqual(t, calls, 3, "12 行 / batch=5 至少分 3 次落库")
 }
+
+func TestCitationRecorderNotifiesDropObserver(t *testing.T) {
+	block := make(chan struct{})
+	store := &fakeTelemetryStore{block: block}
+	recorder := NewCitationRecorder(store, CitationRecorderConfig{
+		BufferSize: 1, FlushInterval: 5 * time.Millisecond, FlushBatchSize: 100,
+	}, nil)
+
+	var mu sync.Mutex
+	reasons := []string{}
+	recorder.SetDropObserver(func(reason string) {
+		mu.Lock()
+		defer mu.Unlock()
+		reasons = append(reasons, reason)
+	})
+
+	// 填满缓冲（flush 被 block 卡住）触发 buffer_full 丢弃。
+	for i := 0; i < 10; i++ {
+		recorder.RecordCitations([]model.SearchCitation{validCitation(uuid.New(), i+1)}, nil)
+	}
+	requireWaitingReason := func(want string) {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			mu.Lock()
+			for _, reason := range reasons {
+				if reason == want {
+					mu.Unlock()
+					return
+				}
+			}
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("观察者未收到 %s，收到的 reasons=%v", want, reasons)
+	}
+	requireWaitingReason("buffer_full")
+
+	close(block)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	recorder.Close(ctx)
+	// stop 后投递触发 recorder_stopped。
+	recorder.RecordCitations([]model.SearchCitation{validCitation(uuid.New(), 1)}, nil)
+	requireWaitingReason("recorder_stopped")
+}
