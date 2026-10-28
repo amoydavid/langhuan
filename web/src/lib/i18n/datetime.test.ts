@@ -34,4 +34,10 @@ describe('日期/时间 i18n', () => {
       /\d{4}/
     )
   })
+
+  it('非法日期输入返回占位符而不是抛 RangeError', () => {
+    expect(formatDateTime('not-a-date')).toBe('—')
+    expect(formatDateTime('2026-13-45T99:99:99Z')).toBe('—')
+    expect(formatDateTime(new Date(Number.NaN))).toBe('—')
+  })
 })

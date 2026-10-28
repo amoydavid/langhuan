@@ -15,5 +15,7 @@ export function formatDateTime(
   options?: Intl.DateTimeFormatOptions
 ): string {
   const date = value instanceof Date ? value : new Date(value)
+  // 非法输入（如脏数据日期串）返回占位符，避免 Intl.DateTimeFormat 抛 RangeError。
+  if (Number.isNaN(date.getTime())) return '—'
   return new Intl.DateTimeFormat(currentLocale(), options).format(date)
 }

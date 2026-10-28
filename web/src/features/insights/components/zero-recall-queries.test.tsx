@@ -123,6 +123,39 @@ describe('ZeroRecallQueries', () => {
     await expect.element(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
+  it('开启记录但无原文的行操作列仍渲染（列数与表头一致），按钮置灰禁用', async () => {
+    const screen = await renderPanel({
+      queries: [
+        {
+          query_hash: 'hash-3',
+          query_chars: 6,
+          hits: 3,
+          first_seen_at: '2026-10-22T08:00:00Z',
+          last_seen_at: '2026-10-26T09:14:00Z',
+        },
+      ],
+    })
+
+    // 开启态表头 4 列（query/hits/lastSeen/actions）；无原文行不得缺操作列导致错位。
+    const rows = document.querySelectorAll('tbody tr')
+    expect(rows).toHaveLength(1)
+    const headerCells = document.querySelectorAll('thead th')
+    expect(headerCells).toHaveLength(4)
+    expect(rows[0].querySelectorAll('td')).toHaveLength(headerCells.length)
+    expect(rows[0].querySelector('td:last-child')?.textContent).toContain(
+      '无原文'
+    )
+
+    const disabledButton = screen.getByRole('button', { name: '无原文' })
+    await expect.element(disabledButton).toBeVisible()
+    await expect.element(disabledButton).toBeDisabled()
+    await expect
+      .element(disabledButton)
+      .toHaveAttribute('title', '开启记录前的查询无原文')
+    expect(document.querySelector('a[href*="/content/faq/new"]')).toBeNull()
+    expect(document.querySelector('a[href*="/search?q="]')).toBeNull()
+  })
+
   it('零召回为空是好状态：开/关两态都渲染空态（关闭态仍保留开启入口）', async () => {
     const screen = await renderPanel({
       queryLogEnabled: false,

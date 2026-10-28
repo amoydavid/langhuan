@@ -330,6 +330,8 @@ GET /api/v1/workspaces/:workspace_slug/knowledge-bases/:kb_id/documents/:documen
 
 `window_days ∈ [1,31]`、list `limit ∈ [1,50]`、activity `limit ∈ [1,100]`，越界返回 validation error。隐私合同：`query_log_enabled=false` 的知识库，任何 API 响应、日志与界面均不出现查询原文。
 
+> **有效窗口说明**：空召回率与零召回 Top N 基于 `search_runs`，后者默认保留 168 小时（`retrieval.search_run_retention`）——默认部署下选择 14/30 天窗口时，实际覆盖不超过 run 保留期。需要长窗口洞察的部署应相应调大该配置；沉睡内容与引用遥测不受此限（`search_citations` 按自身 35 天保留期独立存在，D3）。
+
 ## 8.3 OIDC 登录（内部 IdP、OIDC-first）
 
 琅嬛支持接入**企业内部受控 OIDC issuer**（Keycloak / Authentik / 自建 Dex 等），以 Authorization Code flow（PKCE S256 + OIDC nonce + id_token 验签）完成浏览器登录。OIDC 登录成功后复用既有 session cookie，`SessionAuth` 中间件与 API Key/MCP 程序化访问路径完全不变。

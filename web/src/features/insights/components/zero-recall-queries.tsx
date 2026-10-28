@@ -156,24 +156,36 @@ export function ZeroRecallQueries({
                   <TableCell className='text-muted-foreground text-sm'>
                     {formatSeen(item.last_seen_at)}
                   </TableCell>
-                  {queryLogEnabled && item.latest_query_text && (
+                  {queryLogEnabled && (
                     <TableCell>
-                      <div className='flex items-center gap-1'>
-                        <Button variant='outline' size='sm' asChild>
-                          <a
-                            href={`${base}/content/faq/new?question=${encodeURIComponent(item.latest_query_text)}`}
-                          >
-                            {t('insights.zeroRecall.createFaq')}
-                          </a>
+                      {item.latest_query_text ? (
+                        <div className='flex items-center gap-1'>
+                          <Button variant='outline' size='sm' asChild>
+                            <a
+                              href={`${base}/content/faq/new?question=${encodeURIComponent(item.latest_query_text)}`}
+                            >
+                              {t('insights.zeroRecall.createFaq')}
+                            </a>
+                          </Button>
+                          <Button variant='ghost' size='sm' asChild>
+                            <a
+                              href={`${base}/search?q=${encodeURIComponent(item.latest_query_text)}`}
+                            >
+                              {t('insights.zeroRecall.testSearch')}
+                            </a>
+                          </Button>
+                        </div>
+                      ) : (
+                        // 开启记录前的查询无原文：第 5 列仍渲染，置禁用态避免死链。
+                        <Button
+                          variant='outline'
+                          size='sm'
+                          disabled
+                          title={t('insights.zeroRecall.noOriginalTitle')}
+                        >
+                          {t('insights.zeroRecall.noOriginal')}
                         </Button>
-                        <Button variant='ghost' size='sm' asChild>
-                          <a
-                            href={`${base}/search?q=${encodeURIComponent(item.latest_query_text)}`}
-                          >
-                            {t('insights.zeroRecall.testSearch')}
-                          </a>
-                        </Button>
-                      </div>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>

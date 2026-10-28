@@ -83,5 +83,6 @@ export type FAQSaveInput = CreateFAQInput | UpdateFAQInput
  * `question` 存在时预填标题与问题 1，并渲染来源提示条。
  */
 export const faqNewSearchSchema = z.object({
-  question: z.string().max(500).optional(),
+  // 超长/非法 query 参数回落为无预填，而不是让 validateSearch 抛错（同 insightsSearchSchema 的 catch 模式）。
+  question: z.string().max(500).optional().catch(undefined),
 })

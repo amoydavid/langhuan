@@ -1,7 +1,14 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { SearchX, ShieldAlert } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
@@ -60,6 +67,43 @@ function InsightsSkeleton() {
   )
 }
 
+/** 面板级轻量错误块：加载失败时替代面板内容，提供重试入口。 */
+function PanelError({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <div
+      data-testid='insights-panel-error'
+      className='flex min-h-32 flex-col items-center justify-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center'
+    >
+      <p className='font-medium text-sm'>{t('insights.page.loadFailed')}</p>
+      <Button variant='outline' size='sm' onClick={onRetry}>
+        {t('insights.page.retry')}
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * 面板级查询态分发：isError → 轻量错误块（可重试）；未就绪 → 面板骨架；
+ * 仅 isSuccess 且有数据时渲染面板——「好状态」空态只在数据真正为空（[]）时出现，
+ * 不再用 `?? []` 把错误/加载兜底成空态。
+ */
+function PanelGate<TData>({
+  query,
+  children,
+}: {
+  query: UseQueryResult<TData>
+  children: (data: TData) => ReactNode
+}) {
+  if (query.isError) {
+    return <PanelError onRetry={() => void query.refetch()} />
+  }
+  if (!query.isSuccess || query.data === undefined) {
+    return <Skeleton className='h-64' />
+  }
+  return <>{children(query.data)}</>
+}
+
 /**
  * 健康 tab 主页面：四张计数卡 + 零召回/沉睡/内容动态三个面板。
  * 窗口（7/14/30）作用于计数卡与零召回；沉睡固定 30 天口径（spec §9.2）。
@@ -112,17 +156,20 @@ export function InsightsPage({
   ) {
     return <InsightsMemberNotice />
   }
+  // 非 403 错误（网络/5xx 等）不再永久骨架：出可重试错误块。
+  if (overviewQuery.isError) {
+    return <PanelError onRetry={() => void overviewQuery.refetch()} />
+  }
 
   const overview = overviewQuery.data
-  const activity = activityQuery.data
   if (!overview) return <InsightsSkeleton />
 
-  // 全空态（spec §9.4）：窗口内零 run 且无内容变更；activity 未就绪前不判空，避免闪现。
-  const isActivitySettled = activityQuery.isSuccess || activityQuery.isError
+  // 全空态（spec §9.4）：窗口内零 run 且无内容变更；仅在 activity 成功时判定，
+  // 错误/加载态交给下方面板的错误块与骨架，不冒充「无数据」好状态。
   if (
     overview.runs_total === 0 &&
-    isActivitySettled &&
-    (activity?.events.length ?? 0) === 0
+    activityQuery.isSuccess &&
+    activityQuery.data.events.length === 0
   ) {
     return (
       <div className='flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed bg-muted/20 text-center'>
@@ -134,9 +181,6 @@ export function InsightsPage({
       </div>
     )
   }
-
-  const queryLogEnabled =
-    queriesQuery.data?.query_log_enabled ?? overview.query_log_enabled
 
   return (
     <div className='space-y-5'>
@@ -168,32 +212,45 @@ export function InsightsPage({
 
       <InsightCards overview={overview} windowDays={windowDays} />
 
-      <ZeroRecallQueries
-        workspaceSlug={workspaceSlug}
-        kbId={kbId}
-        windowDays={windowDays}
-        queryLogEnabled={queryLogEnabled}
-        queries={queriesQuery.data?.queries ?? []}
-        onEnableQueryLog={handleEnableQueryLog}
-        enablePending={settingsMutation.isPending}
-      />
+      <PanelGate query={queriesQuery}>
+        {(data) => (
+          <ZeroRecallQueries
+            workspaceSlug={workspaceSlug}
+            kbId={kbId}
+            windowDays={windowDays}
+            queryLogEnabled={
+              data.query_log_enabled ?? overview.query_log_enabled
+            }
+            queries={data.queries}
+            onEnableQueryLog={handleEnableQueryLog}
+            enablePending={settingsMutation.isPending}
+          />
+        )}
+      </PanelGate>
 
-      <SleepingDocuments
-        workspaceSlug={workspaceSlug}
-        kbId={kbId}
-        insufficientSample={
-          documentsQuery.data?.insufficient_sample ??
-          overview.sleeping_insufficient_sample
-        }
-        documents={documentsQuery.data?.documents ?? []}
-      />
+      <PanelGate query={documentsQuery}>
+        {(data) => (
+          <SleepingDocuments
+            workspaceSlug={workspaceSlug}
+            kbId={kbId}
+            insufficientSample={
+              data.insufficient_sample ?? overview.sleeping_insufficient_sample
+            }
+            documents={data.documents}
+          />
+        )}
+      </PanelGate>
 
-      <ContentActivity
-        workspaceSlug={workspaceSlug}
-        kbId={kbId}
-        events={activity?.events ?? []}
-        limit={INSIGHTS_ACTIVITY_LIMIT}
-      />
+      <PanelGate query={activityQuery}>
+        {(data) => (
+          <ContentActivity
+            workspaceSlug={workspaceSlug}
+            kbId={kbId}
+            events={data.events}
+            limit={INSIGHTS_ACTIVITY_LIMIT}
+          />
+        )}
+      </PanelGate>
     </div>
   )
 }

@@ -49,26 +49,31 @@ export const Route = createFileRoute(
   '/_authenticated/workspaces/$workspaceSlug/kb/$kbId/health'
 )({
   validateSearch: insightsSearchSchema,
-  loader: async ({ context, params }) => {
+  // 预取窗口与组件读取口径一致（search.window），消除非默认窗口下的双倍请求。
+  loaderDeps: ({ search }) => search,
+  loader: async ({ context, params, deps: search }) => {
     const me = await context.queryClient.ensureQueryData(meQueryOptions())
     const role = me.workspaces.find(
       (item) => item.slug === params.workspaceSlug
     )?.role
     if (role !== 'admin' && role !== 'owner') return
+    // 预取窗口与组件读取口径一致（search.window），消除非默认窗口下的双倍请求。
+    const windowDays: InsightsWindowDays =
+      search.window ?? DEFAULT_INSIGHTS_WINDOW_DAYS
     try {
       await Promise.all([
         context.queryClient.ensureQueryData(
           insightsOverviewQueryOptions(
             params.workspaceSlug,
             params.kbId,
-            DEFAULT_INSIGHTS_WINDOW_DAYS
+            windowDays
           )
         ),
         context.queryClient.ensureQueryData(
           zeroRecallQueriesQueryOptions(
             params.workspaceSlug,
             params.kbId,
-            DEFAULT_INSIGHTS_WINDOW_DAYS
+            windowDays
           )
         ),
         context.queryClient.ensureQueryData(

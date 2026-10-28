@@ -11,6 +11,8 @@ export const insights = {
     window7: 'Last 7 days',
     window14: 'Last 14 days',
     window30: 'Last 30 days',
+    loadFailed: 'Failed to load',
+    retry: 'Retry',
   },
 
   empty: {
@@ -31,7 +33,7 @@ export const insights = {
     emptyRateTitle: 'Empty-recall rate',
     emptyRatePrevious: 'Previous {{rate}}',
     emptyRateNoPrevious: 'No previous window',
-    deltaDown: '{{delta}}pp vs previous',
+    deltaDown: '-{{delta}}pp vs previous',
     deltaUp: '+{{delta}}pp vs previous',
     sleepingTitle: 'Sleeping content',
     sleepingSub: 'Zero citations in 30 days',
@@ -53,6 +55,8 @@ export const insights = {
     maskedQuery: '••• ({{chars}} chars)',
     createFaq: 'Create FAQ',
     testSearch: 'Test search',
+    noOriginalTitle: 'Query text was not logged at the time',
+    noOriginal: 'No text',
     disabledTitle: 'Query text logging is off',
     disabledDescription:
       'Only counts and trends are available right now; enabling logging lets you turn zero-recall queries directly into FAQs.',

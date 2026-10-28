@@ -11,6 +11,8 @@ export const insights = {
     window7: '近 7 天',
     window14: '近 14 天',
     window30: '近 30 天',
+    loadFailed: '加载失败',
+    retry: '重试',
   },
 
   empty: {
@@ -52,6 +54,8 @@ export const insights = {
     maskedQuery: '•••（{{chars}} 字）',
     createFaq: '创建 FAQ',
     testSearch: '检索测试',
+    noOriginalTitle: '开启记录前的查询无原文',
+    noOriginal: '无原文',
     disabledTitle: '未开启查询原文记录',
     disabledDescription:
       '目前只能看到次数与趋势，无法定位具体问法；开启后可对零召回问题直接补写 FAQ。',

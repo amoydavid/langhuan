@@ -68,9 +68,11 @@ describe('faqNewSearchSchema（健康面板零召回预填，v1.4.0 §9.3.6）',
     ).toBe(true)
   })
 
-  it('rejects a question longer than 500 chars', () => {
-    expect(
-      faqNewSearchSchema.safeParse({ question: '问'.repeat(501) }).success
-    ).toBe(false)
+  it('超长 question 解析为 undefined（回落无预填）而不是让路由校验抛错', () => {
+    const result = faqNewSearchSchema.safeParse({ question: '问'.repeat(501) })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.question).toBeUndefined()
+    expect(result.data).toEqual({})
   })
 })
