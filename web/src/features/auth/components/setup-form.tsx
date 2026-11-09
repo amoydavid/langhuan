@@ -17,9 +17,11 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { registerUser } from '@/features/auth/api'
-import { bootstrapStatusQueryOptions } from '@/features/auth/queries'
+import { chooseWorkspaceEntry } from '@/features/auth/navigation'
+import { meQueryOptions } from '@/features/auth/queries'
 import { type SetupFormValues, setupSchema } from '@/features/auth/schemas'
 import { parseApiError } from '@/lib/api/error'
+import { resetUnauthorizedNavigation } from '@/lib/query-client'
 import { cn } from '@/lib/utils'
 
 export function SetupForm({
@@ -42,10 +44,15 @@ export function SetupForm({
     mutationFn: (input: Parameters<typeof registerUser>[0]) =>
       registerUser(input),
     onSuccess: async () => {
+      // 注册即登录：后端已签发会话 cookie，直接进控制台（与邀请注册一致）。
+      resetUnauthorizedNavigation()
       await queryClient.invalidateQueries({ queryKey: ['bootstrap-status'] })
-      await queryClient.fetchQuery(bootstrapStatusQueryOptions())
+      const me = await queryClient.fetchQuery(meQueryOptions())
       toast.success(t('auth.setup.successToast'))
-      await navigate({ to: '/sign-in', replace: true })
+      await navigate({
+        to: chooseWorkspaceEntry(me, undefined),
+        replace: true,
+      })
     },
   })
 

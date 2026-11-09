@@ -1,7 +1,7 @@
 // 全栈 E2E 冒烟：web 内容源（v1.3.0）用户流程。
 //
 // 真实后端进程（standalone：SQLite + 进程内队列 + 内嵌 SPA 产物）+ 真实浏览器：
-//   首管理员初始化与登录（UI） → API 种子（工作区/模型/知识库） →
+//   首管理员初始化（注册即登录，UI） → API 种子（工作区/模型/知识库） →
 //   Web 子 tab「添加网站源」（crawl，指向本地静态站点桩） → 等同步完成 →
 //   内容 tab 看到抓取页面 → 检索 tab 查询命中。
 //
@@ -86,10 +86,14 @@ async function bootstrapAndLoginAsAdmin(browserPage: Page): Promise<void> {
     await browserPage.getByLabel('密码', { exact: true }).fill(ADMIN_PASSWORD)
     await browserPage.getByLabel('确认密码').fill(ADMIN_PASSWORD)
     await browserPage.getByRole('button', { name: '完成初始化' }).click()
-    // 初始化成功后跳转登录页。
-    await browserPage.waitForURL(/\/sign-in/)
+    // 注册即登录：初始化成功后直接离开 /setup（进入工作区入口页）。
+    await browserPage.waitForURL((url) => !url.pathname.includes('/setup'), {
+      timeout: 30_000,
+    })
+    return
   }
 
+  // 已初始化环境兜底：直接走登录页。
   await browserPage.getByLabel('邮箱').fill(ADMIN_EMAIL)
   await browserPage.getByLabel('密码', { exact: true }).fill(ADMIN_PASSWORD)
   await browserPage.getByRole('button', { name: '登录', exact: true }).click()
@@ -101,7 +105,7 @@ async function bootstrapAndLoginAsAdmin(browserPage: Page): Promise<void> {
 
 test.beforeAll(async ({ browser }) => {
   // 每次运行后端都是全新数据目录（见 support/prepare-backend.mjs），
-  // 因此固定重走「初始化管理员 → 登录」UI 流程并覆写 storageState。
+  // 因此固定重走「初始化管理员（注册即登录）」UI 流程并覆写 storageState。
   // 显式空 storageState 覆盖 test.use 的文件路径（此时文件尚未生成）。
   const context = await browser.newContext({
     locale: 'zh-CN',
@@ -185,7 +189,9 @@ test('Web 子 tab：添加 crawl 模式网站源（本地静态站点）', async
   await expect(modeGroup.getByRole('radio').first()).toBeChecked()
 
   await dialog.getByLabel('名称').fill(SOURCE_NAME)
-  await dialog.getByLabel('种子 URL').fill(SITE_SEED_URL)
+  // 用 textbox role 收敛：crawl 单选卡片的描述文案含「种子 URL」，
+  // getByLabel 子串匹配会同时命中该卡片（radio 可访问名含此词）。
+  await dialog.getByRole('textbox', { name: '种子 URL' }).fill(SITE_SEED_URL)
 
   // 高级选项保持默认：respect_robots 默认开启（站点桩无 robots.txt → 允许 + warning）。
   await dialog.getByRole('button', { name: '高级选项' }).click()
@@ -227,7 +233,10 @@ test('同步完成：源页面计数为 5 且零失败', async ({ page, request 
   )
   const card = page.getByText(SOURCE_NAME).first()
   await expect(card).toBeVisible()
-  await expect(page.getByText(`页面 ${SITE_PAGE_COUNT}`)).toBeVisible()
+  // exact 收敛：源卡片副标题「页面 N · 上次 …同步」含相同前缀，子串匹配会双命中。
+  await expect(
+    page.getByText(`页面 ${SITE_PAGE_COUNT}`, { exact: true })
+  ).toBeVisible()
 })
 
 test('内容 tab：抓取到的页面进入知识库并就绪', async ({ page, request }) => {

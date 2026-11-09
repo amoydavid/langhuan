@@ -171,6 +171,46 @@ func TestLoginBlockedDoesNotQueryUser(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AuthService.IssueSession（首用户注册即登录的免凭据签发路径）
+// ---------------------------------------------------------------------------
+
+func TestIssueSessionCreatesSessionForExistingUser(t *testing.T) {
+	userRepo := newFakeUserRepository()
+	sessRepo := newFakeSessionRepository()
+	hasher := &fakePasswordHasher{}
+	limiter := &fakeRateLimiter{}
+	seeded := seedUser(userRepo, "first@example.com", "First", "pw", false)
+
+	svc := NewAuthService(userRepo, sessRepo, hasher, limiter, testAuthConfig())
+
+	session, err := svc.IssueSession(context.Background(), seeded.ID, "setup-agent", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("IssueSession returned error: %v", err)
+	}
+	if session == nil || session.UserID != seeded.ID {
+		t.Fatalf("expected a session for the target user, got %+v", session)
+	}
+	if session.UserAgent != "setup-agent" || session.IPAddr != "127.0.0.1" {
+		t.Fatalf("session ua/ip not propagated: ua=%q ip=%q", session.UserAgent, session.IPAddr)
+	}
+	// 会话被持久化且寿命与配置一致。
+	persisted, ok := sessRepo.sessions[session.ID]
+	if !ok {
+		t.Fatal("session was not persisted")
+	}
+	if time.Until(persisted.ExpiresAt) > time.Hour {
+		t.Fatalf("session lifetime exceeds configured 1h: %v", persisted.ExpiresAt)
+	}
+	// 最后登录时间被刷新；限流器不得被触碰（本路径无凭据校验语义）。
+	if !userRepo.touchedLastLogin[session.UserID] {
+		t.Fatal("TouchLastLogin was not called")
+	}
+	if limiter.resetCount != 0 || limiter.failuresCount != 0 {
+		t.Fatalf("limiter must not be touched by IssueSession: reset=%d failures=%d", limiter.resetCount, limiter.failuresCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // AuthService.Logout
 // ---------------------------------------------------------------------------
 

@@ -21,6 +21,8 @@ import (
 // (middleware) via Authenticate.
 type AuthService interface {
 	Login(ctx context.Context, email, password, userAgent, ipAddr string) (*model.Session, error)
+	// IssueSession 为已建立身份的用户直接签发会话（首用户注册即登录路径）。
+	IssueSession(ctx context.Context, userID uuid.UUID, userAgent, ipAddr string) (*model.Session, error)
 	Logout(ctx context.Context, sessionID uuid.UUID) error
 	Authenticate(ctx context.Context, sessionID uuid.UUID) (*model.User, error)
 }
@@ -101,9 +103,9 @@ func (h authHandler) login(c *gin.Context) {
 }
 
 // register handles BOTH first-user registration (no token) and invitation
-// acceptance (with invitation_token). First-user registration does NOT create
-// a session (per spec); invitation acceptance creates a session and sets the
-// cookie.
+// acceptance (with invitation_token). Both paths sign the user in immediately:
+// they create a session and set the hardened cookie, so the first administrator
+// lands in the console without a second login.
 func (h authHandler) register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -141,12 +143,18 @@ func (h authHandler) register(c *gin.Context) {
 		return
 	}
 
-	// First-user registration: no session is created.
+	// First-user registration: 注册即登录，签发会话并写 cookie。
 	user, err := h.users.RegisterFirstUser(c.Request.Context(), req.Email, req.Nickname, req.Password)
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
+	session, err := h.auth.IssueSession(c.Request.Context(), user.ID, c.Request.UserAgent(), clientIP(c))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	h.setSessionCookie(c, session.ID.String())
 	c.JSON(stdhttp.StatusCreated, user)
 }
 

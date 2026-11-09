@@ -31,6 +31,13 @@ type fakeAuthService struct {
 	loginSession *model.Session
 	loginErr     error
 
+	issueSession       *model.Session
+	issueSessionErr    error
+	issueSessionCalled bool
+	issueSessionUserID uuid.UUID
+	issueSessionUA     string
+	issueSessionIP     string
+
 	logoutErr    error
 	logoutCalled bool
 	logoutID     uuid.UUID
@@ -40,6 +47,20 @@ type fakeAuthService struct {
 	// sessionID, when non-zero, is the only cookie value Authenticate accepts.
 	// When zero, any cookie value is accepted (convenient for /me tests).
 	sessionID uuid.UUID
+}
+
+func (s *fakeAuthService) IssueSession(_ context.Context, userID uuid.UUID, userAgent, ipAddr string) (*model.Session, error) {
+	s.issueSessionCalled = true
+	s.issueSessionUserID = userID
+	s.issueSessionUA = userAgent
+	s.issueSessionIP = ipAddr
+	if s.issueSessionErr != nil {
+		return nil, s.issueSessionErr
+	}
+	if s.issueSession == nil {
+		s.issueSession = &model.Session{ID: uuid.New(), UserID: userID, ExpiresAt: time.Now().Add(time.Hour)}
+	}
+	return s.issueSession, nil
 }
 
 func (s *fakeAuthService) Login(_ context.Context, email, password, userAgent, ipAddr string) (*model.Session, error) {
@@ -632,14 +653,16 @@ func TestGetAuthMeReturnsUserAndWorkspaceSummaries(t *testing.T) {
 	}
 }
 
-func TestPostAuthRegisterFirstUserNoCookie(t *testing.T) {
-	deps, _, users, _, _ := newAuthTestDeps()
+func TestPostAuthRegisterFirstUserSetsCookie(t *testing.T) {
+	deps, auth, users, _, _ := newAuthTestDeps()
 	router := NewRouter(deps)
 
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"email":"first@example.com","nickname":"first","password":"secret"}`)
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/register", body)
 	req.Header.Set("content-type", "application/json")
+	req.Header.Set("user-agent", "vitest-agent")
+	req.RemoteAddr = "10.0.0.1:1234"
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != stdhttp.StatusCreated {
@@ -648,8 +671,22 @@ func TestPostAuthRegisterFirstUserNoCookie(t *testing.T) {
 	if !users.registerCalled {
 		t.Fatal("RegisterFirstUser should be called for first-user registration")
 	}
-	if sessionCookieHeader(t, rec, testCookieName) != "" {
-		t.Fatal("first-user registration must not set a session cookie")
+	// 注册即登录：签发会话并写 hardened cookie。
+	if !auth.issueSessionCalled {
+		t.Fatal("IssueSession should be called to sign the first user in")
+	}
+	if auth.issueSessionUserID != users.registeredUser.ID {
+		t.Fatalf("IssueSession user id = %s, want %s", auth.issueSessionUserID, users.registeredUser.ID)
+	}
+	if auth.issueSessionUA != "vitest-agent" || auth.issueSessionIP != "10.0.0.1" {
+		t.Fatalf("IssueSession ua/ip = %q/%q, want vitest-agent/10.0.0.1", auth.issueSessionUA, auth.issueSessionIP)
+	}
+	cookieHeader := sessionCookieHeader(t, rec, testCookieName)
+	if cookieHeader == "" {
+		t.Fatal("first-user registration must set a session cookie")
+	}
+	if !strings.Contains(cookieHeader, "HttpOnly") {
+		t.Fatalf("cookie must be HttpOnly: %s", cookieHeader)
 	}
 	var got dto.AuthenticatedUser
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -657,6 +694,26 @@ func TestPostAuthRegisterFirstUserNoCookie(t *testing.T) {
 	}
 	if !got.IsPlatformAdmin {
 		t.Fatal("first user must be platform admin")
+	}
+}
+
+func TestPostAuthRegisterFirstUserIssueSessionError(t *testing.T) {
+	deps, auth, _, _, _ := newAuthTestDeps()
+	auth.issueSessionErr = domainerrors.ErrConflict
+	router := NewRouter(deps)
+
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"email":"first@example.com","nickname":"first","password":"secret"}`)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/register", body)
+	req.Header.Set("content-type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	// 用户已创建但会话签发失败：不得写 cookie，也不得返回 201 伪装登录成功。
+	if rec.Code == stdhttp.StatusCreated {
+		t.Fatalf("status = %d, want non-201 when session issuance fails", rec.Code)
+	}
+	if sessionCookieHeader(t, rec, testCookieName) != "" {
+		t.Fatal("no session cookie must be set when session issuance fails")
 	}
 }
 

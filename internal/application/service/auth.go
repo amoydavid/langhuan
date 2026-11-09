@@ -132,6 +132,23 @@ func (s *AuthService) Login(ctx context.Context, email, password, userAgent, ipA
 	return session, nil
 }
 
+// IssueSession 为已存在的用户直接签发会话并刷新最后登录时间（免凭据路径）。
+// 当前唯一调用方是首用户注册：注册成功后立即登录，免去首用户再手动登录一次。
+// 调用方必须已在同一请求内完成身份建立（如首注册）；本方法不做凭据校验、不走限流。
+// 返回的 *model.Session 供 handler 写入 cookie。
+func (s *AuthService) IssueSession(ctx context.Context, userID uuid.UUID, userAgent, ipAddr string) (*model.Session, error) {
+	session, err := model.NewSession(userID, s.sessionLife, userAgent, ipAddr)
+	if err != nil {
+		return nil, err
+	}
+	if cerr := s.sessionRepo.Create(ctx, session); cerr != nil {
+		return nil, cerr
+	}
+	// 与 Login 相同：TouchLastLogin 是尽力而为的审计更新，失败不使签发失败。
+	_ = s.userRepo.TouchLastLogin(ctx, userID)
+	return session, nil
+}
+
 // Logout 删除指定会话。会话不存在时返回 ErrNotFound（调用方可据此判断幂等性）。
 func (s *AuthService) Logout(ctx context.Context, sessionID uuid.UUID) error {
 	return s.sessionRepo.Delete(ctx, sessionID)
