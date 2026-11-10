@@ -53,7 +53,11 @@ func newSearchRunRecorder(
 	replayOfID *uuid.UUID,
 ) *searchRunRecorder {
 	runID := uuid.New()
-	current := now()
+	// 归一 UTC：SQLite 方言按字典序比较时间文本，本地时区字符串（+08:00）
+	// 与 insights 统计的 UTC 窗口参数比较会全部漏计（completed_at/expires_at
+	// 在仓储层已是 UTC，这里对齐）；UTC() 同时剥离单调时钟，避免落盘出现
+	// `m=+…` 后缀。
+	current := now().UTC()
 	recorder := &searchRunRecorder{
 		store:          store,
 		logger:         logger,
