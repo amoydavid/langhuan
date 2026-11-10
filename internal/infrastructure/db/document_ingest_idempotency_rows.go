@@ -28,6 +28,10 @@ func (DocumentIngestIdempotencyRow) TableName() string { return "document_ingest
 
 func documentIngestIdempotencyToRow(record service.DocumentIngestIdempotency) *DocumentIngestIdempotencyRow {
 	return &DocumentIngestIdempotencyRow{
+		// 主键由存储层生成：service 结构只承载重放语义、刻意不携带 ID，且
+		// SQLite 方言没有 gen_random_uuid() 默认值；若留空会让每条插入都用
+		// 零值 UUID，第一条占位后所有后续幂等记录永远撞主键（409）。
+		ID:              uuid.New(),
 		WorkspaceID:     record.WorkspaceID,
 		APIKeyID:        record.APIKeyID,
 		KnowledgeBaseID: record.KnowledgeBaseID,
