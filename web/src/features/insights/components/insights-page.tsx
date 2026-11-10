@@ -236,7 +236,7 @@ export function InsightsPage({
             insufficientSample={
               data.insufficient_sample ?? overview.sleeping_insufficient_sample
             }
-            documents={data.documents}
+            documents={data.documents ?? []}
           />
         )}
       </PanelGate>

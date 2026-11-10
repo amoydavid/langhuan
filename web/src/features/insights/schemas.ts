@@ -52,7 +52,8 @@ export const sleepingDocumentSchema = z.object({
 
 export const sleepingDocumentsResponseSchema = z.object({
   insufficient_sample: z.boolean(),
-  documents: z.array(sleepingDocumentSchema),
+  // 样本不足时后端返回 null（不出清单），前端以空数组兜底渲染提示块。
+  documents: z.array(sleepingDocumentSchema).nullish(),
 })
 
 // 内容动态（§4.4 三源 UNION）：sync 对应源同步，revision 对应 document_revisions，
