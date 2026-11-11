@@ -180,9 +180,16 @@ func (s *KbSourceService) CreateWebSource(ctx context.Context, input CreateWebSo
 }
 
 // ListWebSources 列出 KB 下全部未软删源，附每源页面/失败计数。
-func (s *KbSourceService) ListWebSources(ctx context.Context, workspaceID, kbID uuid.UUID) ([]WebSourceView, error) {
+// ListWebSources 列出 KB 的 web 内容源。access 校验知识库在授权集合内
+// （受限主体越界统一 not_found）；写路径为 admin Session 或经 middleware/MCP
+// 预检的 Bearer，无需 access。
+func (s *KbSourceService) ListWebSources(ctx context.Context, access value.ResourceAccess, kbID uuid.UUID) ([]WebSourceView, error) {
+	workspaceID := access.WorkspaceID
 	if workspaceID == uuid.Nil || kbID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workspace_id/knowledge_base_id 不能为空", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(access, workspaceID, kbID); err != nil {
+		return nil, err
 	}
 	if s.store == nil {
 		return nil, fmt.Errorf("%w: 源管理依赖未配置", domainerrors.ErrValidation)
@@ -206,9 +213,14 @@ func (s *KbSourceService) ListWebSources(ctx context.Context, workspaceID, kbID 
 }
 
 // GetWebSource 读取单个源的详情（含计数）；不存在或已软删返回 ErrNotFound。
-func (s *KbSourceService) GetWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (*WebSourceView, error) {
+// access 校验知识库在授权集合内。
+func (s *KbSourceService) GetWebSource(ctx context.Context, access value.ResourceAccess, kbID, sourceID uuid.UUID) (*WebSourceView, error) {
+	workspaceID := access.WorkspaceID
 	if workspaceID == uuid.Nil || kbID == uuid.Nil || sourceID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workspace_id/knowledge_base_id/source_id 不能为空", domainerrors.ErrValidation)
+	}
+	if err := validateResourceAccess(access, workspaceID, kbID); err != nil {
+		return nil, err
 	}
 	if s.store == nil {
 		return nil, fmt.Errorf("%w: 源管理依赖未配置", domainerrors.ErrValidation)

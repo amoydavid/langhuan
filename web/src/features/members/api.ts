@@ -1,6 +1,6 @@
 import type { Role } from '@/features/auth/types'
 import { apiClient } from '@/lib/api/client'
-import type { Member } from './types'
+import type { Member, MemberKBGrantsInput } from './types'
 
 function membersPath(workspaceSlug: string) {
   return `/workspaces/${encodeURIComponent(workspaceSlug)}/members`
@@ -34,4 +34,16 @@ export async function resetUserPassword(userId: string, newPassword: string) {
     `/admin/users/${encodeURIComponent(userId)}/password-reset`,
     { new_password: newPassword }
   )
+}
+
+export async function setMemberKBGrants(
+  workspaceSlug: string,
+  userId: string,
+  input: MemberKBGrantsInput
+) {
+  const response = await apiClient.put<Member>(
+    `${membersPath(workspaceSlug)}/${encodeURIComponent(userId)}/kb-grants`,
+    input
+  )
+  return response.data
 }

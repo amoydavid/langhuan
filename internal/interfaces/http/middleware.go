@@ -180,6 +180,10 @@ func RequireWorkspace(workspaceResolver WorkspaceResolver, membershipResolver Me
 
 		authCtx.WorkspaceID = ws.ID
 		authCtx.Role = membership.Role
+		// 成员知识库可见范围：受限 member 的授权集合进入 AuthContext，
+		// 由 ResourceAccess() 统一裁决（admin/owner 与 all 成员不受限）。
+		authCtx.KBScope = membership.KBScope
+		authCtx.KnowledgeBaseIDs = membership.KnowledgeBaseIDs
 		c.Set(authContextKey, authCtx)
 		c.Next()
 	}

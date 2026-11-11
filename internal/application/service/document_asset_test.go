@@ -70,7 +70,7 @@ func TestDocumentAssetServiceListsActiveRevisionAssets(t *testing.T) {
 		&fakeAssetDocumentReader{docs: map[uuid.UUID]*model.Document{documentID: doc}},
 	)
 
-	got, err := service.ListByDocument(ctx, workspaceID, documentID)
+	got, err := service.ListByDocument(ctx, unrestricted(workspaceID), documentID)
 	if err != nil {
 		t.Fatalf("ListByDocument() error = %v", err)
 	}
@@ -88,9 +88,10 @@ func TestDocumentAssetServiceEmptyWhenNoActiveRevision(t *testing.T) {
 	documentID := uuid.New()
 
 	doc := &model.Document{
-		ID:          documentID,
-		WorkspaceID: workspaceID,
-		Kind:        value.DocumentKindFile,
+		ID:              documentID,
+		WorkspaceID:     workspaceID,
+		KnowledgeBaseID: uuid.New(),
+		Kind:            value.DocumentKindFile,
 	}
 
 	service := NewDocumentAssetService(
@@ -98,7 +99,7 @@ func TestDocumentAssetServiceEmptyWhenNoActiveRevision(t *testing.T) {
 		&fakeAssetDocumentReader{docs: map[uuid.UUID]*model.Document{documentID: doc}},
 	)
 
-	got, err := service.ListByDocument(ctx, workspaceID, documentID)
+	got, err := service.ListByDocument(ctx, unrestricted(workspaceID), documentID)
 	if err != nil {
 		t.Fatalf("ListByDocument() error = %v", err)
 	}
@@ -111,7 +112,7 @@ func TestDocumentAssetServiceNotFound(t *testing.T) {
 	ctx := context.Background()
 	service := NewDocumentAssetService(&fakeAssetReader{}, &fakeAssetDocumentReader{})
 
-	_, err := service.ListByDocument(ctx, uuid.New(), uuid.New())
+	_, err := service.ListByDocument(ctx, unrestricted(uuid.New()), uuid.New())
 	if !isNotFound(err) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
 	}
@@ -121,13 +122,13 @@ func TestDocumentAssetServiceGetByID(t *testing.T) {
 	ctx := context.Background()
 	workspaceID := uuid.New()
 	assetID := uuid.New()
-	asset := &model.Asset{ID: assetID, WorkspaceID: workspaceID, StorageKey: "assets/ws/doc/rev/a.png"}
+	asset := &model.Asset{ID: assetID, WorkspaceID: workspaceID, KnowledgeBaseID: uuid.New(), StorageKey: "assets/ws/doc/rev/a.png"}
 	reader := &fakeAssetReader{
 		byID: map[uuid.UUID]*model.Asset{assetID: asset},
 	}
 	service := NewDocumentAssetService(reader, &fakeAssetDocumentReader{})
 
-	got, err := service.GetByID(ctx, workspaceID, assetID)
+	got, err := service.GetByID(ctx, unrestricted(workspaceID), assetID)
 	if err != nil {
 		t.Fatalf("GetByID() error = %v", err)
 	}
@@ -144,8 +145,13 @@ func TestDocumentAssetServiceGetByIDCrossWorkspaceRejected(t *testing.T) {
 	}
 	service := NewDocumentAssetService(reader, &fakeAssetDocumentReader{})
 
-	_, err := service.GetByID(ctx, uuid.New(), assetID)
+	_, err := service.GetByID(ctx, unrestricted(uuid.New()), assetID)
 	if !isNotFound(err) {
 		t.Fatalf("error = %v, want ErrNotFound (cross-workspace)", err)
 	}
+}
+
+// unrestricted 返回全量访问边界（历史 Session 行为）。
+func unrestricted(workspaceID uuid.UUID) value.ResourceAccess {
+	return value.ResourceAccess{WorkspaceID: workspaceID, Unrestricted: true}
 }

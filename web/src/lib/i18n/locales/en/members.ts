@@ -8,10 +8,13 @@ export const members = {
   list: {
     columnUser: 'User',
     columnRole: 'Role',
+    columnKbScope: 'Knowledge bases',
     columnJoinedAt: 'Joined',
     columnActions: 'Actions',
     unnamedUser: 'Unnamed user',
     empty: 'No members yet',
+    kbScopeAll: 'All',
+    kbScopeCounted: '{{count}} knowledge bases',
     role: {
       owner: 'Owner',
       admin: 'Administrator',
@@ -21,8 +24,25 @@ export const members = {
   actions: {
     manageInvitationsButton: 'Manage invitations',
     adjustRoleButton: 'Adjust role',
+    kbGrantsButton: 'Knowledge base access',
     removeMemberButton: 'Remove member',
     resetPasswordButton: 'Reset password',
+    kbGrantsDialogTitle: 'Knowledge base access',
+    kbGrantsScopeLabel: 'Access scope',
+    kbGrantsScopeAll: 'All knowledge bases',
+    kbGrantsScopeAllHint:
+      'Can access every knowledge base in the workspace, now and in the future',
+    kbGrantsScopeRestricted: 'Selected knowledge bases only',
+    kbGrantsScopeRestrictedHint:
+      'Can only access the knowledge bases checked below',
+    kbGrantsSelectedCount: 'Selected {{selected}} / {{total}}',
+    kbGrantsEmptyWarning:
+      'Checking none = this member will see no knowledge bases',
+    kbGrantsMemberOnlyHint:
+      'Knowledge base access applies to members only (admins/owners always see all)',
+    kbGrantsLoading: 'Loading knowledge bases…',
+    kbGrantsSaveButton: 'Save',
+    kbGrantsUpdatedToast: 'Knowledge base access updated',
     roleDialogTitle: 'Adjust member role',
     roleDialogDescription:
       'The last owner cannot be demoted. Promote another member to owner first.',
@@ -49,5 +69,6 @@ export const members = {
     passwordMinLength: 'Password must be at least 8 characters',
     confirmPasswordRequired: 'Please enter the password again',
     passwordMismatch: 'The two passwords do not match',
+    kbGrantsIdsRequired: 'Pick at least one knowledge base (or switch to all)',
   },
 } satisfies Widen<typeof zhMembers>

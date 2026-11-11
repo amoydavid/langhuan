@@ -571,6 +571,17 @@ spec：`docs/superpowers/specs/2026-11-10-mcp-write-tools-design.md`。目标：
 - 递归树输出 schema 手写 `$defs/$ref`（jsonschema-go `For[T]` 不支持自引用类型；mcp-go 输出校验器 santhosh-tekuri/jsonschema 完整支持 $ref）。
 - scope 矩阵与 REST 对齐：faq/file_tree 走 documents 读写，web_source 走 knowledge-bases 读写；`toolScopeRequirement` 登记全部新工具，tools/list 与 tools/call 均按 scope 过滤。
 
+### v1.6.0 成员级知识库授权（2026-11-11）
+
+spec：`docs/superpowers/specs/2026-11-11-member-kb-authorization-design.md`。目标：把 API Key 已有的 KB 绑定粒度带给人类成员——workspace 内的 member 可被限定为「仅指定知识库」，多知识域共享一个 workspace 时不再被迫拆库。文档级 ACL 明确排除（会进检索热路径；内容分级需求由检索期 metadata filter 另立规格承载）。
+
+- 语义：membership 新增 `kb_scope`（all/restricted，默认 all 存量零变化）+ `workspace_member_knowledge_bases` 绑定表；restricted 仅约束 member，admin/owner 隐含全量（API 拒绝为 admin/owner 设置，杜绝「设置了但不生效」）；受限 member 建库同事务自动进入其授权集合（「我建的库我可见」）；邀请接受默认 all。
+- 唯一语义开关：`AuthContext.ResourceAccess()`。全部资源入口（KB 列表/详情、文档、chunk、FAQ、文件树、检索、MCP 24 工具）自动生效，越界统一 404 不泄漏存在性。
+- 缺口补齐：单库检索、文档资产、index generation 列表、web source 读、文档 ingest、citation summary 六处服务层原先不带 Access 的入口全部补上校验。
+- REST：`PUT /workspaces/:slug/members/:user_id/kb-grants`（admin+，Session-only）；成员列表/详情返回 `kb_scope` + 授权集合。
+- 迁移双方言：PG 000028 + SQLite 000006（合并式）。
+- Web Console：成员列表「知识库范围」列 + member 行「知识库授权」入口（admin/owner），弹窗 = 全部/仅指定 + 多选列表，双语。
+
 ## 暂不进入首版的能力
 
 - Chat/Agent/回答生成。

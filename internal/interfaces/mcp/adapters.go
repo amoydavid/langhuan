@@ -79,6 +79,7 @@ func (a *documentIngestAdapter) Ingest(ctx context.Context, in MCPIngestInput) (
 		SourceType: "mcp", Reader: in.Reader, SizeBytes: in.SizeBytes,
 		Dedupe: in.Dedupe, ParentNodeID: in.ParentNodeID, NodeName: in.NodeName,
 		IdempotencyKey: in.IdempotencyKey, CallerAPIKeyID: in.CallerAPIKeyID,
+		Access: in.Access,
 	}
 	result, err := a.svc.Ingest(ctx, input)
 	if err != nil {

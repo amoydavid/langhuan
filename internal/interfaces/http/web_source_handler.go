@@ -22,8 +22,8 @@ import (
 // 只做协议转换。Create/Update 返回的 *model.Job 是入队的同步任务（可为 nil）。
 type WebSourceService interface {
 	CreateWebSource(ctx context.Context, input service.CreateWebSourceInput) (*model.KbSource, *model.Job, error)
-	ListWebSources(ctx context.Context, workspaceID, kbID uuid.UUID) ([]service.WebSourceView, error)
-	GetWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (*service.WebSourceView, error)
+	ListWebSources(ctx context.Context, access value.ResourceAccess, kbID uuid.UUID) ([]service.WebSourceView, error)
+	GetWebSource(ctx context.Context, access value.ResourceAccess, kbID, sourceID uuid.UUID) (*service.WebSourceView, error)
 	UpdateWebSource(ctx context.Context, input service.UpdateWebSourceInput) (*model.KbSource, *model.Job, error)
 	SyncWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, force bool) (*model.Job, error)
 	DeleteWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, pages string) error
@@ -120,7 +120,7 @@ func (h webSourceHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	views, err := h.svc.ListWebSources(c.Request.Context(), authCtx.WorkspaceID, kbID)
+	views, err := h.svc.ListWebSources(c.Request.Context(), authCtx.ResourceAccess(), kbID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -146,7 +146,7 @@ func (h webSourceHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	view, err := h.svc.GetWebSource(c.Request.Context(), authCtx.WorkspaceID, kbID, sourceID)
+	view, err := h.svc.GetWebSource(c.Request.Context(), authCtx.ResourceAccess(), kbID, sourceID)
 	if err != nil {
 		writeServiceError(c, err)
 		return

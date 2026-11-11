@@ -155,7 +155,7 @@ func registerWebSourceList(srv *mcpserver.MCPServer, deps Dependencies) {
 		if !auth.ResourceAccess().AllowsKnowledgeBase(kbID) {
 			return toErrorResult(domainerrors.ErrNotFound), nil
 		}
-		views, err := deps.WebSources.ListWebSources(ctx, auth.WorkspaceID, kbID)
+		views, err := deps.WebSources.ListWebSources(ctx, auth.ResourceAccess(), kbID)
 		if err != nil {
 			return toErrorResult(err), nil
 		}
@@ -198,7 +198,7 @@ func registerWebSourceGet(srv *mcpserver.MCPServer, deps Dependencies) {
 		if !auth.ResourceAccess().AllowsKnowledgeBase(kbID) {
 			return toErrorResult(domainerrors.ErrNotFound), nil
 		}
-		view, err := deps.WebSources.GetWebSource(ctx, auth.WorkspaceID, kbID, sourceID)
+		view, err := deps.WebSources.GetWebSource(ctx, auth.ResourceAccess(), kbID, sourceID)
 		if err != nil {
 			return toErrorResult(err), nil
 		}

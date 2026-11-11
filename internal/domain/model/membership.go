@@ -17,11 +17,18 @@ type Membership struct {
 	WorkspaceID uuid.UUID
 	UserID      uuid.UUID
 	Role        value.WorkspaceRole
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// KBScope 是知识库可见范围（all | restricted）；约束仅对 member 生效，
+	// admin/owner 隐含全量。零值按 all 处理（存量行为）。
+	KBScope value.KBScope
+	// KnowledgeBaseIDs 是受限 member 的显式授权集合（聚合加载，非行内存储）；
+	// 仅 KBScope=restricted 时非空。
+	KnowledgeBaseIDs []uuid.UUID
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // NewMembership 创建并校验成员关系。workspace 与 user 都不能为零值，role 必须合法。
+// 新成员默认 kb_scope=all（邀请接受后可由 admin 收紧）。
 func NewMembership(workspaceID, userID uuid.UUID, role value.WorkspaceRole) (*Membership, error) {
 	if workspaceID == uuid.Nil {
 		return nil, fmt.Errorf("%w: workspace_id 不能为空", domainerrors.ErrValidation)
@@ -39,6 +46,7 @@ func NewMembership(workspaceID, userID uuid.UUID, role value.WorkspaceRole) (*Me
 		WorkspaceID: workspaceID,
 		UserID:      userID,
 		Role:        role,
+		KBScope:     value.KBScopeAll,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil

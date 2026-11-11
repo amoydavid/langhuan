@@ -18,19 +18,23 @@ const (
 
 // AuthContext 表示一次请求的认证上下文。
 //
-// Session 主体的 Role 来自 membership，Scopes/KnowledgeBaseIDs 为空，且不受
-// API Key 知识库范围限制；API Key 主体的 UserID 为空，Workspace/Scopes/
-// KnowledgeBaseIDs 来自 key，绑定集合必须非空，且不继承创建者身份或实时角色。
+// Session 主体的 Role/KBScope 来自 membership；受限 member 的 KnowledgeBaseIDs
+// 为其授权集合，admin/owner 与 all 成员该集合为空。API Key 主体的 UserID 为空，
+// Workspace/Scopes/KnowledgeBaseIDs 来自 key，绑定集合必须非空，且不继承创建者
+// 身份或实时角色。
 //
 // WorkspaceID 与 Role 仅在 workspace-scoped 路由上填充；
 // 平台级路由（如登录、注册）这两字段为零值。
 type AuthContext struct {
-	PrincipalKind    PrincipalKind
-	PrincipalID      uuid.UUID
-	UserID           uuid.UUID
-	IsPlatformAdmin  bool
-	WorkspaceID      uuid.UUID
-	Role             WorkspaceRole
+	PrincipalKind   PrincipalKind
+	PrincipalID     uuid.UUID
+	UserID          uuid.UUID
+	IsPlatformAdmin bool
+	WorkspaceID     uuid.UUID
+	Role            WorkspaceRole
+	// KBScope 是 Session 主体的知识库可见范围；零值按 KBScopeAll 处理。
+	// API Key 主体恒为零值。
+	KBScope          KBScope
 	Scopes           []APIScope
 	KnowledgeBaseIDs []uuid.UUID
 }
@@ -56,8 +60,9 @@ func (a AuthContext) HasScope(scope APIScope) bool {
 	return false
 }
 
-// ResourceAccess 是协议中立的资源访问边界。Session 主体为 Unrestricted；
-// API Key 主体只能访问 AllowedKnowledgeBaseIDs 集合内的资源。
+// ResourceAccess 是协议中立的资源访问边界。API Key 主体只能访问
+// AllowedKnowledgeBaseIDs 集合内的资源；Session 主体中 admin/owner 与
+// kb_scope=all 成员为 Unrestricted，受限 member 只能访问显式授权的集合。
 type ResourceAccess struct {
 	WorkspaceID             uuid.UUID
 	Unrestricted            bool
@@ -78,9 +83,16 @@ func (a ResourceAccess) AllowsKnowledgeBase(id uuid.UUID) bool {
 }
 
 // ResourceAccess 把当前主体转成协议中立的资源访问边界。
-// Session 主体为 Unrestricted；API Key 主体只能访问绑定的知识库集合。
+//
+// API Key 主体只能访问绑定的知识库集合；Session 主体中 admin/owner 隐含全量
+// （管理面必须看到全部知识库），kb_scope=all 成员不受限，受限 member 只能访问
+// membership 授权集合。KBScope 零值按 all 归一：未填充该字段的旧调用路径
+// 回退到历史全量行为，显式 restricted 永远强制。
 func (a AuthContext) ResourceAccess() ResourceAccess {
-	if !a.IsAPIKey() {
+	if a.IsAPIKey() {
+		return ResourceAccess{WorkspaceID: a.WorkspaceID, AllowedKnowledgeBaseIDs: a.KnowledgeBaseIDs}
+	}
+	if a.Role.AtLeast(RoleAdmin) || !a.KBScope.IsRestricted() {
 		return ResourceAccess{WorkspaceID: a.WorkspaceID, Unrestricted: true}
 	}
 	return ResourceAccess{WorkspaceID: a.WorkspaceID, AllowedKnowledgeBaseIDs: a.KnowledgeBaseIDs}

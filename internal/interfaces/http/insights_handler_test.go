@@ -61,7 +61,7 @@ func (s *insightsServiceStub) GetQueryLogEnabled(_ context.Context, _, _ uuid.UU
 	return false, nil
 }
 
-func (s *insightsServiceStub) DocumentCitationSummary(_ context.Context, _, _, _ uuid.UUID, _ int) (int64, *time.Time, error) {
+func (s *insightsServiceStub) DocumentCitationSummary(_ context.Context, _ value.ResourceAccess, _, _ uuid.UUID, _ int) (int64, *time.Time, error) {
 	last := time.Date(2026, 10, 25, 9, 14, 0, 0, time.UTC)
 	return 23, &last, nil
 }

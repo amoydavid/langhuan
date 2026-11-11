@@ -812,21 +812,21 @@ func TestListAndGetWebSourcesWithCounts(t *testing.T) {
 	source := fixture.seedWebSource(t, "文档站")
 	fixture.store.pagesBySource[source.ID] = SourcePageCounts{PageCount: 7, FailedPageCount: 2}
 
-	views, err := fixture.svc.ListWebSources(context.Background(), fixture.kb.WorkspaceID, fixture.kb.ID)
+	views, err := fixture.svc.ListWebSources(context.Background(), unrestricted(fixture.kb.WorkspaceID), fixture.kb.ID)
 	if err != nil {
 		t.Fatalf("ListWebSources error = %v", err)
 	}
 	if len(views) != 1 || views[0].PageCount != 7 || views[0].FailedPageCount != 2 {
 		t.Fatalf("views = %+v", views)
 	}
-	view, err := fixture.svc.GetWebSource(context.Background(), fixture.kb.WorkspaceID, fixture.kb.ID, source.ID)
+	view, err := fixture.svc.GetWebSource(context.Background(), unrestricted(fixture.kb.WorkspaceID), fixture.kb.ID, source.ID)
 	if err != nil {
 		t.Fatalf("GetWebSource error = %v", err)
 	}
 	if view.Source.ID != source.ID || view.PageCount != 7 {
 		t.Fatalf("view = %+v", view)
 	}
-	if _, err := fixture.svc.GetWebSource(context.Background(), fixture.kb.WorkspaceID, fixture.kb.ID, uuid.New()); !errors.Is(err, domainerrors.ErrNotFound) {
+	if _, err := fixture.svc.GetWebSource(context.Background(), unrestricted(fixture.kb.WorkspaceID), fixture.kb.ID, uuid.New()); !errors.Is(err, domainerrors.ErrNotFound) {
 		t.Fatalf("未知源 error = %v, want ErrNotFound", err)
 	}
 }

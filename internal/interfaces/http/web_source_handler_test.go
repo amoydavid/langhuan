@@ -61,14 +61,14 @@ func (f *fakeWebSourceService) CreateWebSource(_ context.Context, input service.
 	return f.createSource, f.createJob, nil
 }
 
-func (f *fakeWebSourceService) ListWebSources(_ context.Context, _, _ uuid.UUID) ([]service.WebSourceView, error) {
+func (f *fakeWebSourceService) ListWebSources(_ context.Context, _ value.ResourceAccess, _ uuid.UUID) ([]service.WebSourceView, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	return f.listViews, nil
 }
 
-func (f *fakeWebSourceService) GetWebSource(_ context.Context, _, _, _ uuid.UUID) (*service.WebSourceView, error) {
+func (f *fakeWebSourceService) GetWebSource(_ context.Context, _ value.ResourceAccess, _, _ uuid.UUID) (*service.WebSourceView, error) {
 	return f.getView, f.getErr
 }
 

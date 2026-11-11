@@ -2,10 +2,13 @@ export const members = {
   list: {
     columnUser: '用户',
     columnRole: '角色',
+    columnKbScope: '知识库范围',
     columnJoinedAt: '加入时间',
     columnActions: '操作',
     unnamedUser: '未命名用户',
     empty: '暂无成员',
+    kbScopeAll: '全部',
+    kbScopeCounted: '{{count}} 个知识库',
     role: {
       owner: '所有者',
       admin: '管理员',
@@ -15,8 +18,22 @@ export const members = {
   actions: {
     manageInvitationsButton: '管理邀请',
     adjustRoleButton: '调整角色',
+    kbGrantsButton: '知识库授权',
     removeMemberButton: '移除成员',
     resetPasswordButton: '重置密码',
+    kbGrantsDialogTitle: '知识库授权',
+    kbGrantsScopeLabel: '访问范围',
+    kbGrantsScopeAll: '全部知识库',
+    kbGrantsScopeAllHint: '可访问工作区内当前与未来的所有知识库',
+    kbGrantsScopeRestricted: '仅指定知识库',
+    kbGrantsScopeRestrictedHint: '只能访问下方勾选的知识库',
+    kbGrantsSelectedCount: '已选 {{selected}} / {{total}}',
+    kbGrantsEmptyWarning: '一个都不勾选 = 该成员将看不到任何知识库',
+    kbGrantsMemberOnlyHint:
+      '知识库授权仅对成员角色生效（管理员/所有者隐含全部）',
+    kbGrantsLoading: '知识库加载中…',
+    kbGrantsSaveButton: '保存',
+    kbGrantsUpdatedToast: '知识库授权已更新',
     roleDialogTitle: '调整成员角色',
     roleDialogDescription:
       '最后一名 owner 不可降级，请先将其他成员设为 owner。',
@@ -41,5 +58,6 @@ export const members = {
     passwordMinLength: '密码至少需要 8 个字符',
     confirmPasswordRequired: '请再次输入密码',
     passwordMismatch: '两次输入的密码不一致',
+    kbGrantsIdsRequired: '请至少选择一个知识库（或切换为全部知识库）',
   },
 } as const

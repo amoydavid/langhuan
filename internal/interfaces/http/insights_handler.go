@@ -11,6 +11,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/dto"
 	"github.com/dajee/langhuan/internal/application/service"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // InsightsHTTPService 是健康面板聚合契约（Session owner/admin；API Key 不可达）。
@@ -29,7 +30,7 @@ type QueryLogSettingsHTTPService interface {
 
 // CitationSummaryHTTPService 是文档引用摘要契约（prog 组，删除预警用）。
 type CitationSummaryHTTPService interface {
-	DocumentCitationSummary(ctx context.Context, workspaceID, kbID, documentID uuid.UUID, windowDays int) (count int64, lastCitedAt *time.Time, err error)
+	DocumentCitationSummary(ctx context.Context, access value.ResourceAccess, kbID, documentID uuid.UUID, windowDays int) (count int64, lastCitedAt *time.Time, err error)
 }
 
 type insightsHandler struct {
@@ -203,7 +204,7 @@ func (h citationSummaryHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	count, lastCitedAt, err := h.service.DocumentCitationSummary(c.Request.Context(), authCtx.WorkspaceID, kbID, documentID, windowDays)
+	count, lastCitedAt, err := h.service.DocumentCitationSummary(c.Request.Context(), authCtx.ResourceAccess(), kbID, documentID, windowDays)
 	if err != nil {
 		writeServiceError(c, err)
 		return

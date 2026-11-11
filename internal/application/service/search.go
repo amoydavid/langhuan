@@ -32,6 +32,9 @@ type SearchInput struct {
 	VectorTopK, KeywordTopK, FinalTopK *int
 	// Detail 选择响应档位（full/lean）；空值按 full 处理。投影不改排序。
 	Detail value.SearchResultDetail
+	// Access 是调用者的资源访问边界（受限主体只能检索授权集合内的知识库）。
+	// 零值按 legacy 无界处理（进程内调用方），HTTP/MCP 入口总是传鉴权上下文。
+	Access value.ResourceAccess
 }
 
 // SearchServiceDeps contains hybrid-search persistence and embedding dependencies.
@@ -94,6 +97,10 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 	}
 	if s.repository == nil || s.resolver == nil {
 		return nil, fmt.Errorf("%w: Search dependencies 不能为空", domainerrors.ErrValidation)
+	}
+	// 资源边界：受限主体只能检索授权集合内的知识库（越界统一 not_found）。
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
+		return nil, err
 	}
 	stats := &searchRunStats{startedAt: time.Now(), queryChars: len([]rune(query))}
 	queryHash := searchQueryHash(query)

@@ -138,12 +138,26 @@ type MembershipRow struct {
 	WorkspaceID uuid.UUID `gorm:"type:uuid;index"`
 	UserID      uuid.UUID `gorm:"type:uuid;index"`
 	Role        string
+	KBScope     string `gorm:"default:'all'"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
 
 func (MembershipRow) TableName() string {
 	return "workspace_memberships"
+}
+
+// MemberKnowledgeBaseRow 对应 workspace_member_knowledge_bases 绑定表：
+// 受限 member 的显式知识库授权集合。
+type MemberKnowledgeBaseRow struct {
+	MembershipID    uuid.UUID `gorm:"type:uuid;primaryKey"`
+	WorkspaceID     uuid.UUID `gorm:"type:uuid"`
+	KnowledgeBaseID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	CreatedAt       time.Time
+}
+
+func (MemberKnowledgeBaseRow) TableName() string {
+	return "workspace_member_knowledge_bases"
 }
 
 // InvitationRow 对应 workspace_invitations 表。

@@ -21,3 +21,21 @@ export const passwordResetSchema = z
 
 export type MemberRoleFormValues = z.infer<typeof memberRoleSchema>
 export type PasswordResetFormValues = z.infer<typeof passwordResetSchema>
+
+export const memberKBGrantsSchema = z
+  .object({
+    kb_scope: z.enum(['all', 'restricted']),
+    knowledge_base_ids: z.array(z.string().uuid()).optional(),
+  })
+  .refine(
+    (values) =>
+      values.kb_scope === 'all'
+        ? true
+        : values.knowledge_base_ids !== undefined,
+    {
+      path: ['knowledge_base_ids'],
+      error: () => i18n.t('members.schemas.kbGrantsIdsRequired'),
+    }
+  )
+
+export type MemberKBGrantsFormValues = z.infer<typeof memberKBGrantsSchema>

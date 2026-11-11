@@ -71,8 +71,8 @@ type MCPIngestResult struct {
 type MCPWebSourceService interface {
 	AddURLToWebSource(ctx context.Context, workspaceID, kbID uuid.UUID, rawURL string) (*model.KbSource, *model.Job, error)
 	CreateWebSource(ctx context.Context, input service.CreateWebSourceInput) (*model.KbSource, *model.Job, error)
-	ListWebSources(ctx context.Context, workspaceID, kbID uuid.UUID) ([]service.WebSourceView, error)
-	GetWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (*service.WebSourceView, error)
+	ListWebSources(ctx context.Context, access value.ResourceAccess, kbID uuid.UUID) ([]service.WebSourceView, error)
+	GetWebSource(ctx context.Context, access value.ResourceAccess, kbID, sourceID uuid.UUID) (*service.WebSourceView, error)
 	UpdateWebSource(ctx context.Context, input service.UpdateWebSourceInput) (*model.KbSource, *model.Job, error)
 	SyncWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, force bool) (*model.Job, error)
 	DeleteWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, pages string) error

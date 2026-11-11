@@ -21,11 +21,11 @@ type fakeAssetGetter struct {
 	err   error
 }
 
-func (f *fakeAssetGetter) GetByID(_ context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error) {
+func (f *fakeAssetGetter) GetByID(_ context.Context, access value.ResourceAccess, assetID uuid.UUID) (*model.Asset, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	if f.asset == nil || f.asset.WorkspaceID != workspaceID || f.asset.ID != assetID {
+	if f.asset == nil || f.asset.WorkspaceID != access.WorkspaceID || f.asset.ID != assetID {
 		return nil, domainerrors.ErrNotFound
 	}
 	return f.asset, nil

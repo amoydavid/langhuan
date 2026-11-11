@@ -20,6 +20,11 @@
 
 name: langhuan-web-e2e
 
+# 全部服务共用 public-shaped 一个网络（embeddings 经 127.0.0.1:47702 发布端口被
+# 宿主后端调用，不依赖 default 网络）。原因：OrbStack 最多只把 8 个 docker 网络
+# 桥接到 macOS 宿主（orbstack#2772）；本机常驻项目网络已近上限，若 compose 隐式
+# 再建 default 网络会把总数顶到 9，public-shaped 拿不到宿主桥接，前置探测必然
+# 失败。新网络数量约束下，新增服务一律挂 public-shaped。
 networks:
   public-shaped:
     driver: bridge
@@ -58,6 +63,8 @@ services:
     command:
       - node
       - embeddings.mjs
+    networks:
+      - public-shaped
     # 仅发布到宿主回环：宿主侧被测后端经 127.0.0.1:47702 调用，不对外暴露。
     ports:
       - '127.0.0.1:47702:47702'

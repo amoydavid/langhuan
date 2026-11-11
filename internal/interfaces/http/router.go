@@ -606,6 +606,12 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		// owner-only routes.
 		if deps.Memberships != nil {
 			mbH := membershipHandler{memberships: deps.Memberships}
+			// 成员知识库授权（admin+）：可见性管理，与邀请管理同级，低于
+			// changeRole/remove 的 owner 级。Session-only（成员管理不进程序化合同）。
+			kbGrantGroup := wsGroup.Group("")
+			kbGrantGroup.Use(RequireWorkspaceRole(value.RoleAdmin))
+			kbGrantGroup.PUT("/members/:user_id/kb-grants", mbH.setKBGrants)
+
 			ownerGroup := wsGroup.Group("")
 			ownerGroup.Use(RequireWorkspaceRole(value.RoleOwner))
 			{

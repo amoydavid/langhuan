@@ -18,26 +18,36 @@ type MembershipUserSummary struct {
 // Membership 是成员关系对外 DTO。workspace 成员列表会通过一次批量查询填充
 // User；用于认证概要的轻量列表保持 User 为 nil。
 type Membership struct {
-	ID          uuid.UUID              `json:"id"`
-	WorkspaceID uuid.UUID              `json:"workspace_id"`
-	UserID      uuid.UUID              `json:"user_id"`
-	Role        value.WorkspaceRole    `json:"role"`
-	User        *MembershipUserSummary `json:"user"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
+	ID          uuid.UUID           `json:"id"`
+	WorkspaceID uuid.UUID           `json:"workspace_id"`
+	UserID      uuid.UUID           `json:"user_id"`
+	Role        value.WorkspaceRole `json:"role"`
+	// KBScope 是知识库可见范围（all | restricted）；约束仅对 member 生效。
+	KBScope value.KBScope `json:"kb_scope"`
+	// KnowledgeBaseIDs 是受限成员的显式授权集合；kb_scope=all 时恒为空数组。
+	KnowledgeBaseIDs []uuid.UUID            `json:"knowledge_base_ids"`
+	User             *MembershipUserSummary `json:"user"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
 }
 
 func MembershipFromModel(membership *model.Membership) *Membership {
 	if membership == nil {
 		return nil
 	}
+	kbIDs := membership.KnowledgeBaseIDs
+	if kbIDs == nil {
+		kbIDs = []uuid.UUID{}
+	}
 	return &Membership{
-		ID:          membership.ID,
-		WorkspaceID: membership.WorkspaceID,
-		UserID:      membership.UserID,
-		Role:        membership.Role,
-		CreatedAt:   membership.CreatedAt,
-		UpdatedAt:   membership.UpdatedAt,
+		ID:               membership.ID,
+		WorkspaceID:      membership.WorkspaceID,
+		UserID:           membership.UserID,
+		Role:             membership.Role,
+		KBScope:          membership.KBScope.Normalize(),
+		KnowledgeBaseIDs: kbIDs,
+		CreatedAt:        membership.CreatedAt,
+		UpdatedAt:        membership.UpdatedAt,
 	}
 }
 

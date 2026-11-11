@@ -59,8 +59,13 @@ func NewCitationSummaryService(store CitationSummaryStore, kbs KnowledgeBaseRead
 }
 
 // DocumentCitationSummary 返回窗口内引用次数与最近引用时间；KB 越界返回 ErrNotFound。
+// access 校验知识库在授权集合内（受限主体越界统一 not_found）。
 // 文档已删时引用行仍在（D3），摘要照常返回——删除后的审计同理。
-func (s *CitationSummaryService) DocumentCitationSummary(ctx context.Context, workspaceID, kbID, documentID uuid.UUID, windowDays int) (int64, *time.Time, error) {
+func (s *CitationSummaryService) DocumentCitationSummary(ctx context.Context, access value.ResourceAccess, kbID, documentID uuid.UUID, windowDays int) (int64, *time.Time, error) {
+	workspaceID := access.WorkspaceID
+	if err := validateResourceAccess(access, workspaceID, kbID); err != nil {
+		return 0, nil, err
+	}
 	if _, err := s.kbs.Get(ctx, workspaceID, kbID); err != nil {
 		return 0, nil, err
 	}

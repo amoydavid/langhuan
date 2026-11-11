@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dajee/langhuan/internal/application/dto"
+	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
@@ -20,6 +21,7 @@ type MembershipService interface {
 	ChangeRole(ctx context.Context, workspaceID, targetUserID uuid.UUID, newRole value.WorkspaceRole, actorRole value.WorkspaceRole) (*dto.Membership, error)
 	Remove(ctx context.Context, workspaceID, targetUserID uuid.UUID, actorRole value.WorkspaceRole) error
 	ListForUser(ctx context.Context, userID uuid.UUID) ([]*dto.Membership, error)
+	SetKBGrants(ctx context.Context, input service.SetKBGrantsInput) (*dto.Membership, error)
 }
 
 // membershipHandler exposes the workspace-scoped member list / role change / remove endpoints.
@@ -95,4 +97,47 @@ func (h membershipHandler) remove(c *gin.Context) {
 		return
 	}
 	c.Status(stdhttp.StatusNoContent)
+}
+
+type setKBGrantsRequest struct {
+	KBScope string `json:"kb_scope"`
+	// KnowledgeBaseIDs 仅 kb_scope=restricted 时生效；可为空（= 不可见任何库）。
+	KnowledgeBaseIDs []uuid.UUID `json:"knowledge_base_ids"`
+}
+
+// setKBGrants (admin+) sets a member's knowledge-base visibility scope and grant
+// set. 目标必须是 member（admin/owner 隐含全部，拒绝设置）。
+func (h membershipHandler) setKBGrants(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	targetUserID, err := uuid.Parse(c.Param("user_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "user_id 必须是有效 UUID")
+		return
+	}
+	var req setKBGrantsRequest
+	if err := decodeStrictJSON(c, &req); err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "请求 JSON 无效")
+		return
+	}
+	scope := value.KBScope(strings.TrimSpace(req.KBScope))
+	if !scope.IsValid() {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "kb_scope 必须是 all/restricted")
+		return
+	}
+	updated, err := h.memberships.SetKBGrants(c.Request.Context(), service.SetKBGrantsInput{
+		WorkspaceID:      authCtx.WorkspaceID,
+		TargetUserID:     targetUserID,
+		ActorRole:        authCtx.Role,
+		Scope:            scope,
+		KnowledgeBaseIDs: req.KnowledgeBaseIDs,
+	})
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, updated)
 }

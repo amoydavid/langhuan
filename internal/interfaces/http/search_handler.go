@@ -90,6 +90,7 @@ func (h searchHandler) search(c *gin.Context) {
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Query: request.Query,
 		VectorTopK: request.VectorTopK, KeywordTopK: request.KeywordTopK, FinalTopK: request.FinalTopK,
 		Detail: detail,
+		Access: authCtx.ResourceAccess(),
 	})
 	// SearchRun 创建后的错误也先写 Header，再映射原领域错误。
 	if response != nil {

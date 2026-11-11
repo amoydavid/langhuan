@@ -613,7 +613,7 @@ func buildRuntimeServices(ctx context.Context, gormDB *gorm.DB, cfg *config.Conf
 	users := service.NewUserService(userRepo, hasher, cfg.Auth.Password.Enabled)
 	auth := service.NewAuthService(userRepo, sessionRepo, hasher, limiter, cfg.Auth)
 	invitations := service.NewInvitationService(invitationRepo, wsRepo, userRepo, hasher, cfg.Auth)
-	memberships := service.NewMembershipService(membershipRepo, userRepo)
+	memberships := service.NewMembershipService(membershipRepo, userRepo, kbRepo)
 
 	// OIDC 条件装配：cfg.Auth.OIDC.Enabled=true 时构造 provider/state store/service。
 	var oidcLogin *service.OIDCLoginService
@@ -1117,6 +1117,8 @@ func buildHTTPRouter(services *runtimeServices) http.Handler {
 		ChunkGet:                  langmcp.NewMCPChunkGetService(services.chunkRevisions),
 		DocumentRetry:             services.documentRetry,
 		MultiSearch:               services.multiSearch,
+		FAQDocuments:              services.faqDocuments,
+		FileTree:                  services.fileTree,
 		InlineLimit:               services.mcpInlineLimit,
 		EnableLocalhostProtection: services.mcpHostProtection,
 	})

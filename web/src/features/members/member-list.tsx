@@ -44,6 +44,7 @@ export function MemberList({
             <TableRow>
               <TableHead>{t('members.list.columnUser')}</TableHead>
               <TableHead>{t('members.list.columnRole')}</TableHead>
+              <TableHead>{t('members.list.columnKbScope')}</TableHead>
               <TableHead>{t('members.list.columnJoinedAt')}</TableHead>
               <TableHead className='text-right'>
                 {t('members.list.columnActions')}
@@ -63,6 +64,15 @@ export function MemberList({
                 </TableCell>
                 <TableCell>
                   <Badge variant='outline'>{roleLabel[member.role]}</Badge>
+                </TableCell>
+                <TableCell>
+                  <span className='text-muted-foreground text-sm'>
+                    {member.kb_scope === 'restricted'
+                      ? t('members.list.kbScopeCounted', {
+                          count: member.knowledge_base_ids.length,
+                        })
+                      : t('members.list.kbScopeAll')}
+                  </span>
                 </TableCell>
                 <TableCell>{formatDate(member.created_at)}</TableCell>
                 <TableCell>
@@ -96,6 +106,14 @@ export function MemberList({
                 <span className='text-muted-foreground'>
                   {formatDate(member.created_at)}
                 </span>
+              </div>
+              <div className='text-muted-foreground text-sm'>
+                {t('members.list.columnKbScope')}:{' '}
+                {member.kb_scope === 'restricted'
+                  ? t('members.list.kbScopeCounted', {
+                      count: member.knowledge_base_ids.length,
+                    })
+                  : t('members.list.kbScopeAll')}
               </div>
               <MemberActions
                 workspaceSlug={workspaceSlug}

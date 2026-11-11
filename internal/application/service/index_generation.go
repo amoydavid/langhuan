@@ -95,11 +95,16 @@ func (s *IndexGenerationService) Reindex(ctx context.Context, workspaceID, knowl
 }
 
 // List returns newest generations first inside one Workspace/KB lineage.
-func (s *IndexGenerationService) List(ctx context.Context, workspaceID, knowledgeBaseID uuid.UUID) ([]*dto.IndexGeneration, error) {
-	if s.store == nil || workspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil {
+// access 校验知识库在授权集合内（受限主体越界统一 not_found）；写路径（Create/
+// Activate/Reindex）为 admin 专属且 admin 隐含全量，无需 access。
+func (s *IndexGenerationService) List(ctx context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID) ([]*dto.IndexGeneration, error) {
+	if s.store == nil || access.WorkspaceID == uuid.Nil || knowledgeBaseID == uuid.Nil {
 		return nil, fmt.Errorf("%w: Generation list lineage/store 无效", domainerrors.ErrValidation)
 	}
-	items, err := s.store.List(ctx, workspaceID, knowledgeBaseID)
+	if err := validateResourceAccess(access, access.WorkspaceID, knowledgeBaseID); err != nil {
+		return nil, err
+	}
+	items, err := s.store.List(ctx, access.WorkspaceID, knowledgeBaseID)
 	if err != nil {
 		return nil, err
 	}

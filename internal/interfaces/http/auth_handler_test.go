@@ -310,6 +310,10 @@ type fakeMembershipService struct {
 	removeCalled bool
 	removeInput  removeArgs
 
+	// kbGrants 记录 SetKBGrants 入参；kbGrantsErr 可注入失败。
+	kbGrantsInput *service.SetKBGrantsInput
+	kbGrantsErr   error
+
 	forUserResult []*dto.Membership
 	forUserErr    error
 }
@@ -362,6 +366,14 @@ func (s *fakeMembershipService) Remove(_ context.Context, workspaceID, targetUse
 	s.removeCalled = true
 	s.removeInput = removeArgs{workspaceID, targetUserID, actorRole}
 	return s.removeErr
+}
+
+func (s *fakeMembershipService) SetKBGrants(_ context.Context, input service.SetKBGrantsInput) (*dto.Membership, error) {
+	s.kbGrantsInput = &input
+	if s.kbGrantsErr != nil {
+		return nil, s.kbGrantsErr
+	}
+	return &dto.Membership{ID: uuid.New(), WorkspaceID: input.WorkspaceID, UserID: input.TargetUserID, Role: value.RoleMember, KBScope: input.Scope}, nil
 }
 
 func (s *fakeMembershipService) ListForUser(_ context.Context, userID uuid.UUID) ([]*dto.Membership, error) {

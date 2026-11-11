@@ -99,7 +99,7 @@ type generationHTTPServiceFake struct {
 	createInput service.CreateIndexGenerationInput
 }
 
-func (*generationHTTPServiceFake) List(context.Context, uuid.UUID, uuid.UUID) ([]*dto.IndexGeneration, error) {
+func (*generationHTTPServiceFake) List(context.Context, value.ResourceAccess, uuid.UUID) ([]*dto.IndexGeneration, error) {
 	return nil, nil
 }
 

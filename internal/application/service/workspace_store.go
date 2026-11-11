@@ -18,14 +18,16 @@ type KnowledgeBaseCreateTx interface {
 		*model.IndexGeneration,
 	) error
 	// CreateKnowledgeBaseRootGenerationAndBinding 在创建知识库初始状态的同时，
-	// 把新知识库原子加入调用 API Key 的绑定集合；bindAPIKeyID 为 nil 时等价于
-	// 不写绑定。
+	// 把新知识库原子加入调用 API Key 的绑定集合（bindAPIKeyID 为 nil 时不写），
+	// 以及受限 member 创建者的授权集合（bindMemberUserID 为 nil 或成员非 restricted
+	// 时不写——「我建的库我可见」）。任一绑定失败则整个创建事务回滚。
 	CreateKnowledgeBaseRootGenerationAndBinding(
-		context.Context,
-		*model.KnowledgeBase,
-		*model.FileTreeNode,
-		*model.IndexGeneration,
-		*uuid.UUID,
+		ctx context.Context,
+		kb *model.KnowledgeBase,
+		root *model.FileTreeNode,
+		generation *model.IndexGeneration,
+		bindAPIKeyID *uuid.UUID,
+		bindMemberUserID *uuid.UUID,
 	) error
 }
 

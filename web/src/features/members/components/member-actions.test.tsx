@@ -10,6 +10,7 @@ vi.mock('../api', () => ({
   changeMemberRole: vi.fn(),
   removeMember: vi.fn(),
   resetUserPassword: vi.fn(),
+  setMemberKBGrants: vi.fn(),
 }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
 
@@ -18,6 +19,8 @@ const member: Member = {
   workspace_id: '10000000-0000-0000-0000-000000000001',
   user_id: '60000000-0000-0000-0000-000000000006',
   role: 'member',
+  kb_scope: 'all',
+  knowledge_base_ids: [],
   user: { nickname: '李四', email: 'li@example.com' },
   created_at: '2026-07-30T00:00:00Z',
   updated_at: '2026-07-30T00:00:00Z',
@@ -83,5 +86,50 @@ describe('member capability matrix', () => {
     expect(
       memberActionErrorMessage(new ApiError('资源冲突', 409, 'conflict'))
     ).toBe('Workspace 必须至少保留一名 owner，请先将其他成员设为 owner')
+  })
+})
+
+describe('member knowledge-base access matrix', () => {
+  it('hides kb access action from ordinary members', async () => {
+    const screen = await renderActions('member')
+    await expect
+      .element(screen.getByRole('button', { name: '知识库授权' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('lets admins manage kb access for member rows', async () => {
+    const screen = await renderActions('admin')
+    await expect
+      .element(screen.getByRole('button', { name: '知识库授权' }))
+      .toBeInTheDocument()
+  })
+
+  it('lets owners manage kb access for member rows', async () => {
+    const screen = await renderActions('owner')
+    await expect
+      .element(screen.getByRole('button', { name: '知识库授权' }))
+      .toBeInTheDocument()
+  })
+
+  it('hides kb access action on admin rows (implicit full access)', async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    const screen = await render(
+      <QueryClientProvider client={client}>
+        <MemberActions
+          workspaceSlug='acme'
+          actorRole='owner'
+          isPlatformAdmin={false}
+          member={{ ...member, role: 'admin' }}
+        />
+      </QueryClientProvider>
+    )
+    await expect
+      .element(screen.getByRole('button', { name: '知识库授权' }))
+      .not.toBeInTheDocument()
   })
 })

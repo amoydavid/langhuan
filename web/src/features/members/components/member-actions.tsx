@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Loader2, ShieldCheck, Trash2 } from 'lucide-react'
+import { KeyRound, Loader2, ShieldCheck, Trash2, Waypoints } from 'lucide-react'
 import { useId, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -35,6 +35,7 @@ import {
   passwordResetSchema,
 } from '../schemas'
 import type { Member } from '../types'
+import { MemberKBGrantsDialog } from './member-kb-grants-dialog'
 
 export function memberActionErrorMessage(error: unknown) {
   const apiError = parseApiError(error)
@@ -61,10 +62,15 @@ export function MemberActions({
   const [roleOpen, setRoleOpen] = useState(false)
   const [removeOpen, setRemoveOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
+  const [kbGrantsOpen, setKbGrantsOpen] = useState(false)
   const roleFormId = useId()
   const passwordResetFormId = useId()
   const queryClient = useQueryClient()
   const canManageMembership = actorRole === 'owner'
+  // 知识库授权是 admin+ 的可见性管理（低于角色变更的 owner 级），
+  // 且仅对 member 行有意义——admin/owner 隐含全部，后端拒绝设置。
+  const canManageKBGrants =
+    (actorRole === 'admin' || actorRole === 'owner') && member.role === 'member'
   const roleForm = useForm<MemberRoleFormValues>({
     resolver: zodResolver(memberRoleSchema),
     defaultValues: { role: member.role },
@@ -120,7 +126,7 @@ export function MemberActions({
     },
   })
 
-  if (!canManageMembership && !isPlatformAdmin) return null
+  if (!canManageMembership && !canManageKBGrants && !isPlatformAdmin) return null
 
   return (
     <div className='flex flex-wrap justify-end gap-2'>
@@ -145,6 +151,25 @@ export function MemberActions({
           <KeyRound />
           {t('members.actions.resetPasswordButton')}
         </Button>
+      )}
+      {canManageKBGrants && (
+        <Button
+          variant='outline'
+          size='sm'
+          onClick={() => setKbGrantsOpen(true)}
+        >
+          <Waypoints />
+          {t('members.actions.kbGrantsButton')}
+        </Button>
+      )}
+
+      {canManageKBGrants && (
+        <MemberKBGrantsDialog
+          workspaceSlug={workspaceSlug}
+          member={member}
+          open={kbGrantsOpen}
+          onOpenChange={setKbGrantsOpen}
+        />
       )}
 
       <Dialog open={roleOpen} onOpenChange={setRoleOpen}>

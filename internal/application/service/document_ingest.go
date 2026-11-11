@@ -71,6 +71,9 @@ type IngestDocumentInput struct {
 	// Bearer callers (CallerAPIKeyID != nil); Session callers ignore it.
 	// Mutually exclusive with Dedupe (see Dedupe comment).
 	IdempotencyKey string
+	// Access 是调用者的资源访问边界：受限主体只能向授权集合内的知识库写入。
+	// 零值按 legacy 无界处理（进程内调用方），HTTP/MCP 入口总是传鉴权上下文。
+	Access value.ResourceAccess
 }
 
 type IngestDocumentResult struct {
@@ -106,6 +109,10 @@ func NewDocumentIngestService(deps DocumentIngestServiceDeps) *DocumentIngestSer
 
 func (s *DocumentIngestService) Ingest(ctx context.Context, input IngestDocumentInput) (*IngestDocumentResult, error) {
 	if err := validateIngestDocumentInput(input); err != nil {
+		return nil, err
+	}
+	// 资源边界：受限主体只能向授权集合内的知识库写入（越界统一 not_found）。
+	if err := validateResourceAccess(input.Access, input.WorkspaceID, input.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
 	sourceType := strings.TrimSpace(input.SourceType)

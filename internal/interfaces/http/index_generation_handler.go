@@ -14,7 +14,7 @@ import (
 
 // IndexGenerationHTTPService is the Generation list/create/activate/reindex contract.
 type IndexGenerationHTTPService interface {
-	List(context.Context, uuid.UUID, uuid.UUID) ([]*dto.IndexGeneration, error)
+	List(context.Context, value.ResourceAccess, uuid.UUID) ([]*dto.IndexGeneration, error)
 	Create(context.Context, service.CreateIndexGenerationInput) (*dto.IndexGeneration, error)
 	Activate(context.Context, service.ActivateIndexGenerationInput) (*dto.IndexGeneration, error)
 	Reindex(context.Context, uuid.UUID, uuid.UUID, value.WorkspaceRole) (*service.ReindexResult, error)
@@ -59,7 +59,7 @@ func (h indexGenerationHandler) list(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.List(c.Request.Context(), authCtx.WorkspaceID, knowledgeBaseID)
+	result, err := h.service.List(c.Request.Context(), authCtx.ResourceAccess(), knowledgeBaseID)
 	if err != nil {
 		writeServiceError(c, err)
 		return

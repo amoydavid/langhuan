@@ -33,6 +33,15 @@ type fakeMembershipRepository struct {
 	ownerCounts map[uuid.UUID]int64 // 显式覆盖的 owner 计数（默认按数据实时计算）
 	changeErr   error
 	deleteErr   error
+	// kbGrantsCalls 记录 UpdateKBGrants 调用入参（scope, kbIDs），供断言。
+	kbGrantsCalls []fakeKBGrantsCall
+}
+
+type fakeKBGrantsCall struct {
+	workspace uuid.UUID
+	user      uuid.UUID
+	scope     value.KBScope
+	kbIDs     []uuid.UUID
 }
 
 func newFakeMembershipRepository() *fakeMembershipRepository {
@@ -108,6 +117,26 @@ func (r *fakeMembershipRepository) Delete(_ context.Context, workspaceID, userID
 }
 
 // CountOwners 实时统计 workspace 内 owner 数量。
+func (r *fakeMembershipRepository) UpdateKBGrants(_ context.Context, workspaceID, userID uuid.UUID, scope value.KBScope, kbIDs []uuid.UUID) (*model.Membership, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.memberships[membershipKey{workspaceID, userID}]
+	if !ok {
+		return nil, domainerrors.ErrNotFound
+	}
+	ids := append([]uuid.UUID{}, kbIDs...)
+	r.kbGrantsCalls = append(r.kbGrantsCalls, fakeKBGrantsCall{workspace: workspaceID, user: userID, scope: scope, kbIDs: ids})
+	updated := *current
+	updated.KBScope = scope
+	if scope.IsRestricted() {
+		updated.KnowledgeBaseIDs = ids
+	} else {
+		updated.KnowledgeBaseIDs = nil
+	}
+	r.memberships[membershipKey{workspaceID, userID}] = &updated
+	return &updated, nil
+}
+
 func (r *fakeMembershipRepository) CountOwners(_ context.Context, workspaceID uuid.UUID) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

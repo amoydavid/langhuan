@@ -40,6 +40,11 @@ type CreateKnowledgeBaseInput struct {
 	// CallerAPIKeyID 在 API Key 主体创建知识库时携带自身 ID，新知识库会被
 	// 原子加入该 key 的绑定集合。Session 主体为 nil。
 	CallerAPIKeyID *uuid.UUID
+	// ActorUserID 是 Session 主体创建者的用户 ID（API Key 主体为 nil）。
+	ActorUserID *uuid.UUID
+	// Access 是调用者的资源访问边界：受限 member 创建知识库时，新库会在同一
+	// 事务内自动加入其授权集合（「我建的库我可见」）。
+	Access value.ResourceAccess
 	// SourceType 是知识库内容来源类型；缺省（零值）视为 upload。
 	SourceType value.KnowledgeBaseSourceType
 	// SourceConfig 是来源配置（飞书：root_token/root_kind/url/cron/next_sync_at）。
@@ -145,9 +150,14 @@ func (s *KnowledgeBaseService) Create(ctx context.Context, input CreateKnowledge
 		if err != nil {
 			return nil, err
 		}
+		// 受限 member 建库自动授权：同一事务内写入其授权集合（D4）。
+		var bindMemberUserID *uuid.UUID
+		if input.ActorUserID != nil && !input.Access.Unrestricted {
+			bindMemberUserID = input.ActorUserID
+		}
 		if err := s.store.WithinWorkspace(ctx, input.WorkspaceID, func(txCtx context.Context, tx KnowledgeBaseCreateTx) error {
-			// 带 CallerAPIKeyID 时在同一事务内把新知识库原子加入调用 key 的绑定集合。
-			return tx.CreateKnowledgeBaseRootGenerationAndBinding(txCtx, kb, root, generation, input.CallerAPIKeyID)
+			// 带 CallerAPIKeyID / 受限创建者时在同一事务内写入对应绑定集合。
+			return tx.CreateKnowledgeBaseRootGenerationAndBinding(txCtx, kb, root, generation, input.CallerAPIKeyID, bindMemberUserID)
 		}); err != nil {
 			return nil, err
 		}

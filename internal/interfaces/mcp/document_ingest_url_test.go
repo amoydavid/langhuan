@@ -59,10 +59,10 @@ func (f *fakeMCPWebSourceService) AddURLToWebSource(_ context.Context, workspace
 func (f *fakeMCPWebSourceService) CreateWebSource(context.Context, service.CreateWebSourceInput) (*model.KbSource, *model.Job, error) {
 	return nil, nil, fmt.Errorf("not implemented in url-mode fake")
 }
-func (f *fakeMCPWebSourceService) ListWebSources(context.Context, uuid.UUID, uuid.UUID) ([]service.WebSourceView, error) {
+func (f *fakeMCPWebSourceService) ListWebSources(context.Context, value.ResourceAccess, uuid.UUID) ([]service.WebSourceView, error) {
 	return nil, fmt.Errorf("not implemented in url-mode fake")
 }
-func (f *fakeMCPWebSourceService) GetWebSource(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*service.WebSourceView, error) {
+func (f *fakeMCPWebSourceService) GetWebSource(context.Context, value.ResourceAccess, uuid.UUID, uuid.UUID) (*service.WebSourceView, error) {
 	return nil, fmt.Errorf("not implemented in url-mode fake")
 }
 func (f *fakeMCPWebSourceService) UpdateWebSource(context.Context, service.UpdateWebSourceInput) (*model.KbSource, *model.Job, error) {

@@ -64,13 +64,13 @@ func (f *fakeWebSourceManageService) CreateWebSource(_ context.Context, input se
 	return f.created, f.job, nil
 }
 
-func (f *fakeWebSourceManageService) ListWebSources(_ context.Context, workspaceID, kbID uuid.UUID) ([]service.WebSourceView, error) {
+func (f *fakeWebSourceManageService) ListWebSources(_ context.Context, _ value.ResourceAccess, kbID uuid.UUID) ([]service.WebSourceView, error) {
 	f.listCalls++
 	f.listKBID = kbID
 	return f.views, nil
 }
 
-func (f *fakeWebSourceManageService) GetWebSource(_ context.Context, workspaceID, kbID, sourceID uuid.UUID) (*service.WebSourceView, error) {
+func (f *fakeWebSourceManageService) GetWebSource(_ context.Context, _ value.ResourceAccess, kbID, sourceID uuid.UUID) (*service.WebSourceView, error) {
 	f.getCalls++
 	f.getIDs = [2]uuid.UUID{kbID, sourceID}
 	return f.view, nil

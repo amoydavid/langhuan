@@ -10,6 +10,7 @@ import (
 
 	"github.com/dajee/langhuan/internal/application/service"
 	"github.com/dajee/langhuan/internal/domain/model"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 type knowledgeBaseCreateTx struct {
@@ -34,19 +35,21 @@ func (tx *knowledgeBaseCreateTx) CreateKnowledgeBaseRootAndGeneration(
 	root *model.FileTreeNode,
 	generation *model.IndexGeneration,
 ) error {
-	return tx.createRootGeneration(ctx, kb, root, generation, nil)
+	return tx.createRootGeneration(ctx, kb, root, generation, nil, nil)
 }
 
 // CreateKnowledgeBaseRootGenerationAndBinding 在创建知识库初始状态的同时，把新
-// 知识库原子加入调用 API Key 的绑定集合。bindAPIKeyID 为 nil 时不写绑定。
+// 知识库原子加入调用 API Key 的绑定集合（bindAPIKeyID 为 nil 时不写），以及受限
+// member 创建者的授权集合（bindMemberUserID 为 nil 或成员非 restricted 时不写）。
 func (tx *knowledgeBaseCreateTx) CreateKnowledgeBaseRootGenerationAndBinding(
 	ctx context.Context,
 	kb *model.KnowledgeBase,
 	root *model.FileTreeNode,
 	generation *model.IndexGeneration,
 	bindAPIKeyID *uuid.UUID,
+	bindMemberUserID *uuid.UUID,
 ) error {
-	return tx.createRootGeneration(ctx, kb, root, generation, bindAPIKeyID)
+	return tx.createRootGeneration(ctx, kb, root, generation, bindAPIKeyID, bindMemberUserID)
 }
 
 func (tx *knowledgeBaseCreateTx) createRootGeneration(
@@ -55,6 +58,7 @@ func (tx *knowledgeBaseCreateTx) createRootGeneration(
 	root *model.FileTreeNode,
 	generation *model.IndexGeneration,
 	bindAPIKeyID *uuid.UUID,
+	bindMemberUserID *uuid.UUID,
 ) error {
 	if kb.WorkspaceID != root.WorkspaceID || kb.WorkspaceID != generation.WorkspaceID ||
 		kb.ID != root.KnowledgeBaseID || kb.ID != generation.KnowledgeBaseID {
@@ -78,6 +82,26 @@ func (tx *knowledgeBaseCreateTx) createRootGeneration(
 		}
 		if err := tx.db.WithContext(ctx).Create(binding).Error; err != nil {
 			return translateDBError(err, "把新知识库加入 API Key 绑定失败")
+		}
+	}
+	if bindMemberUserID != nil {
+		// 仅 restricted 成员需要显式授权行（all 成员隐含全量）。
+		var membership MembershipRow
+		if err := tx.db.WithContext(ctx).
+			Where("workspace_id = ? AND user_id = ?", kb.WorkspaceID, *bindMemberUserID).
+			First(&membership).Error; err != nil {
+			return fmt.Errorf("读取创建者成员关系失败: %w", err)
+		}
+		if membership.KBScope == string(value.KBScopeRestricted) {
+			grant := MemberKnowledgeBaseRow{
+				MembershipID:    membership.ID,
+				WorkspaceID:     kb.WorkspaceID,
+				KnowledgeBaseID: kb.ID,
+				CreatedAt:       time.Now().UTC(),
+			}
+			if err := tx.db.WithContext(ctx).Create(&grant).Error; err != nil {
+				return translateDBError(err, "把新知识库加入创建者授权集合失败")
+			}
 		}
 	}
 	return nil

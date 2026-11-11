@@ -105,6 +105,7 @@ func (r *fakeKnowledgeBaseRepository) CreateKnowledgeBaseRootGenerationAndBindin
 	root *model.FileTreeNode,
 	generation *model.IndexGeneration,
 	bindAPIKeyID *uuid.UUID,
+	_ *uuid.UUID,
 ) error {
 	if r.failBinding {
 		return domainerrors.ErrConflict

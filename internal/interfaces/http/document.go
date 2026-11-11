@@ -31,12 +31,12 @@ type DocumentQueryService interface {
 
 // DocumentAssetListService 提供按 Document 查询图片资产的能力。
 type DocumentAssetListService interface {
-	ListByDocument(ctx context.Context, workspaceID, documentID uuid.UUID) ([]*model.Asset, error)
+	ListByDocument(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) ([]*model.Asset, error)
 }
 
 // DocumentAssetGetter 提供按 workspace + asset ID 查询单个资产的能力。
 type DocumentAssetGetter interface {
-	GetByID(ctx context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error)
+	GetByID(ctx context.Context, access value.ResourceAccess, assetID uuid.UUID) (*model.Asset, error)
 }
 
 // AssetContentStore 按 storage key 打开资产内容，供鉴权代理 handler 返回图片。
@@ -108,7 +108,7 @@ func (h documentHandler) ingestText(c *gin.Context) {
 		Title: strings.TrimSpace(req.Title), FileName: strings.TrimSpace(req.Title) + ".md",
 		ContentType: "text/markdown", SourceType: "api", Reader: strings.NewReader(req.Content),
 		SizeBytes: int64(len(content)), ParentNodeID: req.ParentNodeID, NodeName: strings.TrimSpace(req.Title),
-		IdempotencyKey: key,
+		IdempotencyKey: key, Access: authCtx.ResourceAccess(),
 	}
 	// Only Bearer callers anchor an idempotency row; Session callers ignore the
 	// key (they are not part of the programmatic replay contract).
@@ -241,6 +241,7 @@ func (h documentHandler) ingest(c *gin.Context) {
 		Dedupe:          dedupe,
 		ParentNodeID:    parentNodeID,
 		NodeName:        strings.TrimSpace(c.PostForm("node_name")),
+		Access:          authCtx.ResourceAccess(),
 	}
 	result, err := h.ingestService.Ingest(c.Request.Context(), input)
 	if err != nil {
@@ -355,7 +356,7 @@ func (h documentHandler) assets(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
 		return
 	}
-	assets, err := h.assetService.ListByDocument(c.Request.Context(), authCtx.WorkspaceID, documentID)
+	assets, err := h.assetService.ListByDocument(c.Request.Context(), authCtx.ResourceAccess(), documentID)
 	if err != nil {
 		writeServiceError(c, err)
 		return
@@ -389,7 +390,7 @@ func (h documentHandler) assetContent(c *gin.Context) {
 		writeError(c, stdhttp.StatusBadRequest, "validation_error", "asset_id 必须是有效 UUID")
 		return
 	}
-	asset, err := h.assetGetter.GetByID(c.Request.Context(), authCtx.WorkspaceID, assetID)
+	asset, err := h.assetGetter.GetByID(c.Request.Context(), authCtx.ResourceAccess(), assetID)
 	if err != nil {
 		writeServiceError(c, err)
 		return

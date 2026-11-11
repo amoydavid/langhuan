@@ -98,6 +98,28 @@ func (r *KnowledgeBaseRepository) List(ctx context.Context, workspaceID uuid.UUI
 	return result, nil
 }
 
+// AllKnowledgeBasesExist 报告 ids 是否全部指向该 workspace 内存在且未删的知识库，
+// 供成员知识库授权写入前校验（跨 workspace 或未知 ID 一律视为不存在）。
+func (r *KnowledgeBaseRepository) AllKnowledgeBasesExist(ctx context.Context, workspaceID uuid.UUID, ids []uuid.UUID) (bool, error) {
+	if len(ids) == 0 {
+		return true, nil
+	}
+	unique := make(map[uuid.UUID]struct{}, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			return false, nil
+		}
+		unique[id] = struct{}{}
+	}
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&KnowledgeBaseRow{}).
+		Where("workspace_id = ? AND id IN ? AND deleted_at IS NULL", workspaceID, ids).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("校验知识库存在性失败: %w", err)
+	}
+	return int(count) == len(unique), nil
+}
+
 // GetResolved reads a KnowledgeBase and its bound model even when disabled.
 func (r *KnowledgeBaseRepository) GetResolved(ctx context.Context, workspaceID, id uuid.UUID) (*model.ResolvedKnowledgeBase, error) {
 	var row knowledgeBaseResolvedRow

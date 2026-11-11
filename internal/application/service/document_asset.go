@@ -7,6 +7,7 @@ import (
 
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
+	"github.com/dajee/langhuan/internal/domain/value"
 )
 
 // DocumentAssetReader 读取一个 Document 的图片资产。
@@ -36,18 +37,22 @@ func NewDocumentAssetService(assets DocumentAssetReader, document DocumentWithRe
 
 // ListByDocument 返回指定 Document 当前 active revision 的图片资产。
 // 无 active revision 或 revision 无资产时返回空列表（非错误）。
-func (s *DocumentAssetService) ListByDocument(ctx context.Context, workspaceID, documentID uuid.UUID) ([]*model.Asset, error) {
-	if workspaceID == uuid.Nil || documentID == uuid.Nil {
+// access 校验文档所属知识库在授权集合内（受限主体越界统一 not_found）。
+func (s *DocumentAssetService) ListByDocument(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) ([]*model.Asset, error) {
+	if access.WorkspaceID == uuid.Nil || documentID == uuid.Nil {
 		return nil, domainerrors.ErrValidation
 	}
-	doc, err := s.document.Get(ctx, workspaceID, documentID)
+	doc, err := s.document.Get(ctx, access.WorkspaceID, documentID)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateResourceAccess(access, access.WorkspaceID, doc.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
 	if doc.ActiveRevisionID == nil {
 		return []*model.Asset{}, nil
 	}
-	assets, err := s.assets.ListAssetsByRevision(ctx, workspaceID, *doc.ActiveRevisionID)
+	assets, err := s.assets.ListAssetsByRevision(ctx, access.WorkspaceID, *doc.ActiveRevisionID)
 	if err != nil {
 		return nil, err
 	}
@@ -58,9 +63,17 @@ func (s *DocumentAssetService) ListByDocument(ctx context.Context, workspaceID, 
 }
 
 // GetByID 按 workspace + asset ID 读取单个资产。
-func (s *DocumentAssetService) GetByID(ctx context.Context, workspaceID, assetID uuid.UUID) (*model.Asset, error) {
-	if workspaceID == uuid.Nil || assetID == uuid.Nil {
+// access 校验资产所属知识库在授权集合内。
+func (s *DocumentAssetService) GetByID(ctx context.Context, access value.ResourceAccess, assetID uuid.UUID) (*model.Asset, error) {
+	if access.WorkspaceID == uuid.Nil || assetID == uuid.Nil {
 		return nil, domainerrors.ErrValidation
 	}
-	return s.assets.GetByID(ctx, workspaceID, assetID)
+	asset, err := s.assets.GetByID(ctx, access.WorkspaceID, assetID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateResourceAccess(access, access.WorkspaceID, asset.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+	return asset, nil
 }

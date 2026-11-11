@@ -73,10 +73,14 @@ func (h knowledgeBaseHandler) create(c *gin.Context) {
 	input := service.CreateKnowledgeBaseInput{
 		WorkspaceID: authCtx.WorkspaceID, Name: req.Name, Description: req.Description,
 		EmbeddingModelID: req.EmbeddingModelID,
+		Access:           authCtx.ResourceAccess(),
 	}
 	if authCtx.IsAPIKey() {
 		apiKeyID := authCtx.PrincipalID
 		input.CallerAPIKeyID = &apiKeyID
+	} else {
+		userID := authCtx.UserID
+		input.ActorUserID = &userID
 	}
 	// 来源字段透传：飞书来源需要 source_type/source_connection_id（及可选 source_config）。
 	if strings.TrimSpace(req.SourceType) != "" {
