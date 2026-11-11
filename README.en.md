@@ -27,7 +27,7 @@ Langhuan is a **knowledge processing and retrieval service** that sits in the kn
 ## Highlights
 
 - **🀄 Native Chinese hybrid retrieval** — pgvector vectors + PostgreSQL FTS + **zhparser Chinese tokenization** + deterministic RRF fusion. The "Chinese keyword search" capability that is rare among self-hosted RAG stacks, out of the box.
-- **🔌 First-class MCP over HTTP** — `knowledge_search`, `document_ingest` and other tools are exposed directly to MCP clients (Claude, etc.); your knowledge base is plug-and-play.
+- **🔌 First-class MCP over HTTP** — 24 tools covering the full loop: search, discovery/reading (`knowledge_base_list`, `document_get`, …), content writing (`document_ingest`, `document_ingest_text`, `faq_create`), and file-tree / web-source management (`file_tree_*`, `web_source_*`), exposed directly to MCP clients (Claude, etc.).
 - **🕷️ Web content sources** — keep a knowledge base in sync with a site crawl / sitemap / URL list: four fetch engines (HTTP / headless render / Firecrawl / Jina) with auto escalation, robots compliance, layered SSRF protection and three-tier incremental detection.
 - **📦 Single binary, full stack** — REST + MCP + async worker + embedded Web Console in one binary (`go:embed`). No Node runtime, no microservices.
 - **🧭 Fully traceable** — every chunk traces back to its source document, revision, and anchor (page / row / offset). The ingestion → chunking → indexing pipeline is idempotent end-to-end. Each retrieval yields a stable `search_id` with verifiable citations, replayable by admins within the retention window.

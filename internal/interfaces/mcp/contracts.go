@@ -37,7 +37,9 @@ type MCPDocumentIngestService interface {
 	Ingest(ctx context.Context, input MCPIngestInput) (*MCPIngestResult, error)
 }
 
-// MCPIngestInput 是 MCP 工具层的导入输入。Reader 与 SizeBytes 由解码 Base64 得到。
+// MCPIngestInput 是 MCP 工具层的导入输入。file 模式 Reader 与 SizeBytes 由解码
+// Base64 得到；text 模式由明文内容构造。IdempotencyKey/CallerAPIKeyID 仅 text 模式
+// 使用（与 REST /documents/text 的 Bearer 幂等键对齐），file 模式留空、行为不变。
 type MCPIngestInput struct {
 	WorkspaceID     uuid.UUID
 	Access          value.ResourceAccess
@@ -50,6 +52,8 @@ type MCPIngestInput struct {
 	Dedupe          bool
 	ParentNodeID    *uuid.UUID
 	NodeName        string
+	IdempotencyKey  string
+	CallerAPIKeyID  *uuid.UUID
 }
 
 // MCPIngestResult 是 MCP 工具层的导入输出。
@@ -60,11 +64,35 @@ type MCPIngestResult struct {
 	Deduped    bool      `json:"deduped"`
 }
 
-// MCPWebSourceService 是 document_ingest url 入口（v1.3.0 spec §9.3）所需的
-// web 源并入端口：把 URL 并入目标 KB 恰有的一个 urls 模式 active 网站源并触发
-// 同步。生产实现是 *service.KbSourceService（AddURLToWebSource）。
+// MCPWebSourceService 是 document_ingest url 入口（v1.3.0 spec §9.3）与
+// web_source_* 工具组（v1.5.0）共用的 web 源端口：url 模式把 URL 并入目标 KB
+// 恰有的一个 urls 模式 active 网站源并触发同步；CRUD 六方法与 REST
+// /knowledge-bases/:id/web-sources 同语义。生产实现是 *service.KbSourceService。
 type MCPWebSourceService interface {
 	AddURLToWebSource(ctx context.Context, workspaceID, kbID uuid.UUID, rawURL string) (*model.KbSource, *model.Job, error)
+	CreateWebSource(ctx context.Context, input service.CreateWebSourceInput) (*model.KbSource, *model.Job, error)
+	ListWebSources(ctx context.Context, workspaceID, kbID uuid.UUID) ([]service.WebSourceView, error)
+	GetWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID) (*service.WebSourceView, error)
+	UpdateWebSource(ctx context.Context, input service.UpdateWebSourceInput) (*model.KbSource, *model.Job, error)
+	SyncWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, force bool) (*model.Job, error)
+	DeleteWebSource(ctx context.Context, workspaceID, kbID, sourceID uuid.UUID, pages string) error
+}
+
+// MCPFAQService 是 faq_create/faq_update/faq_get 工具所需的 FAQ 端口。
+// 生产实现 *service.FAQDocumentService 直接满足。
+type MCPFAQService interface {
+	Create(ctx context.Context, input service.CreateFAQDocumentInput) (*dto.FAQDocument, error)
+	Update(ctx context.Context, input service.UpdateFAQDocumentInput) (*dto.FAQDocument, error)
+	Get(ctx context.Context, access value.ResourceAccess, knowledgeBaseID, documentID uuid.UUID) (*dto.FAQDocument, error)
+}
+
+// MCPFileTreeService 是 file_tree_* 工具组所需的文件树端口。
+// 生产实现 *service.FileTreeService 直接满足。
+type MCPFileTreeService interface {
+	List(ctx context.Context, access value.ResourceAccess, knowledgeBaseID uuid.UUID) (*dto.FileTree, error)
+	CreateFolder(ctx context.Context, input service.CreateFileTreeFolderInput) (*dto.FileTreeNode, error)
+	Update(ctx context.Context, input service.UpdateFileTreeNodeInput) error
+	Delete(ctx context.Context, access value.ResourceAccess, knowledgeBaseID, nodeID uuid.UUID) error
 }
 
 // MCPDocumentDeleteService 是 MCP document_delete 工具所需的删除端口。
@@ -87,9 +115,12 @@ func toolScopeRequirement(name string) (value.APIScope, bool) {
 	switch name {
 	case "knowledge_base_create":
 		return value.ScopeKnowledgeBasesWrite, true
-	case "document_ingest", "document_delete", "document_retry":
+	case "document_ingest", "document_delete", "document_retry",
+		"document_ingest_text", "faq_create", "faq_update",
+		"file_tree_folder_create", "file_tree_node_update", "file_tree_node_delete":
 		return value.ScopeDocumentsWrite, true
-	case "document_status", "chunk_get":
+	case "document_status", "chunk_get",
+		"faq_get", "file_tree_list":
 		return value.ScopeDocumentsRead, true
 	case "knowledge_search":
 		return value.ScopeSearchRead, true
@@ -97,6 +128,10 @@ func toolScopeRequirement(name string) (value.APIScope, bool) {
 		return value.ScopeKnowledgeBasesRead, true
 	case "document_list", "document_get":
 		return value.ScopeDocumentsRead, true
+	case "web_source_list", "web_source_get":
+		return value.ScopeKnowledgeBasesRead, true
+	case "web_source_create", "web_source_update", "web_source_sync", "web_source_delete":
+		return value.ScopeKnowledgeBasesWrite, true
 	}
 	return "", false
 }

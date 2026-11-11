@@ -32,8 +32,8 @@
 
 - **🀄 中文原生的混合检索** — pgvector 向量 + PostgreSQL FTS 全文 + **zhparser 中文分词** + 确定性 RRF 融合。自托管 RAG 中稀缺的「中文关键词检索」能力，开箱即用。
   *Hybrid retrieval with native Chinese tokenization: pgvector + PostgreSQL FTS (zhparser) + deterministic RRF fusion.*
-- **🔌 MCP over HTTP 原生支持** — `knowledge_search`、`document_ingest` 等工具直接暴露给 MCP 客户端（Claude 等），知识库即插即用。
-  *First-class MCP over HTTP — expose your knowledge base as MCP tools out of the box.*
+- **🔌 MCP over HTTP 原生支持** — 24 个工具覆盖完整闭环：检索（`knowledge_search`）、发现/阅读（`knowledge_base_list`、`document_get` 等）、内容写入（`document_ingest`、`document_ingest_text`、`faq_create`）、文件树与网站源管理（`file_tree_*`、`web_source_*`），直接暴露给 MCP 客户端（Claude 等），知识库即插即用。
+  *First-class MCP over HTTP — 24 tools covering the full loop: search, discovery/reading, content writing (files, text, FAQs), file-tree and web-source management. Plug-and-play for MCP clients.*
 - **🕷️ 网站内容源** — 把整站 crawl / sitemap / URL 列表作为知识库的持续同步源：四种抓取引擎（HTTP / 无头渲染 / Firecrawl / Jina）+ auto 渐进升级，robots 遵守、SSRF 分层防护与三级增量检测。
   *Web content sources: keep a knowledge base in sync with a site crawl / sitemap / URL list — four fetch engines (HTTP / headless render / Firecrawl / Jina) with auto escalation, robots compliance, layered SSRF protection and three-tier incremental detection.*
 - **📦 单二进制全栈** — REST + MCP + worker + Web Console 内嵌于一个二进制（`go:embed`），无 Node 运行时、无微服务。

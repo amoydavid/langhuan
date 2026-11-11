@@ -17,10 +17,11 @@ import (
 	"github.com/dajee/langhuan/internal/domain/value"
 )
 
-// registerTools 注册十个 typed tools。
+// registerTools 注册全部 typed tools（v1.5.0 起 24 个）。
 func registerTools(srv *mcpserver.MCPServer, deps Dependencies) {
 	registerKnowledgeBaseCreate(srv, deps)
 	registerDocumentIngest(srv, deps)
+	registerDocumentIngestText(srv, deps)
 	registerDocumentStatus(srv, deps)
 	registerKnowledgeSearch(srv, deps)
 	registerDocumentDelete(srv, deps)
@@ -29,6 +30,9 @@ func registerTools(srv *mcpserver.MCPServer, deps Dependencies) {
 	registerKnowledgeBaseListTool(srv, deps)
 	registerDocumentListTool(srv, deps)
 	registerDocumentGetTool(srv, deps)
+	registerFAQTools(srv, deps)
+	registerFileTreeTools(srv, deps)
+	registerWebSourceTools(srv, deps)
 }
 
 // authFromRequest 从 request.Context() 读取已鉴权的 AuthContext。
@@ -323,11 +327,21 @@ func ingestByFile(ctx context.Context, deps Dependencies, auth value.AuthContext
 	if int64(len(decoded)) > deps.InlineLimit {
 		return toErrorResult(fmt.Errorf("内联导入超过 %d 字节上限，请改用 REST multipart", deps.InlineLimit)), nil
 	}
+	// parent_node_id 自 v1.2.0 起在 schema 中声明，但此前未被传入 service（静默
+	// 丢弃）；file_tree_list 工具上线后该参数才真正可用，这里补上接线。
+	var parentNodeID *uuid.UUID
+	if in.ParentNodeID != "" {
+		parsed, err := uuid.Parse(in.ParentNodeID)
+		if err != nil {
+			return toErrorResult(fmt.Errorf("%w: parent_node_id 必须是有效 UUID", domainerrors.ErrValidation)), nil
+		}
+		parentNodeID = &parsed
+	}
 	result, err := deps.DocumentIngest.Ingest(ctx, MCPIngestInput{
 		WorkspaceID: auth.WorkspaceID, Access: auth.ResourceAccess(),
 		KnowledgeBaseID: kbID, FileName: in.FileName, ContentType: in.ContentType,
 		Title: in.Title, Reader: strings.NewReader(string(decoded)), SizeBytes: int64(len(decoded)),
-		Dedupe: in.Dedupe, NodeName: in.NodeName,
+		Dedupe: in.Dedupe, ParentNodeID: parentNodeID, NodeName: in.NodeName,
 	})
 	if err != nil {
 		return toErrorResult(err), nil

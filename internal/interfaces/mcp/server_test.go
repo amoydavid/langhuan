@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -30,9 +31,13 @@ func TestNewServerRegistersAllTools(t *testing.T) {
 	require.True(t, ok, "result type = %T", jsonResp.Result)
 	names := toolNames(result.Tools)
 	require.ElementsMatch(t, []string{
-		"knowledge_base_create", "document_ingest", "document_status",
+		"knowledge_base_create", "document_ingest", "document_ingest_text", "document_status",
 		"knowledge_search", "document_delete", "document_retry", "chunk_get",
 		"knowledge_base_list", "document_list", "document_get",
+		"faq_create", "faq_update", "faq_get",
+		"file_tree_list", "file_tree_folder_create", "file_tree_node_update", "file_tree_node_delete",
+		"web_source_list", "web_source_get", "web_source_create", "web_source_update",
+		"web_source_sync", "web_source_delete",
 	}, names)
 }
 
@@ -81,6 +86,7 @@ func TestScopeToolFilterHidesToolsOutsideScope(t *testing.T) {
 	all := []mcplib.Tool{
 		{Name: "knowledge_base_create"},
 		{Name: "document_ingest"},
+		{Name: "document_ingest_text"},
 		{Name: "document_status"},
 		{Name: "knowledge_search"},
 		{Name: "document_delete"},
@@ -88,8 +94,18 @@ func TestScopeToolFilterHidesToolsOutsideScope(t *testing.T) {
 		{Name: "knowledge_base_list"},
 		{Name: "document_list"},
 		{Name: "document_get"},
+		{Name: "faq_create"},
+		{Name: "faq_get"},
+		{Name: "file_tree_list"},
+		{Name: "file_tree_folder_create"},
+		{Name: "file_tree_node_delete"},
+		{Name: "web_source_list"},
+		{Name: "web_source_get"},
+		{Name: "web_source_create"},
+		{Name: "web_source_sync"},
+		{Name: "web_source_delete"},
 	}
-	// 只读 key：documents:read + search:read。
+	// 只读 key：documents:read + search:read（无任何 write、无 knowledge-bases scope）。
 	auth := value.NewAPIKeyAuthContext(uuid.New(), uuid.New(),
 		[]value.APIScope{value.ScopeDocumentsRead, value.ScopeSearchRead},
 		[]uuid.UUID{uuid.New()})
@@ -97,6 +113,7 @@ func TestScopeToolFilterHidesToolsOutsideScope(t *testing.T) {
 	filtered := scopeToolFilter(ctx, all)
 	require.ElementsMatch(t, []string{
 		"document_status", "knowledge_search", "chunk_get", "document_list", "document_get",
+		"faq_get", "file_tree_list",
 	}, toolNames(filtered))
 }
 
@@ -138,6 +155,25 @@ func toolNames(tools []mcplib.Tool) []string {
 		names = append(names, tool.Name)
 	}
 	return names
+}
+
+// callMCPToolRaw 发起 tools/call 并返回原始 JSON-RPC 响应（不假设成功/错误形状）。
+// 供 scope 过滤拒绝等transport层错误的断言使用。
+func callMCPToolRaw(deps Dependencies, auth value.AuthContext, tool, args string) any {
+	srv := NewServer(deps)
+	payload := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tool, args)
+	ctx := value.ContextWithAuthContext(context.Background(), auth)
+	return srv.MCP().HandleMessage(ctx, json.RawMessage(payload))
+}
+
+// assertToolFilterDenial 断言 tools/call 因 scope 过滤被拒。mcp-go 的 ToolFilter
+// 同时作用于 tools/list 与 tools/call：scope 不足的工具对调用方表现为"不存在"
+// （-32602），handler 内的 HasScope 检查是不可达的纵深防御。
+func assertToolFilterDenial(t *testing.T, resp any) {
+	t.Helper()
+	errResp, ok := resp.(mcplib.JSONRPCError)
+	require.True(t, ok, "response type = %T", resp)
+	require.Equal(t, -32602, errResp.Error.Code)
 }
 
 // inputSchemaOf 把 tool 的 inputSchema（RawInputSchema JSON）解析为 map。
@@ -277,6 +313,93 @@ func TestToolInputSchemasMatchStructDeclarations(t *testing.T) {
 		schema := inputSchemaOf(t, byName["chunk_get"])
 		require.ElementsMatch(t, []string{"knowledge_base_id", "chunk_id"}, schema["required"])
 	})
+
+	t.Run("document_ingest_text", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["document_ingest_text"])
+		require.ElementsMatch(t, []string{"knowledge_base_id", "title", "content"}, schema["required"])
+		assertPropertyType(t, schema, "parent_node_id", "string")
+		assertPropertyType(t, schema, "idempotency_key", "string")
+	})
+
+	t.Run("faq_create", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["faq_create"])
+		require.ElementsMatch(t, []string{"knowledge_base_id", "title", "questions", "answer"}, schema["required"])
+		assertPropertyType(t, schema, "questions", "array")
+	})
+
+	t.Run("faq_update", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["faq_update"])
+		require.ElementsMatch(t, []string{
+			"knowledge_base_id", "document_id", "base_revision_id", "questions", "answer",
+		}, schema["required"])
+	})
+
+	t.Run("file_tree_list", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["file_tree_list"])
+		require.ElementsMatch(t, []string{"knowledge_base_id"}, schema["required"])
+	})
+
+	t.Run("file_tree_folder_create", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["file_tree_folder_create"])
+		require.ElementsMatch(t, []string{"knowledge_base_id", "parent_id", "name"}, schema["required"])
+	})
+
+	t.Run("file_tree_node_update", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["file_tree_node_update"])
+		// name/parent_id 二选一在 handler 校验，schema 只 required 定位字段。
+		require.ElementsMatch(t, []string{"knowledge_base_id", "node_id"}, schema["required"])
+		assertPropertyType(t, schema, "name", "string")
+		assertPropertyType(t, schema, "parent_id", "string")
+	})
+
+	t.Run("web_source_create", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["web_source_create"])
+		require.ElementsMatch(t, []string{"knowledge_base_id", "name", "config"}, schema["required"])
+		assertPropertyType(t, schema, "config", "object")
+	})
+
+	t.Run("web_source_update", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["web_source_update"])
+		require.ElementsMatch(t, []string{"knowledge_base_id", "source_id"}, schema["required"])
+		assertPropertyType(t, schema, "name", "string")
+		assertPropertyType(t, schema, "status", "string")
+		assertPropertyType(t, schema, "config", "object")
+	})
+
+	t.Run("web_source_delete", func(t *testing.T) {
+		schema := inputSchemaOf(t, byName["web_source_delete"])
+		require.ElementsMatch(t, []string{"knowledge_base_id", "source_id"}, schema["required"])
+		// pages 可选，默认 keep。
+		require.NotContains(t, schema["required"], "pages")
+	})
+}
+
+// TestFileTreeListOutputSchemaRecursiveRef 锁定 file_tree_list 手写输出 schema：
+// 递归树用 $defs/$ref 表达（jsonschema-go 的 For[T] 不支持自引用类型），
+// 校验器（santhosh-tekuri/jsonschema）依赖 $ref 可解析。
+func TestFileTreeListOutputSchemaRecursiveRef(t *testing.T) {
+	srv := NewServer(minimalDeps())
+	resp := srv.MCP().HandleMessage(context.Background(), json.RawMessage(`{
+		"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}
+	}`))
+	jsonResp, ok := resp.(mcplib.JSONRPCResponse)
+	require.True(t, ok)
+	result, ok := jsonResp.Result.(mcplib.ListToolsResult)
+	require.True(t, ok)
+
+	byName := map[string]mcplib.Tool{}
+	for _, tool := range result.Tools {
+		byName[tool.Name] = tool
+	}
+	schema := outputSchemaOf(t, byName["file_tree_list"])
+	defs, ok := schema["$defs"].(map[string]any)
+	require.True(t, ok, "缺少 $defs")
+	node, ok := defs["node"].(map[string]any)
+	require.True(t, ok, "缺少 $defs.node")
+	children, ok := node["properties"].(map[string]any)["children"].(map[string]any)
+	require.True(t, ok, "缺少 children 属性")
+	require.Equal(t, map[string]any{"$ref": "#/$defs/node"}, children["items"], "children.items 应 $ref 回 node")
+	require.Equal(t, map[string]any{"$ref": "#/$defs/node"}, property(schema, "root"), "root 应 $ref node")
 }
 
 // TestToolsMarshalWithoutSchemaConflict 是 Raw schema 注册的回归测试。
@@ -295,7 +418,7 @@ func TestToolsMarshalWithoutSchemaConflict(t *testing.T) {
 	require.True(t, ok)
 	result, ok := jsonResp.Result.(mcplib.ListToolsResult)
 	require.True(t, ok)
-	require.Len(t, result.Tools, 10, "应注册 10 个工具")
+	require.Len(t, result.Tools, 24, "应注册 24 个工具")
 
 	for _, tool := range result.Tools {
 		t.Run(tool.Name, func(t *testing.T) {

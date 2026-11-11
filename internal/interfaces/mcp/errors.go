@@ -31,6 +31,13 @@ func mapDomainError(err error) mcpError {
 		return mcpError{Error: mcpErrorBody{Code: "not_found", Message: "资源不存在"}}
 	case errors.Is(err, domainerrors.ErrValidation):
 		return mcpError{Error: mcpErrorBody{Code: "validation_error", Message: safeMessage(err)}}
+	case errors.Is(err, domainerrors.ErrRevisionConflict):
+		// faq_update 乐观锁冲突：重新 faq_get 取最新活跃修订后再试。
+		return mcpError{Error: mcpErrorBody{Code: "revision_conflict", Message: "修订版本冲突，请重新获取最新修订后重试", Retryable: true}}
+	case errors.Is(err, domainerrors.ErrFileTreeCycle),
+		errors.Is(err, domainerrors.ErrFileTreeNotEmpty),
+		errors.Is(err, domainerrors.ErrFileTreeNameConflict):
+		return mcpError{Error: mcpErrorBody{Code: "validation_error", Message: safeMessage(err)}}
 	case errors.Is(err, domainerrors.ErrForbidden):
 		return mcpError{Error: mcpErrorBody{Code: "forbidden", Message: "无权限"}}
 	case errors.Is(err, domainerrors.ErrInsufficientScope):

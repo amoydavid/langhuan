@@ -10,6 +10,7 @@ import (
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dajee/langhuan/internal/application/service"
 	domainerrors "github.com/dajee/langhuan/internal/domain/errors"
 	"github.com/dajee/langhuan/internal/domain/model"
 	"github.com/dajee/langhuan/internal/domain/value"
@@ -52,6 +53,26 @@ func (f *fakeMCPWebSourceService) AddURLToWebSource(_ context.Context, workspace
 		f.source = &model.KbSource{ID: uuid.New(), Name: "帮助中心", Status: value.KbSourceStatusActive}
 	}
 	return f.source, f.job, nil
+}
+
+// CRUD 六方法只满足接口编译（url 模式测试不触达），web_source 工具组有专属 fake。
+func (f *fakeMCPWebSourceService) CreateWebSource(context.Context, service.CreateWebSourceInput) (*model.KbSource, *model.Job, error) {
+	return nil, nil, fmt.Errorf("not implemented in url-mode fake")
+}
+func (f *fakeMCPWebSourceService) ListWebSources(context.Context, uuid.UUID, uuid.UUID) ([]service.WebSourceView, error) {
+	return nil, fmt.Errorf("not implemented in url-mode fake")
+}
+func (f *fakeMCPWebSourceService) GetWebSource(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*service.WebSourceView, error) {
+	return nil, fmt.Errorf("not implemented in url-mode fake")
+}
+func (f *fakeMCPWebSourceService) UpdateWebSource(context.Context, service.UpdateWebSourceInput) (*model.KbSource, *model.Job, error) {
+	return nil, nil, fmt.Errorf("not implemented in url-mode fake")
+}
+func (f *fakeMCPWebSourceService) SyncWebSource(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, bool) (*model.Job, error) {
+	return nil, fmt.Errorf("not implemented in url-mode fake")
+}
+func (f *fakeMCPWebSourceService) DeleteWebSource(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string) error {
+	return fmt.Errorf("not implemented in url-mode fake")
 }
 
 func ingestTestDeps(ingest MCPDocumentIngestService, webSources MCPWebSourceService) Dependencies {

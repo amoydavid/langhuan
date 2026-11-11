@@ -557,6 +557,20 @@ web/                    # 管理台；web_embed 构建时由该 package 直接�
 
 验收标准（spec §11.5 九条，全 PASS，证据见实现计划 T19）：遥测旁路故障注入下检索响应逐位不变；`query_log_enabled=false` 时任何面零明文；零召回→FAQ→命中→环比变化的完整剧本走通；跨 workspace 404；五项门禁全绿。
 
+### v1.5.0 MCP 写能力全量补齐（2026-11-10）
+
+spec：`docs/superpowers/specs/2026-11-10-mcp-write-tools-design.md`。目标：只持有 MCP 入口与 API Key 的 agent 不借助 REST 即可完成「写入内容 → 组织文件树 → 建立/维护网站源 → 触发同步」的内容运营闭环。纯接口层扩展——复用全部既有 application service，无迁移、无新领域模型。
+
+- MCP 工具 10 → 24，新增四组：
+  - `document_ingest_text`：Markdown 文本直写（对应 REST `POST /documents/text`），支持 `parent_node_id` 与 Bearer 幂等键；
+  - `faq_create` / `faq_update`（乐观锁，冲突返回 `revision_conflict` 可重试码）/ `faq_get`（FAQ 问答对读，`document_get` 对 FAQ 不返回问答结构）；
+  - `file_tree_list`（嵌套树 + `path`）/ `file_tree_folder_create` / `file_tree_node_update`（重命名/移动）/ `file_tree_node_delete`（仅空 folder）——`document_ingest` 的 `parent_node_id` 自此真正可用；
+  - `web_source_list` / `web_source_get` / `web_source_create` / `web_source_update` / `web_source_sync`（`force` 全量重爬）/ `web_source_delete`（`pages: keep|remove`），config 对象透传、与 REST PATCH 同语义。
+- 顺手修复：`document_ingest` file 模式 `parent_node_id` 自 v1.2.0 起在 schema 声明但未被传入 service（静默丢弃），本版补上接线。
+- 错误码增补：`revision_conflict`（retryable）、FileTree 三 sentinel（cycle/not_empty/name_conflict → `validation_error`）。
+- 递归树输出 schema 手写 `$defs/$ref`（jsonschema-go `For[T]` 不支持自引用类型；mcp-go 输出校验器 santhosh-tekuri/jsonschema 完整支持 $ref）。
+- scope 矩阵与 REST 对齐：faq/file_tree 走 documents 读写，web_source 走 knowledge-bases 读写；`toolScopeRequirement` 登记全部新工具，tools/list 与 tools/call 均按 scope 过滤。
+
 ## 暂不进入首版的能力
 
 - Chat/Agent/回答生成。
