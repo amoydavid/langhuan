@@ -584,7 +584,7 @@ func (h DocumentHandlers) failPipelineRun(ctx context.Context, payload DocumentT
 			slog.Int("retry_count", retryCount))...)
 	if terminal {
 		if err := h.Store.FailTask(
-			ctx, payload.WorkspaceID, payload.JobID, payload.DocumentRevisionID,
+			ctx, payload.WorkspaceID, payload.DocumentID, payload.JobID, payload.DocumentRevisionID,
 			documentTaskErrorClass(cause), cause.Error(),
 		); err != nil {
 			return errors.Join(cause, fmt.Errorf("持久化文档任务失败状态失败: %w", err))

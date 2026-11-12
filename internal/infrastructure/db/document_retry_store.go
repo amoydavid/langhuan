@@ -115,6 +115,20 @@ func (tx *documentRetryDBTx) ResetFailedRevision(ctx context.Context, request ap
 	}
 
 	now := time.Now().UTC()
+	// 复位 document：status→pending（与首次导入一致），清错误——
+	// 否则失败文档重试后列表仍显示 failed（终态失败已回写 documents）。
+	docReset := tx.db.WithContext(ctx).Model(&DocumentRow{}).
+		Where("workspace_id = ? AND id = ? AND deleted_at IS NULL", request.WorkspaceID, request.DocumentID).
+		Updates(map[string]any{
+			"status":     string(value.DocumentStatusPending),
+			"updated_at": now,
+		})
+	if docReset.Error != nil {
+		return uuid.Nil, translateDBError(docReset.Error, "重置重试 Document 状态失败")
+	}
+	if docReset.RowsAffected != 1 {
+		return uuid.Nil, domainerrors.ErrNotFound
+	}
 	// 复位 revision：status→pending，清错误，清 completed_at。
 	revUpdate := tx.db.WithContext(ctx).Model(&DocumentRevisionRow{}).
 		Where("workspace_id = ? AND id = ?", request.WorkspaceID, request.RevisionID).

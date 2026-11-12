@@ -198,7 +198,9 @@ type DocumentTaskStore interface {
 		string,
 		map[string]any,
 	) (*dto.Job, error)
-	FailTask(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, string, string) error
+	// FailTask 终态标记 Job、DocumentRevision 与 Document（status=failed），
+	// documentID 来自任务 payload lineage。
+	FailTask(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, string, string) error
 }
 
 // ChunkEditTx owns optimistic creation of a user ChunkRevision and its indexing Job.

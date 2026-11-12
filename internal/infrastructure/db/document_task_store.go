@@ -118,18 +118,34 @@ func (s *DocumentTaskDBStore) updateJob(
 	})
 }
 
-// FailTask atomically marks both the Job and its immutable DocumentRevision failed.
+// FailTask atomically marks the Job, its immutable DocumentRevision and the
+// parent Document failed。修复前只写 Job/Revision——documents.status 停留
+// pending，所有消费者（REST 列表/Studio/健康遥测）看到永远"处理中"。
 func (s *DocumentTaskDBStore) FailTask(
 	ctx context.Context,
-	workspaceID, jobID, revisionID uuid.UUID,
+	workspaceID, documentID, jobID, revisionID uuid.UUID,
 	errorClass, message string,
 ) error {
-	if workspaceID == uuid.Nil || jobID == uuid.Nil || revisionID == uuid.Nil ||
+	if workspaceID == uuid.Nil || documentID == uuid.Nil || jobID == uuid.Nil || revisionID == uuid.Nil ||
 		strings.TrimSpace(errorClass) == "" || strings.TrimSpace(message) == "" {
 		return fmt.Errorf("%w: DocumentTask failure lineage/message 无效", domainerrors.ErrValidation)
 	}
 	return NewWorkspaceTxRunner(s.db).WithinWorkspace(ctx, workspaceID, func(tx *gorm.DB) error {
 		now := time.Now().UTC()
+		// documents 表没有 error_message 列——错误详情在 revision 上
+		//（Document DTO 经 active_revision 透出），这里只回写状态。
+		documentResult := tx.WithContext(ctx).Model(&DocumentRow{}).
+			Where("workspace_id = ? AND id = ?", workspaceID, documentID).
+			Updates(map[string]any{
+				"status":     string(value.DocumentStatusFailed),
+				"updated_at": now,
+			})
+		if documentResult.Error != nil {
+			return translateDBError(documentResult.Error, "标记 Document 失败")
+		}
+		if documentResult.RowsAffected != 1 {
+			return domainerrors.ErrNotFound
+		}
 		jobResult := tx.WithContext(ctx).Model(&JobRow{}).
 			Where(
 				"workspace_id = ? AND id = ? AND document_revision_id = ?",

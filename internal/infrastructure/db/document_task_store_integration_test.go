@@ -78,7 +78,7 @@ func TestDocumentTaskStoreScopesLineageAndPersistsTerminalFailure(t *testing.T) 
 		t.Fatalf("loaded task = job %v revision %v published %v", gotJob, gotRevision, published)
 	}
 
-	if err := store.FailTask(ctx, seed.workspaceID, jobID, revisionID, "invalid_document", "broken"); err != nil {
+	if err := store.FailTask(ctx, seed.workspaceID, documentID, jobID, revisionID, "invalid_document", "broken"); err != nil {
 		t.Fatal(err)
 	}
 	var jobRow JobRow
@@ -89,8 +89,16 @@ func TestDocumentTaskStoreScopesLineageAndPersistsTerminalFailure(t *testing.T) 
 	if err := database.WithContext(ctx).First(&revisionRow, "workspace_id = ? AND id = ?", seed.workspaceID, revisionID).Error; err != nil {
 		t.Fatal(err)
 	}
+	// 终态失败必须回写 documents.status=failed（修复前停留 pending，列表
+	// 永远"处理中"）。错误详情在 revision 上（DTO 经 active_revision 透出），
+	// documents 表没有 error_message 列。
+	var documentRow DocumentRow
+	if err := database.WithContext(ctx).First(&documentRow, "workspace_id = ? AND id = ?", seed.workspaceID, documentID).Error; err != nil {
+		t.Fatal(err)
+	}
 	if jobRow.Status != string(value.JobStatusFailed) || jobRow.ErrorClass != "invalid_document" ||
-		revisionRow.Status != string(value.DocumentRevisionFailed) || revisionRow.ErrorClass != "invalid_document" {
-		t.Fatalf("failed state = job %#v revision %#v", jobRow, revisionRow)
+		revisionRow.Status != string(value.DocumentRevisionFailed) || revisionRow.ErrorClass != "invalid_document" ||
+		documentRow.Status != string(value.DocumentStatusFailed) {
+		t.Fatalf("failed state = job %#v revision %#v document %#v", jobRow, revisionRow, documentRow)
 	}
 }

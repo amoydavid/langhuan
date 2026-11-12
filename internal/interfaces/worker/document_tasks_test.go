@@ -340,14 +340,14 @@ func (s *fakeDocumentTaskStore) WithinWorkspace(
 
 func (s *fakeDocumentTaskStore) FailTask(
 	_ context.Context,
-	workspaceID, jobID, revisionID uuid.UUID,
+	workspaceID, documentID, jobID, revisionID uuid.UUID,
 	errorClass, message string,
 ) error {
 	if s.failErr != nil {
 		return s.failErr
 	}
 	s.failures = append(s.failures, taskFailure{
-		workspaceID: workspaceID, jobID: jobID, revisionID: revisionID,
+		workspaceID: workspaceID, documentID: documentID, jobID: jobID, revisionID: revisionID,
 		errorClass: errorClass, message: message,
 	})
 	return nil
@@ -401,8 +401,8 @@ func (tx *fakeDocumentTaskTx) IsRevisionPublished(context.Context, uuid.UUID, uu
 }
 
 type taskFailure struct {
-	workspaceID, jobID, revisionID uuid.UUID
-	errorClass, message            string
+	workspaceID, documentID, jobID, revisionID uuid.UUID
+	errorClass, message                        string
 }
 
 type fakeDocumentTaskQueue struct {
