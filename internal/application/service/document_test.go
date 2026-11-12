@@ -163,6 +163,10 @@ func (r *fakeDocumentQueryRepository) Delete(_ context.Context, workspaceID, doc
 	return nil
 }
 
+func (r *fakeDocumentQueryRepository) SetAIUseEnabled(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ bool) error {
+	return nil
+}
+
 func validDocumentForServiceTest(t *testing.T) *model.Document {
 	t.Helper()
 	doc, err := model.NewDocument(model.NewDocumentInput{

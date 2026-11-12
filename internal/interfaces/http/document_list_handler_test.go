@@ -33,6 +33,10 @@ func (f *documentListFake) Delete(_ context.Context, _ value.ResourceAccess, _ u
 	return nil
 }
 
+func (f *documentListFake) SetAIUseEnabled(_ context.Context, _ value.ResourceAccess, _ uuid.UUID, _ bool) error {
+	return nil
+}
+
 // TestDocumentListHandlerParsesKbSourceIDFilter 验证源详情页依赖的
 // kb_source_id 过滤参数（v1.3.0 spec §9.4）：合法 UUID 下推到 service，
 // 非法 UUID 拒绝 400 且不触达 service。

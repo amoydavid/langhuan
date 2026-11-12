@@ -260,6 +260,12 @@ func (s *fakeDocumentQueryService) Delete(_ context.Context, access value.Resour
 	return nil
 }
 
+func (s *fakeDocumentQueryService) SetAIUseEnabled(
+	_ context.Context, _ value.ResourceAccess, _ uuid.UUID, _ bool,
+) error {
+	return nil
+}
+
 func (s *fakeJobQueryService) Get(_ context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.Job, error) {
 	job, ok := s.items[id]
 	if !ok || job.Payload["workspace_id"] != access.WorkspaceID.String() {

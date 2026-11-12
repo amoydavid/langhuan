@@ -120,8 +120,9 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	cookieName := deps.SessionConfig.CookieName
 	api := router.Group("/api/v1")
 
-	// --- healthz + readyz + MCP ---
+	// --- healthz + readyz + capabilities + MCP ---
 	api.GET("/healthz", healthz)
+	api.GET("/capabilities", capabilities)
 	if deps.ReadyChecker != nil {
 		api.GET("/readyz", readyz(deps.ReadyChecker))
 	}
@@ -306,16 +307,8 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				memberGroup.GET("/models/:model_id", modelH.getWorkspace)
 			}
 			if deps.Documents != nil {
-				doc := documentHandler{
-					ingestService:     deps.DocumentIngest,
-					queryService:      deps.Documents,
-					assetService:      deps.DocumentAssets,
-					assetGetter:       deps.AssetGetter,
-					assetContentStore: deps.AssetContentStore,
-					maxFileSizeBytes:  deps.MaxFileSizeBytes,
-				}
-				memberGroup.GET("/documents/:document_id/assets", doc.assets)
-				memberGroup.GET("/documents/:document_id/assets/:asset_id", doc.assetContent)
+				// C05：资产路由移至 progGroup（Session + Bearer 同合同）；
+				// memberGroup 不再重复注册（Gin 同路径重复注册会 panic）。
 			}
 			if deps.FAQDocuments != nil {
 				// FAQ routes are registered in progGroup with a KB-qualified URL.
@@ -391,6 +384,12 @@ func NewRouter(deps Dependencies) *gin.Engine {
 				write.POST("", doc.ingest)
 				write.POST("/text", doc.ingestText)
 			}
+			// C05：revision 资产（图片/原件派生物）对 Bearer 开放——同一 handler，
+			// API Key 走 documents:read scope，KB 绑定集合由 service 下推 404。
+			// 支持单区间 Range 与 ETag/If-None-Match（revision.asset.bearer）。
+			assetRead := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsRead))
+			assetRead.GET("/documents/:document_id/assets", doc.assets)
+			assetRead.GET("/documents/:document_id/assets/:asset_id", doc.assetContent)
 		}
 		if deps.FAQDocuments != nil {
 			faq := faqDocumentHandler{service: deps.FAQDocuments}
@@ -423,6 +422,8 @@ func NewRouter(deps Dependencies) *gin.Engine {
 			status.GET("/documents/:document_id", doc.get)
 			del := progGroup.Group("", RequireScopeForAPIKey(value.ScopeDocumentsWrite))
 			del.DELETE("/documents/:document_id", doc.delete)
+			// 文档级 AI 政策（C02）：Session 与 Bearer 同合同，绑定集合在 service 下推。
+			del.PATCH("/documents/:document_id", doc.patchDocument)
 			// retry 要求 admin/owner（Session），API Key 仍由 ScopeDocumentsWrite + 绑定集合控制。
 			// 不能并入 del 组（member 级），需单独加 RequireAdminForSession。
 			if deps.DocumentRetry != nil {
