@@ -431,6 +431,10 @@ POST   /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/faq     
 GET/PUT /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/:document_id/faq
 GET/POST/PATCH/DELETE /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/file-tree/...
 GET    /api/v1/workspaces/:workspace_slug/knowledge-bases/:id/documents/:document_id/chunks
+GET    /api/v1/workspaces/:workspace_slug/documents/:document_id/assets            # documents:read（C05：Session+Bearer 同合同，支持 Range/ETag）
+GET    /api/v1/workspaces/:workspace_slug/documents/:document_id/assets/:asset_id  # 同上
+PATCH  /api/v1/workspaces/:workspace_slug/documents/:document_id                   # documents:write（C02：{"ai_use_enabled":bool}）
+GET    /api/v1/capabilities                                                        # 免鉴权能力发现（C01，稳定特性名列表）
 GET    /api/v1/workspaces/:workspace_slug/models?type=embedding&status=active&scope=platform
 ```
 

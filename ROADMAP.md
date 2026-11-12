@@ -582,6 +582,22 @@ spec：`docs/superpowers/specs/2026-11-11-member-kb-authorization-design.md`。�
 - 迁移双方言：PG 000028 + SQLite 000006（合并式）。
 - Web Console：成员列表「知识库范围」列 + member 行「知识库授权」入口（admin/owner），弹窗 = 全部/仅指定 + 多选列表，双语。
 
+### v1.7.0 能力发现、文档级 AI 政策与 PDF 页锚点（2026-11-12）
+
+面向 Studio 等嵌入方的能力协商与引用定位合同补齐（LH-005 冻结清单的 Core 侧交付）；全部为增量变更，默认行为零变化。
+
+- **C01 能力发现**：`GET /api/v1/capabilities`（免鉴权，与 healthz 同级）返回稳定特性名列表（`search.multi_kb`、`search.document_ids_filter`、`document.ai_use_enabled`、`source_anchor.pdf.v2`、`revision.asset.bearer`、`document.retry`）；常量集中在 `interfaces/http/capabilities.go`，只增不改。
+- **C02 文档级 AI 政策**：
+  - 迁移双方言：PG 000029 + SQLite 000007——`documents.ai_use_enabled boolean NOT NULL DEFAULT true`（存量零变化）。
+  - `PATCH /workspaces/:slug/documents/:id`（`{"ai_use_enabled": bool}`，documents:write，Session/Bearer 同合同，绑定集合下推 404）；DTO 暴露 `ai_use_enabled`。
+  - **召回前排除**：单库/多库检索的 vector/keyword 全部召回 SQL（PG HNSW 4 维 + SQLite vec/FTS5）追加 `document_id NOT IN (documents WHERE ai_use_enabled = FALSE)` 谓词——禁用文档不进候选与最终结果；原文阅读/资产访问不受影响（"AI 禁用"= 不得用于新检索）。
+  - 检索请求支持 `document_ids` 范围收窄（`search.document_ids_filter`），服务层保证越界条目按不存在处理。
+  - 响应携带政策版本：多库响应体 `policy_version` + 头 `X-AI-Policy-Version`，单库响应头 `X-AI-Policy-Version`（`ai-use-v1`，只增不改）。
+- **C03 PDF 物理页锚点（schema_version=2）**：MinerU 产物 zip 新增 `content_list.json` 提取；解析 manifest 按"顺序单游标 + 文本精确比对"把 0-based `page_idx` 对齐为块级 1-based `page`/`bbox` 锚点（SourceAnchor 新字段，parser_version 2）。首次文本失配即停止对齐并写 `page_anchor_misaligned` 解析 warning——宁可缺页锚点不臆造页码；chunk 合并聚合为 `page_start/page_end` 页范围并丢弃单块 bbox。**真实 PDF 样本验证待 MinerU token（E1）**，fixture 单测已覆盖对齐/降级/合并。
+- **C05 revision 资产 Bearer 读取**：资产列表/内容路由从 Session-only 移至 progGroup（Session + Bearer 同合同，documents:read + KB 绑定集合）；内容响应支持单区间 `Range`（206/Content-Range/Accept-Ranges，416 明确报错）与 `ETag`（内容哈希）+ `If-None-Match`（304）。
+- **修复：流水线终态失败回写 documents.status**（v0.8.0 起遗留）：任务终态失败此前只写 jobs/document_revisions，documents.status 停留 `pending`——所有消费者（REST 列表、健康遥测、嵌入方）看到永远"处理中"。现在 `FailTask` 同事务回写 `documents.status=failed` + error_message；重试复位同步把 documents 置回 `pending`。既有重试集成测试的 document 复位断言自此转绿。
+- 检索回归说明：召回 SQL 新增谓词在默认数据（无禁用文档）下排除集合为空、候选集与排序不变；`document_ids` 仅在显式传入时生效，默认检索参数/分块/RRF/embedding 链路未动。
+
 ## 暂不进入首版的能力
 
 - Chat/Agent/回答生成。
