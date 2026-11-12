@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	stdhttp "net/http"
 	"strconv"
@@ -27,6 +28,8 @@ type DocumentQueryService interface {
 	Get(ctx context.Context, access value.ResourceAccess, id uuid.UUID) (*dto.Document, error)
 	List(ctx context.Context, filter service.DocumentListFilter) ([]*dto.Document, error)
 	Delete(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID) error
+	// SetAIUseEnabled 切换文档级 AI 政策（C02）。
+	SetAIUseEnabled(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID, enabled bool) error
 }
 
 // DocumentAssetListService 提供按 Document 查询图片资产的能力。
@@ -292,6 +295,48 @@ func (h documentHandler) delete(c *gin.Context) {
 	c.Status(stdhttp.StatusNoContent)
 }
 
+// patchDocumentRequest 是文档策略更新的请求体（C02）。字段按需扩展。
+type patchDocumentRequest struct {
+	// AIUseEnabled 为 false 时该文档不得用于新检索（召回前排除）；
+	// 原文阅读与资产访问不受影响。
+	AIUseEnabled *bool `json:"ai_use_enabled"`
+}
+
+// patchDocument 更新文档策略字段（当前仅 ai_use_enabled）。documents:write。
+func (h documentHandler) patchDocument(c *gin.Context) {
+	authCtx, ok := authFromContext(c)
+	if !ok {
+		writeError(c, stdhttp.StatusForbidden, "forbidden", "forbidden")
+		return
+	}
+	documentID, err := uuid.Parse(c.Param("document_id"))
+	if err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "document_id 必须是有效 UUID")
+		return
+	}
+	var request patchDocumentRequest
+	if err := decodeStrictJSON(c, &request); err != nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "请求 JSON 无效")
+		return
+	}
+	if request.AIUseEnabled == nil {
+		writeError(c, stdhttp.StatusBadRequest, "validation_error", "ai_use_enabled 不能为空")
+		return
+	}
+	if err := h.queryService.SetAIUseEnabled(
+		c.Request.Context(), authCtx.ResourceAccess(), documentID, *request.AIUseEnabled,
+	); err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	document, err := h.queryService.Get(c.Request.Context(), authCtx.ResourceAccess(), documentID)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	c.JSON(stdhttp.StatusOK, document)
+}
+
 // retryDocument 重试失败文档的最新 revision，复位 failed 状态并重新入队解析。
 func (h documentHandler) retryDocument(c *gin.Context) {
 	authCtx, ok := authFromContext(c)
@@ -400,6 +445,43 @@ func (h documentHandler) assetContent(c *gin.Context) {
 		writeError(c, stdhttp.StatusNotFound, "not_found", "资产不存在")
 		return
 	}
+	// C05：ETag 以资产内容哈希标识（不可变存储键内容不变），支持条件请求。
+	etag := `"` + asset.SHA256 + `"`
+	c.Header("ETag", etag)
+	c.Header("Accept-Ranges", "bytes")
+	if match := c.GetHeader("If-None-Match"); match != "" && etagMatch(match, etag) {
+		c.Status(stdhttp.StatusNotModified)
+		return
+	}
+	rangeHeader := c.GetHeader("Range")
+	if rangeHeader != "" {
+		start, end, ok := parseByteRange(rangeHeader, asset.SizeBytes)
+		if !ok {
+			c.Header("Content-Range", fmt.Sprintf("bytes */%d", asset.SizeBytes))
+			writeError(c, stdhttp.StatusRequestedRangeNotSatisfiable, "range_not_satisfiable", "Range 不可满足")
+			return
+		}
+		reader, err := h.assetContentStore.Open(c.Request.Context(), asset.StorageKey)
+		if err != nil {
+			writeServiceError(c, err)
+			return
+		}
+		defer reader.Close()
+		// 起始偏移统一以丢弃读取实现（存储层 Open 不承诺 Seekable）。
+		if start > 0 {
+			if _, err := io.CopyN(io.Discard, reader, int64(start)); err != nil {
+				writeServiceError(c, err)
+				return
+			}
+		}
+		length := int64(end - start + 1)
+		c.Header("Content-Type", asset.MimeType)
+		c.Header("Cache-Control", "private, max-age=3600")
+		c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, asset.SizeBytes))
+		c.Status(stdhttp.StatusPartialContent)
+		_, _ = io.CopyN(c.Writer, reader, length)
+		return
+	}
 	reader, err := h.assetContentStore.Open(c.Request.Context(), asset.StorageKey)
 	if err != nil {
 		writeServiceError(c, err)
@@ -410,6 +492,53 @@ func (h documentHandler) assetContent(c *gin.Context) {
 	c.Header("Cache-Control", "private, max-age=3600")
 	c.Status(stdhttp.StatusOK)
 	_, _ = io.Copy(c.Writer, reader)
+}
+
+// parseByteRange 解析单区间 bytes=start-end（end 可省略或超出 size，
+// 按规范夹紧）。多区间/非法格式返回 false（调用方回退整段或 416）。
+func parseByteRange(header string, size int64) (int, int, bool) {
+	spec, ok := strings.CutPrefix(header, "bytes=")
+	if !ok || strings.Contains(spec, ",") {
+		return 0, 0, false
+	}
+	startStr, endStr, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, err := strconv.Atoi(strings.TrimSpace(startStr))
+	if err != nil || start < 0 {
+		return 0, 0, false
+	}
+	if size <= 0 || start >= int(size) {
+		return 0, 0, false
+	}
+	end := int(size) - 1
+	if trimmed := strings.TrimSpace(endStr); trimmed != "" {
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil || parsed < start {
+			return 0, 0, false
+		}
+		if parsed < end {
+			end = parsed
+		}
+	}
+	return start, end, true
+}
+
+// etagMatch 判断 If-None-Match 是否命中当前 ETag（支持 * 与逗号分隔列表，
+// 弱比较 W/ 前缀按强比较处理——资产内容不可变，语义等价）。
+func etagMatch(header, etag string) bool {
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimPrefix(candidate, "W/")
+		if candidate == etag {
+			return true
+		}
+	}
+	return false
 }
 
 func isRequestTooLarge(err error) bool {

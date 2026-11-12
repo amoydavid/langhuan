@@ -42,6 +42,9 @@ type MultiKnowledgeSearchInput struct {
 	RequestedScope   value.SearchScope
 	// Detail 选择响应档位（full/lean）；空值按 full 处理。投影不改排序。
 	Detail value.SearchResultDetail
+	// DocumentIDs 非空时把召回收窄到这些文档（C02）。条目必须属于
+	// KnowledgeBaseIDs 的授权范围；越界条目按不存在处理（召回自然为空）。
+	DocumentIDs []uuid.UUID
 }
 
 // knowledgeBaseSearchSnapshot 描述一个被选中知识库在检索开始时的只读快照。
@@ -441,10 +444,11 @@ func (s *MultiKnowledgeSearchService) searchPerKB(ctx context.Context, input Mul
 				request := indexport.SearchRequest{
 					KnowledgeBaseID: snap.knowledgeBaseID, GenerationID: snap.generation.ID,
 					Query: query, QueryEmbedding: group.queryVector,
-					FTSConfig:   options.ftsConfig,
-					Dimension:   snap.generation.EmbeddingDimension,
-					VectorTopK:  options.vectorTopK,
-					KeywordTopK: options.keywordTopK,
+					FTSConfig:       options.ftsConfig,
+					Dimension:       snap.generation.EmbeddingDimension,
+					VectorTopK:      options.vectorTopK,
+					KeywordTopK:     options.keywordTopK,
+					OnlyDocumentIDs: input.DocumentIDs,
 				}
 				// topK=0 表示禁用该路召回：跳过 SQL 调用，RRF 对单路退化为直通排序。
 				var vectorCandidates []indexport.SearchCandidate

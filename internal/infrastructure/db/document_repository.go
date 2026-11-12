@@ -230,6 +230,24 @@ func (r *DocumentRepository) Delete(ctx context.Context, workspaceID, documentID
 	})
 }
 
+// SetAIUseEnabled 更新文档级 AI 政策（C02）。软删文档不可更新。
+func (r *DocumentRepository) SetAIUseEnabled(
+	ctx context.Context, workspaceID, documentID uuid.UUID, enabled bool,
+) error {
+	result := r.db.WithContext(ctx).Model(&DocumentRow{}).
+		Where("workspace_id = ? AND id = ? AND deleted_at IS NULL", workspaceID, documentID).
+		Updates(map[string]any{
+			"ai_use_enabled": enabled, "updated_at": time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return translateDBError(result.Error, "更新文档 AI 政策失败")
+	}
+	if result.RowsAffected != 1 {
+		return ErrRepositoryNotFound
+	}
+	return nil
+}
+
 func documentToRow(document *model.Document) (*DocumentRow, error) {
 	return documentV2ToRow(document), nil
 }

@@ -35,6 +35,8 @@ type SearchInput struct {
 	// Access 是调用者的资源访问边界（受限主体只能检索授权集合内的知识库）。
 	// 零值按 legacy 无界处理（进程内调用方），HTTP/MCP 入口总是传鉴权上下文。
 	Access value.ResourceAccess
+	// DocumentIDs 非空时把召回收窄到这些文档（C02）。越界条目按不存在处理。
+	DocumentIDs []uuid.UUID
 }
 
 // SearchServiceDeps contains hybrid-search persistence and embedding dependencies.
@@ -255,6 +257,7 @@ func (s *SearchService) Search(ctx context.Context, input SearchInput) (response
 		Query: query, QueryEmbedding: queryVector, FTSConfig: options.ftsConfig,
 		Dimension:  generation.EmbeddingDimension,
 		VectorTopK: options.vectorTopK, KeywordTopK: options.keywordTopK,
+		OnlyDocumentIDs: input.DocumentIDs,
 	}
 	var results []*dto.SearchResult
 	failurePhase = searchFailurePhaseRetrieval

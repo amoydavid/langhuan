@@ -292,10 +292,10 @@ func TestRetrievalSearchVectorQueryUsesDimensionHNSWIndex(t *testing.T) {
 		querySQL  string
 		indexName string
 	}{
-		{dimension: 798, querySQL: vectorSearch798SQL, indexName: "idx_retrieval_entries_hnsw_798"},
-		{dimension: 1024, querySQL: vectorSearch1024SQL, indexName: "idx_retrieval_entries_hnsw_1024"},
-		{dimension: 2048, querySQL: vectorSearch2048SQL, indexName: "idx_retrieval_entries_hnsw_2048"},
-		{dimension: 3584, querySQL: vectorSearch3584SQL, indexName: "idx_retrieval_entries_hnsw_3584"},
+		{dimension: 798, querySQL: vectorSearchHead798 + vectorSearchTail798, indexName: "idx_retrieval_entries_hnsw_798"},
+		{dimension: 1024, querySQL: vectorSearchHead1024 + vectorSearchTail1024, indexName: "idx_retrieval_entries_hnsw_1024"},
+		{dimension: 2048, querySQL: vectorSearchHead2048 + vectorSearchTail2048, indexName: "idx_retrieval_entries_hnsw_2048"},
+		{dimension: 3584, querySQL: vectorSearchHead3584 + vectorSearchTail3584, indexName: "idx_retrieval_entries_hnsw_3584"},
 	}
 	for _, test := range tests {
 		t.Run(test.indexName, func(t *testing.T) {
@@ -323,7 +323,7 @@ func TestRetrievalSearchVectorQueryUsesDimensionHNSWIndex(t *testing.T) {
 				return tx.Raw(
 					"EXPLAIN (COSTS OFF) "+test.querySQL,
 					literal, seed.workspaceID, seed.kbID, seed.generationID,
-					test.dimension, literal, 10,
+					test.dimension, seed.workspaceID, literal, 10,
 				).Scan(&lines).Error
 			}); err != nil {
 				t.Fatal(err)
@@ -481,5 +481,132 @@ func publishSearchEntries(
 	}
 	if result.RowsAffected != int64(len(entryIDs)) {
 		t.Fatalf("published rows = %d, want %d", result.RowsAffected, len(entryIDs))
+	}
+}
+
+// TestRetrievalSearchExcludesAIDisabledAndHonorsDocumentIDsScope 验证 C02：
+// ai_use_enabled=false 的文档在召回前被排除（vector/keyword 两路），
+// document_ids 非空时把召回收窄到指定文档。
+func TestRetrievalSearchExcludesAIDisabledAndHonorsDocumentIDsScope(t *testing.T) {
+	ctx, database := newAuthTestDB(t)
+	seed := insertKnowledgeSchemaSeed(t, ctx, database)
+	repository := NewRetrievalRepository(database, nil)
+	vector := make([]float32, 1024)
+	vector[0] = 1
+
+	docAID, docARevision := uuid.New(), uuid.New()
+	if err := insertFileDocumentRevision(ctx, database, seed, docAID, docARevision, "disabled.md"); err != nil {
+		t.Fatal(err)
+	}
+	setA, chunkA, revA := createReadyRetrievalChunk(
+		t, ctx, database, seed, docAID, docARevision,
+		"doc A", "disabledneedle", "doc A return",
+	)
+	entryA := &model.RetrievalEntry{
+		ID: uuid.New(), WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID,
+		IndexGenerationID: seed.generationID, DocumentID: docAID,
+		DocumentRevisionID: docARevision, ChunkSetID: setA,
+		ChunkID: chunkA.ID, ChunkRevisionID: revA.ID,
+		State: value.RetrievalEntryStaging, SearchContent: revA.EmbeddingContent,
+		Content: revA.Content, SourceAnchor: chunkA.SourceAnchor,
+		Metadata: map[string]any{"kind": "file"}, CreatedAt: time.Now().UTC(),
+	}
+	docBID, docBRevision := uuid.New(), uuid.New()
+	if err := insertFileDocumentRevision(ctx, database, seed, docBID, docBRevision, "enabled.md"); err != nil {
+		t.Fatal(err)
+	}
+	setB, chunkB, revB := createReadyRetrievalChunk(
+		t, ctx, database, seed, docBID, docBRevision,
+		"doc B", "enabledneedle", "doc B return",
+	)
+	entryB := &model.RetrievalEntry{
+		ID: uuid.New(), WorkspaceID: seed.workspaceID, KnowledgeBaseID: seed.kbID,
+		IndexGenerationID: seed.generationID, DocumentID: docBID,
+		DocumentRevisionID: docBRevision, ChunkSetID: setB,
+		ChunkID: chunkB.ID, ChunkRevisionID: revB.ID,
+		State: value.RetrievalEntryStaging, SearchContent: revB.EmbeddingContent,
+		Content: revB.Content, SourceAnchor: chunkB.SourceAnchor,
+		Metadata: map[string]any{"kind": "file"}, CreatedAt: time.Now().UTC(),
+	}
+	if err := repository.StageBatch(ctx, seed.workspaceID, "simple", 1024, []indexport.StageEntry{
+		{Entry: entryA, Embedding: vector}, {Entry: entryB, Embedding: vector},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	publishSearchEntries(t, ctx, database, seed.workspaceID, entryA.ID, entryB.ID)
+
+	// 文档 A 禁用 AI（C02 政策落库）。
+	if err := database.WithContext(ctx).Exec(
+		"UPDATE documents SET ai_use_enabled = FALSE WHERE id = ?", docAID,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(request indexport.SearchRequest) ([]indexport.SearchCandidate, []indexport.SearchCandidate) {
+		var keyword, vectorHits []indexport.SearchCandidate
+		err := repository.WithinWorkspace(ctx, seed.workspaceID, func(txCtx context.Context, reader indexport.SearchReader) error {
+			var keywordErr, vectorErr error
+			keyword, keywordErr = reader.KeywordCandidates(txCtx, request)
+			if keywordErr != nil {
+				return keywordErr
+			}
+			vectorHits, vectorErr = reader.VectorCandidates(txCtx, request)
+			return vectorErr
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return keyword, vectorHits
+	}
+
+	// 禁用文档的 needle：keyword 零召回；vector 路两文档共享同一向量，
+	// 断言按 entryID 排除——禁用文档的 entry 不得出现在候选中。
+	keyword, vectorHits := run(indexport.SearchRequest{
+		KnowledgeBaseID: seed.kbID, GenerationID: seed.generationID,
+		Query: "disabledneedle", QueryEmbedding: vector, FTSConfig: "simple", Dimension: 1024,
+		VectorTopK: 10, KeywordTopK: 10,
+	})
+	if len(keyword) != 0 {
+		t.Fatalf("ai-disabled doc keyword hits = %d, want 0", len(keyword))
+	}
+	for _, hit := range vectorHits {
+		if hit.EntryID == entryA.ID {
+			t.Fatalf("ai-disabled doc entry %s still recalled by vector path", entryA.ID)
+		}
+	}
+
+	// 启用文档照常命中。
+	keyword, vectorHits = run(indexport.SearchRequest{
+		KnowledgeBaseID: seed.kbID, GenerationID: seed.generationID,
+		Query: "enabledneedle", QueryEmbedding: vector, FTSConfig: "simple", Dimension: 1024,
+		VectorTopK: 10, KeywordTopK: 10,
+	})
+	if len(keyword) != 1 || len(vectorHits) != 1 {
+		t.Fatalf("enabled doc hits: keyword=%d vector=%d, want 1/1", len(keyword), len(vectorHits))
+	}
+
+	// document_ids 收窄：只允许禁用文档时，候选不得包含启用文档的 entry。
+	keyword, vectorHits = run(indexport.SearchRequest{
+		KnowledgeBaseID: seed.kbID, GenerationID: seed.generationID,
+		Query: "enabledneedle", QueryEmbedding: vector, FTSConfig: "simple", Dimension: 1024,
+		VectorTopK: 10, KeywordTopK: 10, OnlyDocumentIDs: []uuid.UUID{docAID},
+	})
+	if len(keyword) != 0 {
+		t.Fatalf("scoped-to-disabled keyword hits = %d, want 0", len(keyword))
+	}
+	for _, hit := range vectorHits {
+		if hit.EntryID == entryB.ID {
+			t.Fatalf("enabled entry %s recalled outside document_ids scope", entryB.ID)
+		}
+	}
+
+	// document_ids 指向启用文档：正常召回。
+	keyword, vectorHits = run(indexport.SearchRequest{
+		KnowledgeBaseID: seed.kbID, GenerationID: seed.generationID,
+		Query: "enabledneedle", QueryEmbedding: vector, FTSConfig: "simple", Dimension: 1024,
+		VectorTopK: 10, KeywordTopK: 10, OnlyDocumentIDs: []uuid.UUID{docBID},
+	})
+	if len(keyword) != 1 || len(vectorHits) != 1 {
+		t.Fatalf("scoped-to-enabled hits: keyword=%d vector=%d, want 1/1", len(keyword), len(vectorHits))
 	}
 }

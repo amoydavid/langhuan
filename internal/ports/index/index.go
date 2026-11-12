@@ -30,6 +30,11 @@ type SearchRequest struct {
 	FTSConfig                     string
 	Dimension                     int
 	VectorTopK, KeywordTopK       int
+	// OnlyDocumentIDs 非空时把召回收窄到这些文档（C02 document_ids 范围；
+	// 服务层已按授权 KB 边界校验）。nil 表示不收窄。
+	// 文档级 ai_use_enabled=false 的排除不需要请求参数：召回 SQL 直接联
+	// documents 表按当前政策排除（policy_version ai-use-v1）。
+	OnlyDocumentIDs []uuid.UUID
 }
 
 // SearchEvidence resolves current display facts for one selected projection row.

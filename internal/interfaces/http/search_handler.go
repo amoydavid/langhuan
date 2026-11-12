@@ -40,6 +40,8 @@ type searchRequest struct {
 	VectorTopK  *int   `json:"vector_top_k"`
 	KeywordTopK *int   `json:"keyword_top_k"`
 	FinalTopK   *int   `json:"final_top_k"`
+	// DocumentIDs 非空时把召回收窄到这些文档（C02）；越界条目按不存在处理。
+	DocumentIDs []uuid.UUID `json:"document_ids"`
 	// Detail 响应档位：full=父块正文+子块元数据（默认）；lean=最佳命中子块
 	// 正文（evidence）+父块钻取句柄。空值按 full 处理。
 	Detail string `json:"detail"`
@@ -58,6 +60,7 @@ func parseSearchDetail(raw string) (value.SearchResultDetail, error) {
 // 单库 body 继续返回数组；运行级元数据通过 Header 承载。
 func writeRunHeaders(c *gin.Context, run dto.SearchRunSummary) {
 	c.Header("X-Search-ID", run.SearchID.String())
+	c.Header("X-AI-Policy-Version", value.CurrentAIPolicyVersion())
 	c.Header("X-Retrieval-Status", string(run.RetrievalStatus))
 	genIDs := make([]string, 0, len(run.GenerationSnapshots))
 	for _, snap := range run.GenerationSnapshots {
@@ -89,8 +92,9 @@ func (h searchHandler) search(c *gin.Context) {
 	response, err := h.service.Search(c.Request.Context(), service.SearchInput{
 		WorkspaceID: authCtx.WorkspaceID, KnowledgeBaseID: knowledgeBaseID, Query: request.Query,
 		VectorTopK: request.VectorTopK, KeywordTopK: request.KeywordTopK, FinalTopK: request.FinalTopK,
-		Detail: detail,
-		Access: authCtx.ResourceAccess(),
+		Detail:      detail,
+		Access:      authCtx.ResourceAccess(),
+		DocumentIDs: request.DocumentIDs,
 	})
 	// SearchRun 创建后的错误也先写 Header，再映射原领域错误。
 	if response != nil {
@@ -114,13 +118,17 @@ type multiSearchRequest struct {
 	KeywordTopK      *int        `json:"keyword_top_k"`
 	FinalTopK        *int        `json:"final_top_k"`
 	Detail           string      `json:"detail"`
+	// DocumentIDs 非空时把召回收窄到这些文档（C02）；越界条目按不存在处理。
+	DocumentIDs []uuid.UUID `json:"document_ids"`
 }
 
 type multiSearchResponse struct {
-	SearchID                 string              `json:"search_id"`
-	RequestedScope           string              `json:"requested_scope"`
-	EffectiveScope           string              `json:"effective_scope"`
-	RetrievalStatus          string              `json:"retrieval_status"`
+	SearchID        string `json:"search_id"`
+	RequestedScope  string `json:"requested_scope"`
+	EffectiveScope  string `json:"effective_scope"`
+	RetrievalStatus string `json:"retrieval_status"`
+	// PolicyVersion 是本次召回依据的文档级 AI 政策版本（C02，ai-use-v1）。
+	PolicyVersion            string              `json:"policy_version"`
 	GenerationIDs            []uuid.UUID         `json:"generation_ids"`
 	SearchedKnowledgeBaseIDs []uuid.UUID         `json:"searched_knowledge_base_ids"`
 	Results                  []*dto.SearchResult `json:"results"`
@@ -153,6 +161,7 @@ func (h searchHandler) multiSearchHandler(c *gin.Context) {
 		KnowledgeBaseIDs: request.KnowledgeBaseIDs, Query: request.Query,
 		VectorTopK: request.VectorTopK, KeywordTopK: request.KeywordTopK, FinalTopK: request.FinalTopK,
 		RequestedScope: value.SearchScopeSelected, Detail: detail,
+		DocumentIDs: request.DocumentIDs,
 	})
 	if response != nil {
 		writeRunHeaders(c, response.Run)
@@ -185,9 +194,11 @@ func (h searchHandler) multiSearchHandler(c *gin.Context) {
 		effectiveScope = string(response.Run.EffectiveScope)
 		searchID = response.Run.SearchID.String()
 	}
+	c.Header("X-AI-Policy-Version", value.CurrentAIPolicyVersion())
 	c.JSON(stdhttp.StatusOK, multiSearchResponse{
 		SearchID: searchID, RequestedScope: requestedScope, EffectiveScope: effectiveScope,
-		RetrievalStatus: status, GenerationIDs: genIDs,
+		RetrievalStatus: status, PolicyVersion: value.CurrentAIPolicyVersion(),
+		GenerationIDs:            genIDs,
 		SearchedKnowledgeBaseIDs: searchedKBIDs, Results: results,
 	})
 }

@@ -16,6 +16,8 @@ type DocumentRepository interface {
 	Get(ctx context.Context, workspaceID uuid.UUID, id uuid.UUID) (*model.Document, error)
 	List(ctx context.Context, filter DocumentListFilter) ([]*model.Document, error)
 	Delete(ctx context.Context, workspaceID, documentID uuid.UUID) error
+	// SetAIUseEnabled 更新文档级 AI 政策（C02）；返回 ErrRepositoryNotFound 表示不存在。
+	SetAIUseEnabled(ctx context.Context, workspaceID, documentID uuid.UUID, enabled bool) error
 }
 
 // DocumentListFilter scopes document listing and optionally narrows by kind
@@ -94,4 +96,20 @@ func (s *DocumentService) Get(ctx context.Context, access value.ResourceAccess, 
 		return nil, domainerrors.ErrNotFound
 	}
 	return dto.DocumentFromModel(doc), nil
+}
+
+// SetAIUseEnabled 切换文档级 AI 政策（C02）。受限主体越界统一 404；
+// 禁用立即作用于后续检索召回（召回前过滤），原文阅读不受影响。
+func (s *DocumentService) SetAIUseEnabled(ctx context.Context, access value.ResourceAccess, documentID uuid.UUID, enabled bool) error {
+	if access.WorkspaceID == uuid.Nil || documentID == uuid.Nil {
+		return fmt.Errorf("%w: workspace_id/document_id 不能为空", domainerrors.ErrValidation)
+	}
+	doc, err := s.repo.Get(ctx, access.WorkspaceID, documentID)
+	if err != nil {
+		return err
+	}
+	if !access.Unrestricted && !access.AllowsKnowledgeBase(doc.KnowledgeBaseID) {
+		return domainerrors.ErrNotFound
+	}
+	return s.repo.SetAIUseEnabled(ctx, access.WorkspaceID, documentID, enabled)
 }

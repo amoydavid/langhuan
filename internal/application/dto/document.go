@@ -10,21 +10,23 @@ import (
 )
 
 type Document struct {
-	ID                 uuid.UUID            `json:"id"`
-	WorkspaceID        uuid.UUID            `json:"workspace_id"`
-	KnowledgeBaseID    uuid.UUID            `json:"knowledge_base_id"`
-	Kind               value.DocumentKind   `json:"kind"`
-	Title              string               `json:"title"`
-	SourceURI          string               `json:"source_uri,omitempty"`
-	FileType           string               `json:"file_type"`
-	SourceType         string               `json:"source_type"`
-	Status             value.DocumentStatus `json:"status"`
-	SHA256             string               `json:"sha256"`
-	RawStorageKey      string               `json:"-"`
-	SizeBytes          int64                `json:"size_bytes"`
-	ContentType        string               `json:"content_type"`
-	NormalizedMarkdown string               `json:"normalized_markdown"`
-	Metadata           map[string]any       `json:"metadata"`
+	ID              uuid.UUID            `json:"id"`
+	WorkspaceID     uuid.UUID            `json:"workspace_id"`
+	KnowledgeBaseID uuid.UUID            `json:"knowledge_base_id"`
+	Kind            value.DocumentKind   `json:"kind"`
+	Title           string               `json:"title"`
+	SourceURI       string               `json:"source_uri,omitempty"`
+	FileType        string               `json:"file_type"`
+	SourceType      string               `json:"source_type"`
+	Status          value.DocumentStatus `json:"status"`
+	// AIUseEnabled 是文档级 AI 政策（C02）：false 时不得用于新检索。
+	AIUseEnabled       bool           `json:"ai_use_enabled"`
+	SHA256             string         `json:"sha256"`
+	RawStorageKey      string         `json:"-"`
+	SizeBytes          int64          `json:"size_bytes"`
+	ContentType        string         `json:"content_type"`
+	NormalizedMarkdown string         `json:"normalized_markdown"`
+	Metadata           map[string]any `json:"metadata"`
 	// SourceMeta 是每文档抓取运行态投影（documents.source_meta）；REST 序列化省略
 	// （RawStorageKey 同类的内部字段），供 MCP document_get/document_list 提取新鲜度。
 	SourceMeta       map[string]any           `json:"-"`
@@ -69,6 +71,7 @@ func DocumentFromModel(doc *model.Document) *Document {
 		FileType:           doc.FileType,
 		SourceType:         doc.SourceType,
 		Status:             doc.Status,
+		AIUseEnabled:       doc.AIUseEnabled,
 		SHA256:             doc.SHA256,
 		RawStorageKey:      doc.RawStorageKey,
 		SizeBytes:          doc.SizeBytes,

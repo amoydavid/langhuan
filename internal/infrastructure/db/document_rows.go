@@ -22,8 +22,12 @@ type DocumentRow struct {
 	KbSourceID *uuid.UUID `gorm:"type:uuid"`
 	// SourceMeta 是 web 页面文档的抓取运行态（documents.source_meta jsonb，
 	// 键名合同见 ports/source）；非 web 文档保持空对象。
-	SourceMeta       JSONMap `gorm:"type:jsonb"`
-	Status           string
+	SourceMeta JSONMap `gorm:"type:jsonb"`
+	Status     string
+	// AIUseEnabled 是文档级 AI 政策（C02）：false 时检索召回前排除该文档；
+	// 原文阅读/资产访问不受影响。default:true 让零值插入走 DB 默认，保持
+	// 存量行为（新建文档默认允许 AI）。
+	AIUseEnabled     bool       `gorm:"default:true"`
 	ActiveRevisionID *uuid.UUID `gorm:"type:uuid"`
 	Metadata         JSONMap    `gorm:"type:jsonb"`
 	CreatedAt        time.Time

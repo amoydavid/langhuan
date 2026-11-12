@@ -39,17 +39,19 @@ type NewDocumentInput struct {
 }
 
 type Document struct {
-	ID                 uuid.UUID
-	WorkspaceID        uuid.UUID
-	KnowledgeBaseID    uuid.UUID
-	Kind               value.DocumentKind
-	Title              string
-	SourceURI          string
-	ActiveRevisionID   *uuid.UUID
-	ActiveRevision     *DocumentRevision
-	FileType           string
-	SourceType         string
-	Status             value.DocumentStatus
+	ID               uuid.UUID
+	WorkspaceID      uuid.UUID
+	KnowledgeBaseID  uuid.UUID
+	Kind             value.DocumentKind
+	Title            string
+	SourceURI        string
+	ActiveRevisionID *uuid.UUID
+	ActiveRevision   *DocumentRevision
+	FileType         string
+	SourceType       string
+	Status           value.DocumentStatus
+	// AIUseEnabled 是文档级 AI 政策（C02）：false 时不得用于新检索。
+	AIUseEnabled       bool
 	SHA256             string
 	RawStorageKey      string
 	SizeBytes          int64
@@ -114,7 +116,8 @@ func NewDocumentIdentity(
 	return &Document{
 		ID: id.New(), WorkspaceID: workspaceID, KnowledgeBaseID: knowledgeBaseID,
 		Kind: kind, Title: title, SourceType: sourceType, SourceURI: sourceURI,
-		Status: value.DocumentStatusPending, Metadata: metadata, CreatedAt: now, UpdatedAt: now,
+		Status: value.DocumentStatusPending, AIUseEnabled: true,
+		Metadata: metadata, CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 

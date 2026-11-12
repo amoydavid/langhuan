@@ -16,6 +16,15 @@ import (
 	sourceport "github.com/dajee/langhuan/internal/ports/source"
 )
 
+// aiRestrictionSQLInner / aiRestrictionSQLRe 是 AI 政策排除谓词的两种别名形态
+// （C02）：PG 向量内层子查询无表别名，其余 SQL 的 retrieval_entries 别名为 re。
+// workspace_id 占位参数追加在各 SQL 参数列表的 generation 之后。
+const aiRestrictionSQLInner = " AND document_id NOT IN " +
+	"(SELECT id FROM documents WHERE workspace_id = ? AND ai_use_enabled = FALSE AND deleted_at IS NULL)"
+
+const aiRestrictionSQLRe = " AND re.document_id NOT IN " +
+	"(SELECT id FROM documents WHERE workspace_id = ? AND ai_use_enabled = FALSE AND deleted_at IS NULL)"
+
 // WithinWorkspace binds all candidate and evidence reads to one tenant-local transaction.
 func (r *RetrievalRepository) WithinWorkspace(
 	ctx context.Context,
@@ -88,11 +97,15 @@ func (r *retrievalSearchReader) VectorCandidates(
 	}
 	vector := halfVectorLiteral(request.QueryEmbedding)
 	if r.dialect == DialectSQLite {
+		args := []any{
+			vector, r.workspaceID, request.KnowledgeBaseID, request.GenerationID,
+			request.Dimension, r.workspaceID,
+		}
+		args = append(args, request.VectorTopK)
 		var rows []vectorDistanceRow
 		if err := r.db.WithContext(ctx).Raw(
-			sqliteVectorSearchSQL,
-			vector, r.workspaceID, request.KnowledgeBaseID, request.GenerationID,
-			request.Dimension, request.VectorTopK,
+			sqliteVectorSearchHead+documentScopePredicate("re.", request.OnlyDocumentIDs)+sqliteVectorSearchTail,
+			args...,
 		).Scan(&rows).Error; err != nil {
 			return nil, translateDBError(err, "执行 Retrieval vector search 失败")
 		}
@@ -103,15 +116,20 @@ func (r *retrievalSearchReader) VectorCandidates(
 		}
 		return candidates, nil
 	}
-	query, ok := vectorSearchSQL[request.Dimension]
+	parts, ok := vectorSearchSQL[request.Dimension]
 	if !ok {
 		return nil, domainerrors.ErrUnsupportedEmbeddingDimension
 	}
+	query := parts[0] + documentScopePredicate("", request.OnlyDocumentIDs) + parts[1]
+	args := []any{
+		vector, r.workspaceID, request.KnowledgeBaseID, request.GenerationID,
+		request.Dimension, r.workspaceID, vector,
+	}
+	args = append(args, request.VectorTopK)
 	var rows []searchCandidateRow
 	if err := r.db.WithContext(ctx).Raw(
 		query,
-		vector, r.workspaceID, request.KnowledgeBaseID, request.GenerationID,
-		request.Dimension, vector, request.VectorTopK,
+		args...,
 	).Scan(&rows).Error; err != nil {
 		return nil, translateDBError(err, "执行 Retrieval vector search 失败")
 	}
@@ -141,10 +159,14 @@ func (r *retrievalSearchReader) KeywordCandidates(
 		if match == "" {
 			return []indexport.SearchCandidate{}, nil
 		}
+		args := []any{
+			match, r.workspaceID, request.KnowledgeBaseID, request.GenerationID, r.workspaceID,
+		}
+		args = append(args, request.KeywordTopK)
 		var rows []searchCandidateRow
 		if err := r.db.WithContext(ctx).Raw(
-			sqliteKeywordSearchSQL,
-			match, r.workspaceID, request.KnowledgeBaseID, request.GenerationID, request.KeywordTopK,
+			sqliteKeywordSearchHead+documentScopePredicate("re.", request.OnlyDocumentIDs)+sqliteKeywordSearchTail,
+			args...,
 		).Scan(&rows).Error; err != nil {
 			return nil, translateDBError(err, "执行 Retrieval FTS search 失败")
 		}
@@ -161,11 +183,15 @@ func (r *retrievalSearchReader) KeywordCandidates(
 		}
 		query = strings.Join(filtered, " ")
 	}
+	args := []any{
+		request.FTSConfig, query,
+		r.workspaceID, request.KnowledgeBaseID, request.GenerationID, r.workspaceID,
+	}
+	args = append(args, request.KeywordTopK)
 	var rows []searchCandidateRow
 	if err := r.db.WithContext(ctx).Raw(
-		keywordSearchSQL,
-		request.FTSConfig, query,
-		r.workspaceID, request.KnowledgeBaseID, request.GenerationID, request.KeywordTopK,
+		keywordSearchHead+documentScopePredicate("re.", request.OnlyDocumentIDs)+keywordSearchTail,
+		args...,
 	).Scan(&rows).Error; err != nil {
 		return nil, translateFTSConfigError(err, request.FTSConfig, "执行 Retrieval FTS search 失败")
 	}
@@ -320,68 +346,96 @@ func validateSearchRequest(request indexport.SearchRequest, vector bool) error {
 	return nil
 }
 
-var vectorSearchSQL = map[int]string{
-	798:  vectorSearch798SQL,
-	1024: vectorSearch1024SQL,
-	2048: vectorSearch2048SQL,
-	3584: vectorSearch3584SQL,
+// documentScopePredicate 返回 document_ids 收窄谓词文本（空集合时为空串）。
+// UUID 列表在此自展开为带引号字面量——Raw 路径不依赖 GORM 的 slice 展开
+// （[]uuid.UUID 会被绑定为单个字面量，产生语法错误）。uuid.String() 仅含
+// hex 与连字符，无注入面；非法 UUID 在服务层已拒绝。
+func documentScopePredicate(docPrefix string, only []uuid.UUID) string {
+	if len(only) == 0 {
+		return ""
+	}
+	literals := make([]string, len(only))
+	for index, id := range only {
+		literals[index] = "'" + uuid.UUID(id).String() + "'"
+	}
+	return " AND " + docPrefix + "document_id IN (" + strings.Join(literals, ",") + ")"
 }
 
-const vectorSearch798SQL = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
+// 排序尾段：动态 scope 谓词必须插在 head 与 tail 之间（LIMIT 之前）。
+const vectorSearchTail798 = " ORDER BY (embedding::halfvec(798)) <=> (?::halfvec(798)) LIMIT ?" +
+	") AS candidates ORDER BY distance ASC, id ASC"
+const vectorSearchTail1024 = " ORDER BY (embedding::halfvec(1024)) <=> (?::halfvec(1024)) LIMIT ?" +
+	") AS candidates ORDER BY distance ASC, id ASC"
+const vectorSearchTail2048 = " ORDER BY (embedding::halfvec(2048)) <=> (?::halfvec(2048)) LIMIT ?" +
+	") AS candidates ORDER BY distance ASC, id ASC"
+const vectorSearchTail3584 = " ORDER BY (embedding::halfvec(3584)) <=> (?::halfvec(3584)) LIMIT ?" +
+	") AS candidates ORDER BY distance ASC, id ASC"
+
+const vectorSearchHead798 = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
 	"SELECT id, ((embedding::halfvec(798)) <=> (?::halfvec(798))) AS distance FROM retrieval_entries " +
 	"WHERE workspace_id = ? AND knowledge_base_id = ? AND index_generation_id = ? " +
-	"AND state = 'published' AND dimension = ? " +
-	"ORDER BY (embedding::halfvec(798)) <=> (?::halfvec(798)) LIMIT ?" +
-	") AS candidates ORDER BY distance ASC, id ASC"
+	"AND state = 'published' AND dimension = ?" +
+	aiRestrictionSQLInner
 
-const vectorSearch1024SQL = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
+const vectorSearchHead1024 = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
 	"SELECT id, ((embedding::halfvec(1024)) <=> (?::halfvec(1024))) AS distance FROM retrieval_entries " +
 	"WHERE workspace_id = ? AND knowledge_base_id = ? AND index_generation_id = ? " +
-	"AND state = 'published' AND dimension = ? " +
-	"ORDER BY (embedding::halfvec(1024)) <=> (?::halfvec(1024)) LIMIT ?" +
-	") AS candidates ORDER BY distance ASC, id ASC"
+	"AND state = 'published' AND dimension = ?" +
+	aiRestrictionSQLInner
 
-const vectorSearch2048SQL = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
+const vectorSearchHead2048 = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
 	"SELECT id, ((embedding::halfvec(2048)) <=> (?::halfvec(2048))) AS distance FROM retrieval_entries " +
 	"WHERE workspace_id = ? AND knowledge_base_id = ? AND index_generation_id = ? " +
-	"AND state = 'published' AND dimension = ? " +
-	"ORDER BY (embedding::halfvec(2048)) <=> (?::halfvec(2048)) LIMIT ?" +
-	") AS candidates ORDER BY distance ASC, id ASC"
+	"AND state = 'published' AND dimension = ?" +
+	aiRestrictionSQLInner
 
-const vectorSearch3584SQL = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
+const vectorSearchHead3584 = "SELECT id AS entry_id, 1 - distance AS score FROM (" +
 	"SELECT id, ((embedding::halfvec(3584)) <=> (?::halfvec(3584))) AS distance FROM retrieval_entries " +
 	"WHERE workspace_id = ? AND knowledge_base_id = ? AND index_generation_id = ? " +
-	"AND state = 'published' AND dimension = ? " +
-	"ORDER BY (embedding::halfvec(3584)) <=> (?::halfvec(3584)) LIMIT ?" +
-	") AS candidates ORDER BY distance ASC, id ASC"
+	"AND state = 'published' AND dimension = ?" +
+	aiRestrictionSQLInner
 
-const keywordSearchSQL = "WITH search_query AS (SELECT plainto_tsquery(?::regconfig, ?) AS value) " +
+var vectorSearchSQL = map[int][2]string{
+	798:  {vectorSearchHead798, vectorSearchTail798},
+	1024: {vectorSearchHead1024, vectorSearchTail1024},
+	2048: {vectorSearchHead2048, vectorSearchTail2048},
+	3584: {vectorSearchHead3584, vectorSearchTail3584},
+}
+
+// keywordSearchHead/tail：scope 谓词插在 fts 匹配谓词之后、排序之前。
+const keywordSearchHead = "WITH search_query AS (SELECT plainto_tsquery(?::regconfig, ?) AS value) " +
 	"SELECT re.id AS entry_id, ts_rank_cd(re.fts_document, search_query.value) AS score " +
 	"FROM retrieval_entries AS re CROSS JOIN search_query " +
 	"WHERE re.workspace_id = ? AND re.knowledge_base_id = ? AND re.index_generation_id = ? " +
-	"AND re.state = 'published' AND re.fts_document @@ search_query.value " +
-	"ORDER BY score DESC, re.id ASC LIMIT ?"
+	"AND re.state = 'published' AND re.fts_document @@ search_query.value" +
+	aiRestrictionSQLRe
 
-// sqliteVectorSearchSQL：精确过滤后排序（spec §7.3）。vec_distance_cosine 对
+const keywordSearchTail = " ORDER BY score DESC, re.id ASC LIMIT ?"
+
+// sqliteVectorSearchHead/tail：精确过滤后排序（spec §7.3）。vec_distance_cosine 对
 // retrieval_embeddings.embedding（float32 LE BLOB）做精确余弦距离，scope 索引
 // 让扫描限定在当前 Generation。查询向量以 [a,b,c] JSON 字面量传入 vec_f32(?)。
-const sqliteVectorSearchSQL = "SELECT re.id AS entry_id, " +
+const sqliteVectorSearchHead = "SELECT re.id AS entry_id, " +
 	"vec_distance_cosine(ev.embedding, vec_f32(?)) AS distance " +
 	"FROM retrieval_entries AS re " +
 	"JOIN retrieval_embeddings AS ev ON ev.entry_id = re.id " +
 	"WHERE re.workspace_id = ? AND re.knowledge_base_id = ? AND re.index_generation_id = ? " +
-	"AND re.state = 'published' AND ev.dimension = ? " +
-	"ORDER BY distance ASC, re.id ASC LIMIT ?"
+	"AND re.state = 'published' AND ev.dimension = ?" +
+	aiRestrictionSQLRe
 
-// sqliteKeywordSearchSQL：FTS5 全文检索（spec §8.2）。retrieval_fts MATCH 应用层
+const sqliteVectorSearchTail = " ORDER BY distance ASC, re.id ASC LIMIT ?"
+
+// sqliteKeywordSearchHead/tail：FTS5 全文检索（spec §8.2）。retrieval_fts MATCH 应用层
 // 构造的 AND 表达式；-bm25 作为 score（大=好），ORDER BY bm25 ASC 即最佳在前。
-const sqliteKeywordSearchSQL = "SELECT re.id AS entry_id, -bm25(retrieval_fts) AS score " +
+const sqliteKeywordSearchHead = "SELECT re.id AS entry_id, -bm25(retrieval_fts) AS score " +
 	"FROM retrieval_fts " +
 	"JOIN retrieval_entries AS re ON re.id = retrieval_fts.entry_id " +
 	"WHERE retrieval_fts MATCH ? " +
 	"AND re.workspace_id = ? AND re.knowledge_base_id = ? AND re.index_generation_id = ? " +
-	"AND re.state = 'published' " +
-	"ORDER BY bm25(retrieval_fts) ASC, re.id ASC LIMIT ?"
+	"AND re.state = 'published'" +
+	aiRestrictionSQLRe
+
+const sqliteKeywordSearchTail = " ORDER BY bm25(retrieval_fts) ASC, re.id ASC LIMIT ?"
 
 // buildFTS5MatchExpr 把 token 序列构造为 FTS5 MATCH 表达式：逐 token 双引号引用
 // （内部 " 转义为 ""），以 " AND " 连接，模拟 PG plainto_tsquery 的 plain-text AND

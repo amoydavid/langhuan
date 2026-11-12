@@ -44,6 +44,7 @@ func documentV2ToRow(document *model.Document) *DocumentRow {
 		KbSourceID:       nullableUUIDPtr(document.KbSourceID),
 		SourceMeta:       normalizedJSONMap(document.SourceMeta),
 		Status:           string(document.Status),
+		AIUseEnabled:     document.AIUseEnabled,
 		ActiveRevisionID: document.ActiveRevisionID, Metadata: normalizedJSONMap(document.Metadata),
 		CreatedAt: document.CreatedAt, UpdatedAt: document.UpdatedAt, DeletedAt: document.DeletedAt,
 	}
