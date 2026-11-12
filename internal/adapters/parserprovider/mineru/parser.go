@@ -164,7 +164,9 @@ func (p *Parser) Poll(ctx context.Context, input parserport.AsyncParsePollInput)
 		if err != nil {
 			return nil, fmt.Errorf("下载 MinerU 结果失败: %w", err)
 		}
-		parsed, err := buildParsedDocument(ctx, markdown, p.config.ModelVersion)
+		// C03：content_list.json 提供物理页锚点（缺失时按诚实降级，不阻断）。
+		contentList, _ := extractContentListFromZip(rawBytes, p.config.MaxZipImageBytes)
+		parsed, err := buildParsedDocument(ctx, markdown, p.config.ModelVersion, contentList)
 		if err != nil {
 			return nil, err
 		}

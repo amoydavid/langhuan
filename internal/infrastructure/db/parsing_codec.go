@@ -11,20 +11,25 @@ import (
 )
 
 type sourceAnchorJSON struct {
-	SourceType     string `json:"source_type"`
-	OffsetStart    *int   `json:"offset_start,omitempty"`
-	OffsetEnd      *int   `json:"offset_end,omitempty"`
-	LineStart      *int   `json:"line_start,omitempty"`
-	LineEnd        *int   `json:"line_end,omitempty"`
-	Sheet          string `json:"sheet,omitempty"`
-	HeaderRow      *int   `json:"header_row,omitempty"`
-	RowStart       *int   `json:"row_start,omitempty"`
-	RowEnd         *int   `json:"row_end,omitempty"`
-	ColumnStart    *int   `json:"column_start,omitempty"`
-	ColumnEnd      *int   `json:"column_end,omitempty"`
-	ParagraphStart *int   `json:"paragraph_start,omitempty"`
-	ParagraphEnd   *int   `json:"paragraph_end,omitempty"`
-	TableIndex     *int   `json:"table_index,omitempty"`
+	SourceType     string      `json:"source_type"`
+	OffsetStart    *int        `json:"offset_start,omitempty"`
+	OffsetEnd      *int        `json:"offset_end,omitempty"`
+	LineStart      *int        `json:"line_start,omitempty"`
+	LineEnd        *int        `json:"line_end,omitempty"`
+	Sheet          string      `json:"sheet,omitempty"`
+	HeaderRow      *int        `json:"header_row,omitempty"`
+	RowStart       *int        `json:"row_start,omitempty"`
+	RowEnd         *int        `json:"row_end,omitempty"`
+	ColumnStart    *int        `json:"column_start,omitempty"`
+	ColumnEnd      *int        `json:"column_end,omitempty"`
+	ParagraphStart *int        `json:"paragraph_start,omitempty"`
+	ParagraphEnd   *int        `json:"paragraph_end,omitempty"`
+	TableIndex     *int        `json:"table_index,omitempty"`
+	SchemaVersion  *int        `json:"schema_version,omitempty"`
+	Page           *int        `json:"page,omitempty"`
+	PageStart      *int        `json:"page_start,omitempty"`
+	PageEnd        *int        `json:"page_end,omitempty"`
+	BBox           *[4]float64 `json:"bbox,omitempty"`
 }
 
 type parsedBlockJSON struct {
@@ -166,6 +171,8 @@ func sourceAnchorFromJSONMap(raw JSONMap) (value.SourceAnchor, error) {
 func sourceAnchorToJSON(anchor value.SourceAnchor) sourceAnchorJSON {
 	return sourceAnchorJSON{
 		SourceType: anchor.SourceType, OffsetStart: anchor.OffsetStart, OffsetEnd: anchor.OffsetEnd,
+		SchemaVersion: anchor.SchemaVersion, Page: anchor.Page,
+		PageStart: anchor.PageStart, PageEnd: anchor.PageEnd, BBox: anchor.BBox,
 		LineStart: anchor.LineStart, LineEnd: anchor.LineEnd, Sheet: anchor.Sheet,
 		HeaderRow: anchor.HeaderRow, RowStart: anchor.RowStart, RowEnd: anchor.RowEnd,
 		ColumnStart: anchor.ColumnStart, ColumnEnd: anchor.ColumnEnd,
@@ -180,6 +187,8 @@ func sourceAnchorFromJSON(anchor sourceAnchorJSON) value.SourceAnchor {
 		HeaderRow: anchor.HeaderRow, RowStart: anchor.RowStart, RowEnd: anchor.RowEnd,
 		ColumnStart: anchor.ColumnStart, ColumnEnd: anchor.ColumnEnd,
 		ParagraphStart: anchor.ParagraphStart, ParagraphEnd: anchor.ParagraphEnd, TableIndex: anchor.TableIndex,
+		SchemaVersion: anchor.SchemaVersion, Page: anchor.Page,
+		PageStart: anchor.PageStart, PageEnd: anchor.PageEnd, BBox: anchor.BBox,
 	}
 }
 

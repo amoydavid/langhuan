@@ -54,6 +54,26 @@ func extractMarkdownFromZip(data []byte, maxSizeBytes int64) (string, error) {
 	return "", fmt.Errorf("zip 中未找到 Markdown 文件")
 }
 
+// extractContentListFromZip 提取 MinerU 的 content_list.json（C03 页锚点来源）。
+// MinerU 产物命名为 <docid>_content_list.json（旧版 content_list.json）；
+// 缺失返回 ok=false——页锚点按诚实降级处理（不阻断解析主流程）。
+func extractContentListFromZip(data []byte, maxSizeBytes int64) (string, bool) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", false
+	}
+	if content, ok := readZipFile(reader, "content_list.json", maxSizeBytes); ok {
+		return content, true
+	}
+	for _, file := range reader.File {
+		name := strings.ToLower(file.Name)
+		if strings.HasSuffix(name, "_content_list.json") || name == "content_list.json" {
+			return readZipFileEntry(file, maxSizeBytes)
+		}
+	}
+	return "", false
+}
+
 // extractAssetsFromZip 提取 zip 内图片并映射为 parser 资产候选。
 // 返回 nil 而不是 error：zip 中图片缺失或解压失败不应阻断解析主流程，
 // 图片引用留待 AssetResolver 以 unsupported_ref warning 处理。
